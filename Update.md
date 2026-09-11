@@ -7,6 +7,12 @@
 首个可交付版本。依据《SoftGraph 软件图谱与磁盘清理工具 技术设计方案 V1.0》实现，
 并新增需求「桌面浮窗监控（插件化）」。
 
+- 仓库：https://github.com/xiaowulai-s/Soft_Graph
+- 发布页：https://github.com/xiaowulai-s/Soft_Graph/releases/tag/v1.0.0
+  - `SoftGraph-1.0.0-setup.exe`（85.36 MB，NSIS 安装包）
+  - `SoftGraph-1.0.0-portable.exe`（85.14 MB，免安装便携版）
+- Release 说明全文：`docs/RELEASE_NOTES_v1.0.0.md`
+
 ---
 
 ## 已交付
