@@ -21,3 +21,6 @@ Thumbs.db
 *.db
 *.db-wal
 *.db-shm
+
+# 临时探测脚本
+.probe*.cjs
