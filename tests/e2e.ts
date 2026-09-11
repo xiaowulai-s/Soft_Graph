@@ -16,7 +16,8 @@ async function fetchJson(url: string, tries = 8): Promise<any[]> {
   for (let i = 0; i < tries; i++) {
     try {
       const res = await fetch(url)
-      return await res.json()
+      // fetch 的 json() 返回 unknown，先断言再返回（本文件只在测试脚本中消费）
+      return (await res.json()) as any[]
     } catch (e) {
       lastErr = e
       await new Promise((r) => setTimeout(r, 1500))

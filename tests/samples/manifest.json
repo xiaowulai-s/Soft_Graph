@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-11T23:44:16.125Z",
+  "note": "样本文件本身不入库（版权/体积），仅清单入库；用 npm run samples:collect 在本机重建",
+  "count": 19,
+  "samples": [
+    {
+      "id": "sample_explorer_exe",
+      "source": "C:\\WINDOWS\\explorer.exe",
+      "covers": "x64 可执行文件 · 导入表与延迟导入",
+      "sha256": "87811a107eed62900b230c49a252170d6a7307e94a08307ce972f9b9b8155d54",
+      "sizeBytes": 3389784,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 107,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.055Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_calc_exe",
+      "source": "C:\\WINDOWS\\System32\\calc.exe",
+      "covers": "x64 可执行文件 · 导入表与延迟导入",
+      "sha256": "621ba3934afc45c35a4ee16386f4da30119f39fa243e8dc8fef3491a76f829d8",
+      "sizeBytes": 49152,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 5,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false
+      },
+      "capturedAt": "2026-09-11T23:44:16.061Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_cmd_exe",
+      "source": "C:\\WINDOWS\\System32\\cmd.exe",
+      "covers": "x64 可执行文件 · 导入表与延迟导入",
+      "sha256": "97ac98b1a92c286054cce55239cfccdfc23a5517bd07fe693072c9ca96c7dabb",
+      "sizeBytes": 344064,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 34,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false
+      },
+      "capturedAt": "2026-09-11T23:44:16.063Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_notepad_exe",
+      "source": "C:\\WINDOWS\\System32\\notepad.exe",
+      "covers": "x64 可执行文件 · 导入表与延迟导入",
+      "sha256": "468ffe129c395abf6b21a09efdf261910a95fb98aa982ead73caa7b2b684577e",
+      "sizeBytes": 360448,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 40,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false
+      },
+      "capturedAt": "2026-09-11T23:44:16.066Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_advapi32_dll",
+      "source": "C:\\WINDOWS\\System32\\advapi32.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "e036c9baecd170d7ef4759a5a7eb76036158cacc4cd9e3f697dbf410a3457224",
+      "sizeBytes": 778344,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 28,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.069Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_combase_dll",
+      "source": "C:\\WINDOWS\\System32\\combase.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "39a2e2ba1ca6012953c94c10011fff5a18783120a2a34f5b66deb2d374a362c9",
+      "sizeBytes": 3716184,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 41,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.074Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_gdi32_dll",
+      "source": "C:\\WINDOWS\\System32\\gdi32.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "772c73e294a4c5f5e0d4146288af95287a85c074d3aee3fa9f320dc010d7dbfe",
+      "sizeBytes": 187456,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 11,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.077Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_kernel32_dll",
+      "source": "C:\\WINDOWS\\System32\\kernel32.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "8f8629741558b5df71def4e1dd8ef9645d4f806b949762c47757c50fea1a9e6d",
+      "sizeBytes": 844496,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 83,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.081Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_kernelbase_dll",
+      "source": "C:\\WINDOWS\\System32\\KernelBase.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "becad014fb8efa8cb5e314931cca92778ad42c649b12a6909632cacd68af4f40",
+      "sizeBytes": 4212112,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 3,
+        "hasDelayImports": true,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.088Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_ntdll_dll",
+      "source": "C:\\WINDOWS\\System32\\ntdll.dll",
+      "covers": "x64 系统 DLL · KnownDLLs / API Set",
+      "sha256": "a74f7482085eab125ccc09152ab7e0b5994bcb13e1a7b29880bdbb24179ecb8b",
+      "sizeBytes": 2522080,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 0,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.093Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_msvcp100_dll",
+      "source": "C:\\WINDOWS\\System32\\msvcp100.dll",
+      "covers": "共享运行库 · WinSxS/清单依赖",
+      "sha256": "934d882efd3c0f3f1efbc238ef87708f3879f5bb456d30af62f3368d58b6aa4c",
+      "sizeBytes": 608080,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 1,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.095Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_msvcp110_dll",
+      "source": "C:\\WINDOWS\\System32\\msvcp110.dll",
+      "covers": "共享运行库 · WinSxS/清单依赖",
+      "sha256": "27f394ae01d12f851f1dee3632dee3c5afa1d267f7a96321d35fd43105b035ad",
+      "sizeBytes": 661456,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 1,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.097Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_msvcp110_win_dll",
+      "source": "C:\\WINDOWS\\System32\\msvcp110_win.dll",
+      "covers": "共享运行库 · WinSxS/清单依赖",
+      "sha256": "782e62872c751682bc220489b07db6b80820e3799416028630ad899fba113ae6",
+      "sizeBytes": 600600,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 8,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.102Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_msvcp120_dll",
+      "source": "C:\\WINDOWS\\System32\\msvcp120.dll",
+      "covers": "共享运行库 · WinSxS/清单依赖",
+      "sha256": "3b92e964404e3f94531e7d7c4c7419561d9eca6accd98dc3979c9e3596db444c",
+      "sizeBytes": 659624,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x64",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 1,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.104Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample__cache_3_geek_exe",
+      "source": "C:\\WINDOWS\\SysWOW64\\._cache_3_geek专业版（免安装）.exe",
+      "covers": "x86 模块 · WOW64 位数处理",
+      "sha256": "60e0e09222c39b2b04e19e1277cfbc60c9e8f1fbaefc8d996bd119cd59e24abe",
+      "sizeBytes": 3093912,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x86",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 7,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false,
+        "packerSection": "UPX"
+      },
+      "capturedAt": "2026-09-11T23:44:16.108Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample__cache_stc_isp_v6_91r_exe",
+      "source": "C:\\WINDOWS\\SysWOW64\\._cache_stc-isp-v6.91R.exe",
+      "covers": "x86 模块 · WOW64 位数处理",
+      "sha256": "c1570601ffcef8829d2e958eeacb7beb2739d59c89532e8413e134c3640acf9c",
+      "sizeBytes": 4882432,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x86",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 12,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false
+      },
+      "capturedAt": "2026-09-11T23:44:16.116Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample__cache_uninstalltool_3_7_3_5719_all_exe",
+      "source": "C:\\WINDOWS\\SysWOW64\\._cache_UninstallTool-3.7.3.5719-All.exe",
+      "covers": "x86 模块 · WOW64 位数处理",
+      "sha256": "33b772c219d5272773def99f564f509f1358005cbe3a37b9efdfa05ff11d2305",
+      "sizeBytes": 3925582,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x86",
+        "isDll": false,
+        "isDotNet": false,
+        "importsAtLeast": 7,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false,
+        "packerSection": "UPX"
+      },
+      "capturedAt": "2026-09-11T23:44:16.122Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_3bc29097_7317_41d3_93b9_38a48f99d48a_mssrch_dll",
+      "source": "C:\\WINDOWS\\SysWOW64\\3bc29097-7317-41d3-93b9-38a48f99d48a_mssrch.dll",
+      "covers": "x86 模块 · WOW64 位数处理",
+      "sha256": "965857675ef2fe596c523778fb922251fb5a0c6d8628549d3a910371b0f6b812",
+      "sizeBytes": 13272,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x86",
+        "isDll": true,
+        "isDotNet": false,
+        "importsAtLeast": 0,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": true
+      },
+      "capturedAt": "2026-09-11T23:44:16.123Z",
+      "host": "win32 x64"
+    },
+    {
+      "id": "sample_accessibility_dll",
+      "source": "C:\\WINDOWS\\Microsoft.NET\\Framework64\\v4.0.30319\\Accessibility.dll",
+      "covers": ".NET 汇编 · CLR 头与 AssemblyRef",
+      "sha256": "d4cc4d55f254a11e355a3a5e8b2aead96e54e6412f94e6dc6fbaea3a62eb062c",
+      "sizeBytes": 32152,
+      "expect": {
+        "parseStatus": "ok",
+        "arch": "x86",
+        "isDll": true,
+        "isDotNet": true,
+        "importsAtLeast": 1,
+        "hasDelayImports": false,
+        "sxsAtLeast": 0,
+        "hasVersionRes": true,
+        "hasExports": false
+      },
+      "capturedAt": "2026-09-11T23:44:16.125Z",
+      "host": "win32 x64"
+    }
+  ]
+}

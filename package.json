@@ -30,6 +30,11 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "node scripts/run-tests.mjs",
+    "bench": "node scripts/bench.mjs",
+    "bench:quick": "node scripts/bench.mjs --quick",
+    "samples:collect": "node scripts/run-ts.mjs tests/samples.ts collect",
+    "samples:verify": "node scripts/run-ts.mjs tests/samples.ts verify",
     "smoke": "node scripts/run-smoke.mjs",
     "e2e": "node scripts/run-e2e.mjs",
     "pack:dir": "electron-vite build && electron-builder --dir",
@@ -38,6 +43,7 @@
   "dependencies": {
     "sql.js": "^1.11.0"
   },
+  "optionalDependencies": {},
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",
@@ -47,6 +53,7 @@
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.21.5",
     "pinia": "^2.3.0",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",

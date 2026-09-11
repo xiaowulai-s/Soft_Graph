@@ -19,6 +19,7 @@
       "@junk/*": ["packages/junk/*"],
       "@graph-core/*": ["packages/graph-core/*"],
       "@rules/*": ["packages/rules/*"],
+      "@native/*": ["packages/native/*"],
       "@main/*": ["apps/desktop/src/main/*"]
     }
   },
@@ -29,6 +30,9 @@
     "packages/scanner/**/*.ts",
     "packages/junk/**/*.ts",
     "packages/graph-core/**/*.ts",
+    "packages/native/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.mjs",
     "electron.vite.config.ts"
   ]
 }

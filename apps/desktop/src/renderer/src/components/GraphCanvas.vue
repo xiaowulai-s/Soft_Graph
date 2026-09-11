@@ -12,7 +12,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { GraphEdge, GraphModel, GraphNode } from '@shared/types'
-import { formatBytes, initialsOf, nameToHsl } from '@shared/util'
+import { formatBytes, initialsOf, nameToHsl, isSharedRuntime } from '@shared/util'
 import HoverCard from './HoverCard.vue'
 import LayoutWorker from '../workers/layout.worker?worker'
 
@@ -69,7 +69,9 @@ const visibleNodes = computed<GraphNode[]>(() => {
   return m.nodes.filter((n) => {
     if (n.type === 'software') return true
     if (n.type === 'file' && n.file) {
-      if (hidden.has(n.file.missing ? 'missing' : n.file.kind)) return false
+      // 「共享运行库」是图例中的独立一档（伪类型），与节点配色保持同一判定，
+      // 否则图例上的该项点了没有任何效果
+      if (hidden.has(kindOfFile(n.file))) return false
     }
     if (n.type === 'group' && hidden.has('group')) return false
     if (term) {
@@ -79,6 +81,13 @@ const visibleNodes = computed<GraphNode[]>(() => {
     return true
   })
 })
+
+/** 图例分类键：missing / runtime / 具体文件类型 */
+function kindOfFile(f: NonNullable<GraphNode['file']>): string {
+  if (f.missing) return 'missing'
+  if (isSharedRuntime(f.name)) return 'runtime'
+  return f.kind
+}
 
 const edgeByTarget = computed(() => {
   const m = new Map<string, GraphEdge>()
@@ -127,7 +136,7 @@ function nodeColor(n: GraphNode): string {
   const f = n.file
   if (!f) return 'var(--node-system)'
   if (f.missing) return 'var(--node-missing)'
-  if (isRuntime(f.name)) return 'var(--node-runtime)'
+  if (isSharedRuntime(f.name)) return 'var(--node-runtime)'
   if (isSystemPath(f.fullPath)) return 'var(--node-system)'
   if (f.kind === 'exe') return 'var(--node-exe)'
   if (f.kind === 'dll' || f.kind === 'ocx') return 'var(--node-dll)'
@@ -135,10 +144,7 @@ function nodeColor(n: GraphNode): string {
   return 'var(--node-dll)'
 }
 
-const RUNTIME_RE = /^(msvcp|msvcr|vcruntime|ucrtbase|concrt|mfc|atl|api-ms-win-|mscoree|clr|coreclr|hostfxr|qt\d|icu|python\d)/i
-function isRuntime(name: string): boolean {
-  return RUNTIME_RE.test(name)
-}
+/** 系统目录判定：仅用于配色降级，不参与图例分类（图例按「共享运行库」语义划分） */
 function isSystemPath(p: string): boolean {
   return /^[a-z]:\\windows\\/i.test(p)
 }

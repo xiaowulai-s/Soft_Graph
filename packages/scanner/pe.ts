@@ -56,6 +56,10 @@ export interface PeResult {
   /** SxS 清单声明的 assemblyIdentity name（证据 E5） */
   sxsDependencies: string[]
   isDotNet: boolean
+  /** 是否导出符号（数据目录第 0 项）—— 判定「零导入是否正常」的关键依据 */
+  hasExports: boolean
+  /** 命中的加壳器节名（如 .upx / .vmp0），未命中为 undefined */
+  packerSection?: string
   /** 版本资源（用于便携识别与文件详情） */
   fileVersion?: string
   fileDescription?: string
@@ -77,8 +81,43 @@ function emptyResult(path: string, status: PeResult['parseStatus'], error?: stri
     assemblyRefs: [],
     sxsDependencies: [],
     isDotNet: false,
+    hasExports: false,
     error
   }
+}
+
+/**
+ * 常见加壳器/保护器的节名特征。
+ * 用于把「导入表为空」区分成两种情况：真实加壳（提示用户解析不可靠）
+ * 与低层模块的固有形态（例如 ntdll.dll 本就零导入，属正常）。
+ */
+const PACKER_SECTIONS: [string, string][] = [
+  ['upx', 'UPX'],
+  ['.aspack', 'ASPack'],
+  ['.adata', 'ASPack'],
+  ['.themida', 'Themida'],
+  ['.vmp', 'VMProtect'],
+  ['.enigma', 'Enigma'],
+  ['.petite', 'Petite'],
+  ['.mpress', 'MPRESS'],
+  ['.packed', 'Packed'],
+  ['.boom', 'Themida/Boom'],
+  ['.nsp', 'NsPack'],
+  ['.spack', 'SPack'],
+  ['.winlice', 'WinLicense'],
+  ['.seau', 'SeauSFX'],
+  ['pec1', 'PECompact'],
+  ['pec2', 'PECompact'],
+  ['.pklst', 'PKLite']
+]
+
+/** 导出的加壳识别（便于单测覆盖） */
+export function detectPacker(sections: PeSection[]): string | undefined {
+  const names = sections.map((s) => s.name.toLowerCase())
+  for (const [token, label] of PACKER_SECTIONS) {
+    if (names.some((n) => n === token || n.startsWith(token))) return label
+  }
+  return undefined
 }
 
 /**
@@ -533,6 +572,9 @@ export async function parsePe(filePath: string, opts: ParsePeOptions = {}): Prom
     res.isDll = img.isDll
     res.imports = await img.readImports()
     res.delayImports = await img.readDelayImports()
+    // 数据目录第 0 项为导出表；低层模块（ntdll 等）零导入但必有导出
+    res.hasExports = img.dir(0) !== null
+    res.packerSection = detectPacker(img.sections)
 
     if (resources) {
       const manifests = await img.readResourceBlobs(RT_MANIFEST, 2)
@@ -553,10 +595,21 @@ export async function parsePe(filePath: string, opts: ParsePeOptions = {}): Prom
       res.assemblyRefs = clr.strings
     }
 
-    // 导入表与延迟导入表均为空、且不是 .NET → 极可能被加壳（风险 R1）
+    // 导入表与延迟导入表均为空时的判定（需区分三种情况，不能一律判为加壳）：
+    //   ① 有导出表 → 低层模块的固有形态（如 ntdll.dll 零导入但导出大量符号），正常；
+    //   ② 命中已知加壳器节名 → 明确的加壳信号，解析结果不可靠（风险 R1）；
+    //   ③ 既无导入也无导出 → 高度可疑，按未能解析处理。
     if (res.imports.length === 0 && res.delayImports.length === 0 && !res.isDotNet) {
-      res.parseStatus = 'failed'
-      res.error = '导入表为空，可能已加壳或使用运行时动态加载'
+      if (res.packerSection) {
+        res.parseStatus = 'failed'
+        res.error = `疑似加壳（${res.packerSection}），导入表不可用`
+      } else if (res.hasExports) {
+        res.parseStatus = 'ok'
+        res.error = '零导入但存在导出表，判定为低层模块的固有形态（如 ntdll.dll）'
+      } else {
+        res.parseStatus = 'failed'
+        res.error = '导入表与导出表均为空，可能已加壳或为数据文件'
+      }
     }
     return res
   } catch (e) {

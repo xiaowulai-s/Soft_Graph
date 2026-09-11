@@ -31,8 +31,146 @@ export interface CompiledRule {
   options: Record<string, number | string | boolean>
 }
 
-/** 环境变量展开，额外支持 %SG_DRIVES% 展开为所有存在的固定盘符 */
+/**
+ * 用户库目录的同义名回退。
+ * 为什么要这个：中文 Windows 上 `%USERPROFILE%\Documents` 常常并不存在 ——
+ * 真实路径可能是 `%USERPROFILE%\OneDrive\文档`（OneDrive 接管）或 `桌面`/`图片` 等本地化名。
+ * 若只按英文名写死，GC-11（重复文件）与 GC-12（超大文件）在中英文混合环境会静默失效。
+ */
+const SHELL_SYNONYMS: Record<string, string[]> = {
+  documents: ['Documents', '文档', 'My Documents'],
+  pictures: ['Pictures', '图片', 'My Pictures'],
+  desktop: ['Desktop', '桌面'],
+  downloads: ['Downloads', '下载'],
+  videos: ['Videos', '视频', 'My Videos'],
+  music: ['Music', '音乐', 'My Music'],
+  favorites: ['Favorites', '收藏夹'],
+  onedrive: ['OneDrive', 'OneDrive - Personal']
+}
+
+const ONEDRIVE_HOSTS = ['OneDrive', 'OneDrive - Personal']
+
+/**
+ * 已解析的用户库目录真实路径（由 ShellService 在启动时注入，见 shellfolders.ts）。
+ * 例：{ documents: 'D:\\文档', pictures: 'D:\\图片', desktop: 'D:\\桌面' }
+ */
+let shellFolderMap: Partial<Record<string, string>> | null = null
+
+export function setShellFolderMap(map: Partial<Record<string, string>> | null): void {
+  shellFolderMap = map
+}
+
+export function getShellFolderMap(): Partial<Record<string, string>> | null {
+  return shellFolderMap
+}
+
+/**
+ * 把「按英文名拼出来的库目录」修正为真实存在的路径。
+ * 优先级：
+ *   1. 注入的注册表权威路径（能覆盖重定向到其它盘的情况 —— 实测有机器把文档/图片全放到 D 盘）
+ *   2. 原路径下同义名（中文/英文别名）
+ *   3. OneDrive 宿主目录下的同义名
+ * 全部落空时返回原路径（上层遍历时自然跳过，不会报错）。
+ */
+function resolveShellFolder(p: string): string {
+  if (existsSync(p)) return p
+  const sep = p.lastIndexOf('\\')
+  if (sep <= 0) return p
+  const name = p.slice(sep + 1)
+  const lower = name.toLowerCase()
+  const parent = p.slice(0, sep)
+  const syns = SHELL_SYNONYMS[lower]
+  if (!syns) return p
+
+  // 1) 注册表权威路径
+  if (shellFolderMap) {
+    for (const [key, real] of Object.entries(shellFolderMap)) {
+      if (!real) continue
+      const keySyns = SHELL_SYNONYMS[key]
+      if (!keySyns) continue
+      if (!keySyns.some((s) => s.toLowerCase() === lower)) continue
+      if (existsSync(real)) return real
+      break
+    }
+  }
+
+  // 2) 同目录下的本地化名
+  for (const s of syns) {
+    const cand = `${parent}\\${s}`
+    if (existsSync(cand)) return cand
+  }
+
+  // 3) OneDrive 下
+  for (const host of ONEDRIVE_HOSTS) {
+    const onedrive = `${parent}\\${host}`
+    if (!existsSync(onedrive)) continue
+    for (const s of syns) {
+      const cand = `${onedrive}\\${s}`
+      if (existsSync(cand)) return cand
+    }
+  }
+  return p
+}
+
+/** 显式引用用户库目录的 token（始终走权威解析，不受英文名是否存在影响） */
+const SHELL_TOKENS = [
+  'SG_DOCUMENTS',
+  'SG_PICTURES',
+  'SG_DESKTOP',
+  'SG_DOWNLOADS',
+  'SG_VIDEOS',
+  'SG_MUSIC',
+  'SG_FAVORITES'
+] as const
+
+const TOKEN_KEY: Record<string, string> = {
+  SG_DOCUMENTS: 'documents',
+  SG_PICTURES: 'pictures',
+  SG_DESKTOP: 'desktop',
+  SG_DOWNLOADS: 'downloads',
+  SG_VIDEOS: 'videos',
+  SG_MUSIC: 'music',
+  SG_FAVORITES: 'favorites'
+}
+
+/**
+ * 展开库目录 token。解析不到真实路径时回退到 %USERPROFILE% 下的英文名，
+ * 若该英文名也不存在则返回空数组（宁可少扫，不可扫错）。
+ */
+function expandShellToken(token: string): string[] {
+  const key = TOKEN_KEY[token]
+  if (!key) return []
+  const real = shellFolderMap?.[key]
+  if (real && existsSync(real)) return [normPath(real)]
+  const profile = process.env.USERPROFILE
+  if (!profile) return []
+  for (const syn of SHELL_SYNONYMS[key] ?? []) {
+    const cand = `${normPath(profile)}\\${syn}`
+    if (existsSync(cand)) return [cand]
+  }
+  for (const host of ONEDRIVE_HOSTS) {
+    for (const syn of SHELL_SYNONYMS[key] ?? []) {
+      const cand = `${normPath(profile)}\\${host}\\${syn}`
+      if (existsSync(cand)) return [cand]
+    }
+  }
+  return []
+}
+
+/** 环境变量展开，额外支持 %SG_DRIVES%（所有固定盘符）与 %SG_DOCUMENTS% 等库目录 token */
 export function expandRoots(root: string): string[] {
+  // 库目录 token：优先权威解析
+  for (const t of SHELL_TOKENS) {
+    if (!root.includes(`%${t}%`)) continue
+    const resolved = expandShellToken(t)
+    if (resolved.length === 0) return []
+    const out: string[] = []
+    for (const base of resolved) {
+      out.push(...expandRoots(root.replace(`%${t}%`, base)))
+    }
+    return [...new Set(out)]
+  }
+
   if (root.includes('%SG_DRIVES%')) {
     const out: string[] = []
     for (const c of 'CDEFGHIJ') {
@@ -48,7 +186,14 @@ export function expandRoots(root: string): string[] {
   })
   // 展开失败（环境变量不存在）→ 丢弃该 root，避免产生 "%FOO%\bar" 这种垃圾路径
   if (expanded.includes('%')) return []
-  return [normPath(expanded)]
+  let p = normPath(expanded)
+  // 二次防线：展开后必须是绝对路径。
+  // 若环境变量缺失导致结果退化成 "\bar"（相对盘根的路径），会被 normPath 保留下来，
+  // 一旦进入规则就会被当成「盘符根目录下的 bar」从而扩大扫描范围 —— 这里硬性丢弃。
+  if (!/^[A-Za-z]:\\/.test(p)) return []
+  // 修正中文/OneDrive/重定向环境下的库目录
+  p = resolveShellFolder(p)
+  return [p]
 }
 
 export function compileRule(r: JunkRule): CompiledRule {
@@ -77,6 +222,37 @@ export interface RuleSet {
   schemaVersion: number
   updatedAt: string
   rules: CompiledRule[]
+  /**
+   * 编译期警告：例如库目录 token 无法解析导致某条规则失去全部根目录。
+   * 这类问题若静默发生，用户会以为「扫过了」，实际一个目录都没进（BUG-09 的教训），
+   * 因此必须显式暴露给 UI / 诊断包。
+   */
+  warnings: string[]
+}
+
+function buildRuleSet(raw: { schemaVersion: number; updatedAt: string; rules: JunkRule[] }): RuleSet {
+  const rules = raw.rules.map(compileRule)
+  const warnings: string[] = []
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i]
+    const src = raw.rules[i]
+    if (r.roots.length === 0) {
+      warnings.push(`${r.id}（${r.name}）没有任何可用的根目录，该分类将被跳过`)
+      continue
+    }
+    const declared = src.match?.roots ?? []
+    const tokenMissing = declared.filter((d) => SHELL_TOKENS.some((t) => d.includes(`%${t}%`)))
+    if (tokenMissing.length > 0) {
+      const resolvedCount = r.roots.length
+      if (resolvedCount < tokenMissing.length) {
+        warnings.push(
+          `${r.id}（${r.name}）有 ${tokenMissing.length - resolvedCount} 个用户库目录未解析成功` +
+            `（可能是未调用 resolveUserShellFolders 或该目录不存在）`
+        )
+      }
+    }
+  }
+  return { schemaVersion: raw.schemaVersion, updatedAt: raw.updatedAt, rules, warnings }
 }
 
 export async function loadRules(rulesPath: string): Promise<RuleSet> {
@@ -85,11 +261,7 @@ export async function loadRules(rulesPath: string): Promise<RuleSet> {
     updatedAt: string
     rules: JunkRule[]
   }
-  return {
-    schemaVersion: raw.schemaVersion,
-    updatedAt: raw.updatedAt,
-    rules: raw.rules.map(compileRule)
-  }
+  return buildRuleSet(raw)
 }
 
 /** 内置规则（打包后作为兜底，防止规则文件缺失导致完全不可用） */
@@ -98,11 +270,7 @@ export function loadRulesSync(rulesJson: {
   updatedAt: string
   rules: JunkRule[]
 }): RuleSet {
-  return {
-    schemaVersion: rulesJson.schemaVersion,
-    updatedAt: rulesJson.updatedAt,
-    rules: rulesJson.rules.map(compileRule)
-  }
+  return buildRuleSet(rulesJson)
 }
 
 export interface WalkHit {

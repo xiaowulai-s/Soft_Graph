@@ -58,6 +58,7 @@ export class ScanService {
 
   async rules(): Promise<RuleSet> {
     if (this.ruleSet) return this.ruleSet
+    await this.resolveShellFolders()
     try {
       this.ruleSet = await loadRules(this.paths.rulesFile)
     } catch {
@@ -66,6 +67,33 @@ export class ScanService {
     }
     return this.ruleSet
   }
+
+  /**
+   * 解析用户库目录（文档/图片/桌面/下载…）的真实路径并注入规则引擎。
+   * 必要性：这些目录常被重定向到其它盘或被 OneDrive 接管，
+   * 按英文名写死的规则会静默失效（GC-11 重复文件、GC-12 超大文件首当其冲）。
+   */
+  private async resolveShellFolders(): Promise<void> {
+    try {
+      const [{ resolveUserShellFolders, pruneMissing }, { setShellFolderMap }] = await Promise.all([
+        import('@junk/shellfolders'),
+        import('@junk/engine')
+      ])
+      const map = await resolveUserShellFolders()
+      const pruned = map ? pruneMissing(map) : null
+      setShellFolderMap(pruned)
+      this.shellFolders = pruned
+      if (pruned) {
+        this.emit('app:shellFolders', pruned)
+      }
+    } catch {
+      // 解析失败不阻断：引擎会退回「同义名猜测」策略
+      this.shellFolders = null
+    }
+  }
+
+  /** 最近一次解析到的用户库目录（供诊断包与设置页展示） */
+  shellFolders: Partial<Record<string, string>> | null = null
 
   invalidateRules(): void {
     this.ruleSet = null

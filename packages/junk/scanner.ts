@@ -439,6 +439,15 @@ export async function scanJunk(
     }
 
     items = items.filter((it) => !excluded(it.fullPath))
+    // 去重：规则的多个根目录可能相互重叠（例如 %USERPROFILE% 与 %SG_DOCUMENTS%
+    // 在未重定向的机器上会指向同一处），必须按路径去重，否则同一文件会被统计两次
+    const seenPath = new Set<string>()
+    items = items.filter((it) => {
+      const k = normKey(it.fullPath)
+      if (seenPath.has(k)) return false
+      seenPath.add(k)
+      return true
+    })
     scannedFiles += stats.scanned
 
     // 重复文件中「保留的那一份」不计入可释放体积

@@ -24,3 +24,6 @@ Thumbs.db
 
 # 临时探测脚本
 .probe*.cjs
+
+# 样本库实际文件（版权/体积原因不入库，仅清单入库）
+tests/samples/files/

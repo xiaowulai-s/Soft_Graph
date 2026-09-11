@@ -105,7 +105,8 @@ npm run pack:win            # 产出 release/1.0.0/ 下的安装包 + 便携版
 | [`docs/03-插件开发.md`](docs/03-插件开发.md) | 浮窗插件契约、五种视图、ctx 能力、示例 |
 | [`docs/04-验证报告.md`](docs/04-验证报告.md) | 内核冒烟 + 真机端到端数据、缺陷修复记录 |
 | [`docs/05-推送与发布.md`](docs/05-推送与发布.md) | 推送远端、Release 资产发布、离线 bundle 搬运 |
-| [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md) | v2.0.0 规划：遗留问题清单、7 条工作主线、里程碑与验收标准 |
+| [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md) | v2.0.0 规划：遗留问题清单、7 条工作主线、里程碑与验收标准、M0 交付明细 |
+| [`docs/benchmarks/`](docs/benchmarks/) | 性能基准报告（每次 `npm run bench` 生成，含达标对照） |
 | [`Update.md`](Update.md) | 版本变更记录与排期 |
 
 ---
@@ -157,17 +158,27 @@ npm run pack:win            # 产出 release/1.0.0/ 下的安装包 + 便携版
 
 ```bash
 npm run typecheck     # tsc + vue-tsc 双套类型检查
+npm test              # 单元测试（esbuild + node:test，零新增依赖）
+npm run bench         # 性能基准（完整，含 13 类全量垃圾扫描）
+npm run bench:quick   # 性能基准（快速，跳过重量级规则）
+npm run samples:collect  # 采集 PE 样本库清单（样本文件不入库）
+npm run samples:verify   # 按清单回归校验解析器
 npm run pack:dir      # 仅产出未打包目录（调试用）
 ```
 
 内核冒烟（不启动 GUI，直接跑扫描内核）：
 
 ```bash
-npx esbuild tests/smoke.ts --bundle --platform=node --format=cjs --external:electron --outfile=.tmp/smoke.cjs
-node .tmp/smoke.cjs
+npm run smoke
 ```
 
-代码规模：43 个源文件 / 约 14,600 行（TS + Vue）。
+真机端到端（需先以 `--remote-debugging-port=9222` 启动应用）：
+
+```bash
+npm run e2e
+```
+
+代码规模：48 个源文件 / 约 16,000 行（TS + Vue）。CI 见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ---
 

@@ -9,9 +9,18 @@
       "risk": "low",
       "defaultSelected": true,
       "match": {
-        "roots": ["%TEMP%", "%WINDIR%\\Temp", "%LOCALAPPDATA%\\Temp"],
-        "patterns": ["*"],
-        "exclude": ["**\\*.lock", "**\\SoftGraph\\**"],
+        "roots": [
+          "%TEMP%",
+          "%WINDIR%\\Temp",
+          "%LOCALAPPDATA%\\Temp"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "exclude": [
+          "**\\*.lock",
+          "**\\SoftGraph\\**"
+        ],
         "maxAgeDays": 1,
         "minSizeBytes": 0,
         "maxDepth": 5
@@ -24,8 +33,12 @@
       "risk": "low",
       "defaultSelected": false,
       "match": {
-        "roots": ["%SG_DRIVES%\\$Recycle.Bin"],
-        "patterns": ["*"],
+        "roots": [
+          "%SG_DRIVES%\\$Recycle.Bin"
+        ],
+        "patterns": [
+          "*"
+        ],
         "maxDepth": 3
       }
     },
@@ -40,7 +53,11 @@
           "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer",
           "%LOCALAPPDATA%\\IconCache.db"
         ],
-        "patterns": ["thumbcache_*.db", "iconcache_*.db", "IconCache.db"],
+        "patterns": [
+          "thumbcache_*.db",
+          "iconcache_*.db",
+          "IconCache.db"
+        ],
         "maxDepth": 1
       }
     },
@@ -64,8 +81,16 @@
           "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache",
           "%APPDATA%\\Mozilla\\Firefox\\Profiles"
         ],
-        "patterns": ["*"],
-        "exclude": ["**\\index-dir\\*", "**\\*.sqlite", "**\\logins.json", "**\\key4.db", "**\\places.sqlite"],
+        "patterns": [
+          "*"
+        ],
+        "exclude": [
+          "**\\index-dir\\*",
+          "**\\*.sqlite",
+          "**\\logins.json",
+          "**\\key4.db",
+          "**\\places.sqlite"
+        ],
         "maxAgeDays": 0,
         "minSizeBytes": 0,
         "maxDepth": 6
@@ -78,8 +103,12 @@
       "risk": "medium",
       "defaultSelected": false,
       "match": {
-        "roots": ["%WINDIR%\\SoftwareDistribution\\Download"],
-        "patterns": ["*"],
+        "roots": [
+          "%WINDIR%\\SoftwareDistribution\\Download"
+        ],
+        "patterns": [
+          "*"
+        ],
         "maxDepth": 4
       }
     },
@@ -96,7 +125,9 @@
           "%SYSTEMDRIVE%\\$WINDOWS.~WS",
           "%SYSTEMDRIVE%\\$Windows.~Q"
         ],
-        "patterns": ["*"],
+        "patterns": [
+          "*"
+        ],
         "wholeDir": true,
         "maxDepth": 2
       }
@@ -116,8 +147,18 @@
           "%LOCALAPPDATA%\\CrashDumps",
           "%LOCALAPPDATA%\\Temp"
         ],
-        "patterns": ["*.log", "*.dmp", "*.mdmp", "*.hdmp", "*.etl", "*.evtx.bak", "Report*"],
-        "exclude": ["**\\WindowsUpdate.log"],
+        "patterns": [
+          "*.log",
+          "*.dmp",
+          "*.mdmp",
+          "*.hdmp",
+          "*.etl",
+          "*.evtx.bak",
+          "Report*"
+        ],
+        "exclude": [
+          "**\\WindowsUpdate.log"
+        ],
         "maxAgeDays": 3,
         "minSizeBytes": 0,
         "maxDepth": 5
@@ -137,10 +178,14 @@
           "%PROGRAMFILES%",
           "%PROGRAMFILES(X86)%"
         ],
-        "patterns": ["*"],
+        "patterns": [
+          "*"
+        ],
         "maxDepth": 2
       },
-      "options": { "maxDirBytes": 209715200 }
+      "options": {
+        "maxDirBytes": 209715200
+      }
     },
     {
       "id": "GC-09",
@@ -149,8 +194,17 @@
       "risk": "medium",
       "defaultSelected": false,
       "match": {
-        "roots": ["%USERPROFILE%\\Downloads", "%WINDIR%\\Installer"],
-        "patterns": ["*.msi", "*.msp", "*.exe", "*.msu", "*.cab"],
+        "roots": [
+          "%SG_DOWNLOADS%",
+          "%WINDIR%\\Installer"
+        ],
+        "patterns": [
+          "*.msi",
+          "*.msp",
+          "*.exe",
+          "*.msu",
+          "*.cab"
+        ],
         "maxAgeDays": 30,
         "minSizeBytes": 1048576,
         "maxDepth": 2
@@ -175,7 +229,9 @@
           "%LOCALAPPDATA%\\pnpm\\store",
           "%LOCALAPPDATA%\\go-build"
         ],
-        "patterns": ["*"],
+        "patterns": [
+          "*"
+        ],
         "maxDepth": 6
       }
     },
@@ -187,12 +243,22 @@
       "defaultSelected": false,
       "algorithm": "duplicate",
       "match": {
-        "roots": ["%USERPROFILE%\\Downloads", "%USERPROFILE%\\Documents", "%USERPROFILE%\\Pictures", "%USERPROFILE%\\Desktop"],
-        "patterns": ["*"],
+        "roots": [
+          "%SG_DOWNLOADS%",
+          "%SG_DOCUMENTS%",
+          "%SG_PICTURES%",
+          "%SG_DESKTOP%"
+        ],
+        "patterns": [
+          "*"
+        ],
         "minSizeBytes": 1048576,
         "maxDepth": 8
       },
-      "options": { "maxCandidates": 60000, "sampleBytes": 65536 }
+      "options": {
+        "maxCandidates": 60000,
+        "sampleBytes": 65536
+      }
     },
     {
       "id": "GC-12",
@@ -202,12 +268,22 @@
       "defaultSelected": false,
       "algorithm": "bigfile",
       "match": {
-        "roots": ["%USERPROFILE%"],
-        "patterns": ["*"],
+        "roots": [
+          "%USERPROFILE%",
+          "%SG_DOCUMENTS%",
+          "%SG_PICTURES%",
+          "%SG_VIDEOS%",
+          "%SG_MUSIC%"
+        ],
+        "patterns": [
+          "*"
+        ],
         "minSizeBytes": 104857600,
         "maxDepth": 8
       },
-      "options": { "topN": 200 }
+      "options": {
+        "topN": 200
+      }
     },
     {
       "id": "GC-13",
@@ -224,7 +300,9 @@
           "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu",
           "%APPDATA%\\Microsoft\\Windows\\Recent"
         ],
-        "patterns": ["*.lnk"],
+        "patterns": [
+          "*.lnk"
+        ],
         "maxDepth": 5
       }
     }

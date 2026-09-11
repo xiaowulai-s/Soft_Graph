@@ -26,9 +26,14 @@ export const CONF_STRONG = 0.75
 export const CONF_WEAK = 0.5
 
 export interface BuildOptions {
-  /** 折叠系统依赖为聚合节点 */
+  /** 折叠系统依赖为聚合节点（kernel32/user32 等高频依赖，避免淹没图谱） */
   collapseSystem?: boolean
-  /** 折叠共享运行库 */
+  /**
+   * 折叠共享运行库（VC++/.NET/Qt 等）为聚合节点。
+   * 默认开启以对齐设计文档 5.3 的分组策略：这些运行库「单独成组」，
+   * 展开后仍可逐项查看 —— 它们恰是用户最关心「能不能删」的对象，
+   * 因此聚合节点上会显示数量徽标，一键即可展开。
+   */
   collapseSharedRuntime?: boolean
   /** T3 间接依赖折叠 */
   collapseTier3?: boolean
@@ -87,7 +92,7 @@ export function buildGraph(
 ): GraphModel {
   const {
     collapseSystem = true,
-    collapseSharedRuntime = false,
+    collapseSharedRuntime = true,
     collapseTier3 = true,
     expanded = new Set<string>(),
     maxNodes = 8000
