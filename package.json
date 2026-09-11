@@ -1,0 +1,56 @@
+{
+  "name": "softgraph",
+  "version": "1.0.0",
+  "description": "SoftGraph — 软件图谱与磁盘清理工具",
+  "main": "./out/main/index.js",
+  "author": "SoftGraph Team",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaowulai-s/Soft_Graph.git"
+  },
+  "homepage": "https://github.com/xiaowulai-s/Soft_Graph",
+  "bugs": {
+    "url": "https://github.com/xiaowulai-s/Soft_Graph/issues"
+  },
+  "keywords": [
+    "electron",
+    "vue3",
+    "typescript",
+    "dependency-graph",
+    "pe-parser",
+    "disk-cleaner",
+    "desktop-widget"
+  ],
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "smoke": "node scripts/run-smoke.mjs",
+    "e2e": "node scripts/run-e2e.mjs",
+    "pack:dir": "electron-vite build && electron-builder --dir",
+    "pack:win": "electron-vite build && electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.10.2",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "d3-force": "^3.0.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "pinia": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vue": "^3.5.13",
+    "vue-tsc": "^2.1.10"
+  }
+}

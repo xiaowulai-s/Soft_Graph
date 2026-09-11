@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-11",
+  "rules": [
+    {
+      "id": "GC-01",
+      "name": "系统临时文件",
+      "description": "用户与系统 TEMP 目录下的临时文件，程序退出后通常不再需要",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": ["%TEMP%", "%WINDIR%\\Temp", "%LOCALAPPDATA%\\Temp"],
+        "patterns": ["*"],
+        "exclude": ["**\\*.lock", "**\\SoftGraph\\**"],
+        "maxAgeDays": 1,
+        "minSizeBytes": 0,
+        "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-02",
+      "name": "回收站",
+      "description": "各磁盘回收站内已删除文件，清空后无法通过回收站还原",
+      "risk": "low",
+      "defaultSelected": false,
+      "match": {
+        "roots": ["%SG_DRIVES%\\$Recycle.Bin"],
+        "patterns": ["*"],
+        "maxDepth": 3
+      }
+    },
+    {
+      "id": "GC-03",
+      "name": "缩略图与图标缓存",
+      "description": "资源管理器缩略图与图标缓存数据库，删除后系统会自动重建",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer",
+          "%LOCALAPPDATA%\\IconCache.db"
+        ],
+        "patterns": ["thumbcache_*.db", "iconcache_*.db", "IconCache.db"],
+        "maxDepth": 1
+      }
+    },
+    {
+      "id": "GC-04",
+      "name": "浏览器缓存",
+      "description": "Chrome / Edge / Firefox 的网页缓存、代码缓存与 GPU 缓存",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\GPUCache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\GPUCache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles",
+          "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache",
+          "%APPDATA%\\Mozilla\\Firefox\\Profiles"
+        ],
+        "patterns": ["*"],
+        "exclude": ["**\\index-dir\\*", "**\\*.sqlite", "**\\logins.json", "**\\key4.db", "**\\places.sqlite"],
+        "maxAgeDays": 0,
+        "minSizeBytes": 0,
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-05",
+      "name": "Windows 更新缓存",
+      "description": "Windows Update 已下载的安装包，删除后系统会在需要时重新下载",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": ["%WINDIR%\\SoftwareDistribution\\Download"],
+        "patterns": ["*"],
+        "maxDepth": 4
+      }
+    },
+    {
+      "id": "GC-06",
+      "name": "旧系统残留",
+      "description": "系统升级后保留的旧版本目录，删除后无法回退到上一个 Windows 版本",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%SYSTEMDRIVE%\\Windows.old",
+          "%SYSTEMDRIVE%\\$WINDOWS.~BT",
+          "%SYSTEMDRIVE%\\$WINDOWS.~WS",
+          "%SYSTEMDRIVE%\\$Windows.~Q"
+        ],
+        "patterns": ["*"],
+        "wholeDir": true,
+        "maxDepth": 2
+      }
+    },
+    {
+      "id": "GC-07",
+      "name": "日志与崩溃转储",
+      "description": "应用日志、内存转储与 Windows 错误报告，仅在排障时需要",
+      "risk": "medium",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Microsoft\\Windows\\WER",
+          "%PROGRAMDATA%\\Microsoft\\Windows\\WER",
+          "%WINDIR%\\Logs",
+          "%WINDIR%\\Minidump",
+          "%LOCALAPPDATA%\\CrashDumps",
+          "%LOCALAPPDATA%\\Temp"
+        ],
+        "patterns": ["*.log", "*.dmp", "*.mdmp", "*.hdmp", "*.etl", "*.evtx.bak", "Report*"],
+        "exclude": ["**\\WindowsUpdate.log"],
+        "maxAgeDays": 3,
+        "minSizeBytes": 0,
+        "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-08",
+      "name": "卸载残留目录",
+      "description": "软件卸载后遗留的空目录与 AppData 孤儿目录",
+      "risk": "medium",
+      "defaultSelected": false,
+      "algorithm": "orphan",
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%",
+          "%APPDATA%",
+          "%PROGRAMFILES%",
+          "%PROGRAMFILES(X86)%"
+        ],
+        "patterns": ["*"],
+        "maxDepth": 2
+      },
+      "options": { "maxDirBytes": 209715200 }
+    },
+    {
+      "id": "GC-09",
+      "name": "安装包残留",
+      "description": "下载目录中的安装包与 Windows\\Installer 中的孤儿缓存包",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": ["%USERPROFILE%\\Downloads", "%WINDIR%\\Installer"],
+        "patterns": ["*.msi", "*.msp", "*.exe", "*.msu", "*.cab"],
+        "maxAgeDays": 30,
+        "minSizeBytes": 1048576,
+        "maxDepth": 2
+      }
+    },
+    {
+      "id": "GC-10",
+      "name": "开发包管理器缓存",
+      "description": "npm / pip / NuGet / Maven / Gradle / yarn 等包管理器的本地缓存",
+      "risk": "low",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\npm-cache\\_cacache",
+          "%APPDATA%\\npm-cache\\_cacache",
+          "%LOCALAPPDATA%\\pip\\cache",
+          "%LOCALAPPDATA%\\Yarn\\Cache",
+          "%USERPROFILE%\\.nuget\\packages",
+          "%USERPROFILE%\\.m2\\repository",
+          "%USERPROFILE%\\.gradle\\caches",
+          "%USERPROFILE%\\.cargo\\registry\\cache",
+          "%LOCALAPPDATA%\\pnpm\\store",
+          "%LOCALAPPDATA%\\go-build"
+        ],
+        "patterns": ["*"],
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-11",
+      "name": "重复文件",
+      "description": "按大小分组后经三段采样哈希与全文件 SHA-256 复核确认的重复文件",
+      "risk": "medium",
+      "defaultSelected": false,
+      "algorithm": "duplicate",
+      "match": {
+        "roots": ["%USERPROFILE%\\Downloads", "%USERPROFILE%\\Documents", "%USERPROFILE%\\Pictures", "%USERPROFILE%\\Desktop"],
+        "patterns": ["*"],
+        "minSizeBytes": 1048576,
+        "maxDepth": 8
+      },
+      "options": { "maxCandidates": 60000, "sampleBytes": 65536 }
+    },
+    {
+      "id": "GC-12",
+      "name": "超大文件",
+      "description": "体积超过 100MB 的文件 TOP 200，仅作占用提示，不自动勾选",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "bigfile",
+      "match": {
+        "roots": ["%USERPROFILE%"],
+        "patterns": ["*"],
+        "minSizeBytes": 104857600,
+        "maxDepth": 8
+      },
+      "options": { "topN": 200 }
+    },
+    {
+      "id": "GC-13",
+      "name": "失效快捷方式",
+      "description": "目标路径已不存在的 .lnk 快捷方式",
+      "risk": "low",
+      "defaultSelected": false,
+      "algorithm": "deadlink",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\Desktop",
+          "%PUBLIC%\\Desktop",
+          "%APPDATA%\\Microsoft\\Windows\\Start Menu",
+          "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu",
+          "%APPDATA%\\Microsoft\\Windows\\Recent"
+        ],
+        "patterns": ["*.lnk"],
+        "maxDepth": 5
+      }
+    }
+  ]
+}

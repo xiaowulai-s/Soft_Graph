@@ -1,0 +1,53 @@
+appId: com.softgraph.app
+productName: SoftGraph
+copyright: Copyright © 2026 SoftGraph
+
+directories:
+  output: release/${version}
+  buildResources: build
+
+# 主进程与 preload 已由 electron-vite 构建到 out/；渲染层静态文件同在 out/renderer
+files:
+  - out/**
+  - package.json
+
+# sql.js 的 WASM 与内核属于运行时必需（原生降级方案），作为资源随包分发
+extraResources:
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sqljs/sql-wasm.wasm
+  - from: node_modules/sql.js/dist/sql-wasm-debug.wasm
+    to: sqljs/sql-wasm-debug.wasm
+
+asar: true
+asarUnpack:
+  - "**/*.node"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  # 未做代码签名时显式声明，避免构建期寻找证书失败
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: SoftGraph
+  uninstallDisplayName: SoftGraph — 软件图谱与磁盘清理工具
+  # 卸载时不删除用户数据（%LOCALAPPDATA%\SoftGraph），隔离区内的文件由此保留可还原性
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: SoftGraph-${version}-portable.exe
+
+# 压缩换取包体；扫描类工具安装包体积敏感
+compression: normal
+npmRebuild: false
+buildDependenciesFromSource: false

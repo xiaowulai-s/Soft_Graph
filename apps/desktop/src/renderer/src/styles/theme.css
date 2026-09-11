@@ -1,0 +1,213 @@
+/**
+ * 视觉规范 —— 完全对齐技术设计方案 8.5 视觉规范色值表
+ * 默认深色主题（图谱对比度更佳），可选浅色主题。
+ */
+
+:root {
+  /* 8.5 色值表 */
+  --bg: #0f1620;
+  --panel: #182230;
+  --panel-2: #1e2a3a;
+  --node-exe: #4a9eff;
+  --node-dll: #22d3ee;
+  --node-plugin: #a78bfa;
+  --node-runtime: #f59e0b;
+  --node-missing: #ef4444;
+  --node-system: #64748b;
+  --risk-low: #22c55e;
+  --risk-medium: #f59e0b;
+  --risk-high: #ef4444;
+  --risk-hint: #64748b;
+  --text: #e2e8f0;
+  --text-2: #94a3b8;
+
+  /* 派生 */
+  --border: #24314a;
+  --border-soft: #1d2738;
+  --hover: #24314a;
+  --accent: var(--node-exe);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --mono: 'Cascadia Mono', 'Consolas', 'JetBrains Mono', monospace;
+  --sans: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-2: #eef1f6;
+  --node-exe: #1d6fd4;
+  --node-dll: #0e8fa5;
+  --node-plugin: #7c53da;
+  --node-runtime: #c47a05;
+  --node-missing: #d32d2d;
+  --node-system: #7a869a;
+  --risk-low: #17a34a;
+  --risk-medium: #c47a05;
+  --risk-high: #d32d2d;
+  --risk-hint: #7a869a;
+  --text: #1b2430;
+  --text-2: #5a6a7d;
+  --border: #d8dfe9;
+  --border-soft: #e6ebf2;
+  --hover: #e8edf5;
+  --shadow: 0 12px 32px rgba(20, 32, 50, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+}
+button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+button.danger {
+  background: var(--risk-high);
+  border-color: var(--risk-high);
+  color: #fff;
+}
+button.danger:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+button.ghost {
+  background: transparent;
+}
+
+input[type='text'],
+input[type='number'],
+input[type='search'],
+select {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  outline: none;
+  user-select: text;
+}
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+input[type='range'] {
+  accent-color: var(--accent);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-2);
+}
+
+.mono {
+  font-family: var(--mono);
+}
+.dim {
+  color: var(--text-2);
+}
+.sel {
+  user-select: text;
+}
+
+.risk-low {
+  color: var(--risk-low);
+}
+.risk-medium {
+  color: var(--risk-medium);
+}
+.risk-high {
+  color: var(--risk-high);
+}
+.risk-hint {
+  color: var(--risk-hint);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+.spin {
+  animation: sg-spin 0.9s linear infinite;
+}
+@keyframes sg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.16s;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
