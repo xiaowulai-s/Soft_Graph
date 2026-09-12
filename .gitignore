@@ -27,3 +27,6 @@ Thumbs.db
 
 # 样本库实际文件（版权/体积原因不入库，仅清单入库）
 tests/samples/files/
+
+# 临时提交信息文件
+.gitmsg.txt
