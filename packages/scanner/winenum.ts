@@ -62,9 +62,11 @@ export interface EnumResult {
 }
 
 /**
- * 一次 PowerShell 调用完成全部来源采集。
- * 合并为单次调用是关键性能手段：PowerShell 冷启动约 300~600ms，
- * 若五个来源分别调用会白白付出 5 倍启动开销（性能目标见 10.1：软件清单枚举 ≤ 5s）。
+ * 五来源采集拆为两个脚本并行执行（v2.0.0 M1）：
+ *   CORE —— 四个纯注册表来源（快，~2s）；STORE —— Get-AppxPackage（慢，独占 ~1s+）。
+ * 两者通过会话池的两个常驻会话并行跑，墙钟时间从「串行相加」变「取最大值」。
+ * （历史注：v1.0.0 合并为单次调用是为省 5 倍进程冷启动；会话池消除了冷启动后，
+ *  单次调用的「串行相加」反而成了瓶颈，拆分并行是更优解。）
  */
 const SCRIPT = String.raw`
 $errors = New-Object System.Collections.ArrayList
@@ -181,7 +183,17 @@ try {
   }
 } catch { [void]$errors.Add('services') }
 
-# ── 5. Microsoft Store（WinRT PackageManager 的 PowerShell 封装） ──
+Write-SgJson ([pscustomobject]@{
+  uninstall = @($uninstall)
+  appPaths  = @($appPaths)
+  services  = @($services)
+  msi       = @($msi)
+  errors    = @($errors)
+})
+`
+
+const STORE_SCRIPT = String.raw`
+$errors = New-Object System.Collections.ArrayList
 $store = New-Object System.Collections.ArrayList
 try {
   $pkgs = Get-AppxPackage -ErrorAction SilentlyContinue
@@ -198,25 +210,21 @@ try {
   }
 } catch { [void]$errors.Add('store') }
 
-Write-SgJson ([pscustomobject]@{
-  uninstall = @($uninstall)
-  appPaths  = @($appPaths)
-  store     = @($store)
-  services  = @($services)
-  msi       = @($msi)
-  errors    = @($errors)
-})
+Write-SgJson ([pscustomobject]@{ store = @($store); errors = @($errors) })
 `
 
 export async function enumerateWindows(): Promise<EnumResult> {
-  const raw = await psJson<Partial<EnumResult>>(SCRIPT, { timeoutMs: 180_000 })
+  const [core, store] = await Promise.all([
+    psJson<Partial<EnumResult>>(SCRIPT, { timeoutMs: 180_000 }),
+    psJson<{ store?: RawStoreApp[]; errors?: string[] }>(STORE_SCRIPT, { timeoutMs: 120_000 })
+  ])
   return {
-    uninstall: asArray(raw?.uninstall),
-    appPaths: asArray(raw?.appPaths),
-    store: asArray(raw?.store),
-    services: asArray(raw?.services),
-    msi: asArray(raw?.msi),
-    errors: asArray(raw?.errors)
+    uninstall: asArray(core?.uninstall),
+    appPaths: asArray(core?.appPaths),
+    store: asArray(store?.store),
+    services: asArray(core?.services),
+    msi: asArray(core?.msi),
+    errors: [...asArray(core?.errors), ...asArray(store?.errors)]
   }
 }
 

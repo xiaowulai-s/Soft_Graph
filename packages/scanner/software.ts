@@ -291,8 +291,8 @@ async function scorePortableDir(
     evidence.push(PORTABLE_FEATURES.manual.label)
   }
 
-  const sizeBytes = await dirSize(dir, 2, 3000)
-
+  // 体积不在此处计算：dirSize 要递归 stat 最多 3000 个文件，是评分阶段最贵的
+  // IO 操作，而阈值判定根本用不到它 —— 由调用方对「命中项」并行补算（v2.0.0 M1）
   return {
     dir: normPath(dir),
     mainExe: normPath(mainExe),
@@ -301,14 +301,16 @@ async function scorePortableDir(
     name: meta.productName || meta.fileDescription || dirStem,
     version: meta.fileVersion,
     publisher: meta.companyName,
-    sizeBytes
+    sizeBytes: 0
   }
 }
 
-/** 浅层目录体积统计（限深度与文件数，避免拖慢扫描） */
+/** 浅层目录体积统计（限深度与文件数，避免拖慢扫描）；文件 stat 分块并行 */
 export async function dirSize(dir: string, maxDepth = 3, maxFiles = 20000): Promise<number> {
   let total = 0
   let count = 0
+  // 单目录内 stat 分块并行：便携目录动辄上千文件，串行 stat 是主要等待
+  const STAT_CHUNK = 16
   async function walk(d: string, depth: number): Promise<void> {
     if (depth > maxDepth || count > maxFiles) return
     let entries: import('node:fs').Dirent[]
@@ -317,25 +319,42 @@ export async function dirSize(dir: string, maxDepth = 3, maxFiles = 20000): Prom
     } catch {
       return
     }
+    const subdirs: string[] = []
+    const files: import('node:fs').Dirent[] = []
     for (const e of entries) {
       if (count > maxFiles) return
-      const full = join(d, e.name)
-      if (e.isDirectory()) await walk(full, depth + 1)
-      else if (e.isFile()) {
-        count++
-        try {
-          total += (await fs.stat(full)).size
-        } catch {
-          /* ignore */
-        }
-      }
+      if (e.isDirectory()) subdirs.push(e.name)
+      else if (e.isFile()) files.push(e)
+    }
+    for (let i = 0; i < files.length && count <= maxFiles; i += STAT_CHUNK) {
+      const chunk = files.slice(i, i + STAT_CHUNK)
+      const sizes = await Promise.all(
+        chunk.map(async (e) => {
+          count++
+          try {
+            return (await fs.stat(join(d, e.name))).size
+          } catch {
+            return 0
+          }
+        })
+      )
+      for (const s of sizes) total += s
+    }
+    for (const name of subdirs) {
+      if (count > maxFiles) return
+      await walk(join(d, name), depth + 1)
     }
   }
   await walk(dir, 0)
   return total
 }
 
-/** 便携软件扫描入口（支持用户指定目录 + 盘符常见目录名） */
+/** 便携软件扫描入口（支持用户指定目录 + 盘符常见目录名）
+ *
+ * v2.0.0 M1：目录处理并发化（worker 池拉取共享 BFS 队列）。
+ * 串行版每个候选要串行跑 readPeMeta + dirSize（递归 stat 最多 3000 文件），
+ * 两个根目录 68 个候选全串联 —— 实测 6.5s；并发后主要等待重叠。
+ */
 export async function scanPortable(
   roots: string[],
   installedPaths: Set<string>,
@@ -344,8 +363,85 @@ export async function scanPortable(
   onProgress?: (cur: string, found: number) => void
 ): Promise<SoftwareItem[]> {
   const found: SoftwareItem[] = []
+  const pendingSize: { dir: string; mainExe: string }[] = []
   const visited = new Set<string>()
+  const rawConc = Number(process.env.SG_PORTABLE_CONCURRENCY ?? 8)
+  const CONCURRENCY = Number.isFinite(rawConc) && rawConc >= 1 ? Math.floor(rawConc) : 8
 
+  let active = 0 // 正在处理目录的 worker 数（决定「队列空但还有人会往里加」）
+  const waiters: Array<() => void> = []
+  const acquire = (): Promise<void> => {
+    if (active < CONCURRENCY) {
+      active++
+      return Promise.resolve()
+    }
+    return new Promise<void>((r) => waiters.push(() => { active++; r() }))
+  }
+  const release = (): void => {
+    active--
+    const w = waiters.shift()
+    if (w) w()
+  }
+
+  const queue: { dir: string; depth: number }[] = []
+
+  async function processOne(dir: string, depth: number): Promise<void> {
+    const key = normKey(dir)
+    if (visited.has(key)) return
+    visited.add(key)
+    onProgress?.(dir, found.length)
+
+    const manual = manualMarks.get(key) === true
+    if (manualMarks.get(key) === false) return // 用户显式纠正为「非便携」
+
+    const cand = await scorePortableDir(dir, installedPaths, manual)
+    if (cand && cand.score >= threshold) {
+      pendingSize.push(cand)
+      found.push({
+        id: softwareId(cand.dir, cand.name),
+        name: cand.name,
+        version: cand.version || '',
+        publisher: cand.publisher || '',
+        installPath: cand.dir,
+        mainExe: cand.mainExe,
+        iconHash: iconHashOf([cand.mainExe]),
+        source: 'portable',
+        sizeBytes: 0, // 命中后统一并行补算
+        portableScore: cand.score,
+        portableEvidence: cand.evidence
+      })
+      return // 命中即不再深入其子目录
+    }
+    if (depth < 2) {
+      try {
+        const subs = await fs.readdir(dir, { withFileTypes: true })
+        for (const s of subs) if (s.isDirectory()) queue.push({ dir: join(dir, s.name), depth: depth + 1 })
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const task = queue.shift()
+      if (!task) {
+        // 队列空：若还有 worker 在处理（可能继续产生子目录任务），让步等待
+        if (active === 0) return
+        await new Promise<void>((r) => setImmediate(r))
+        continue
+      }
+      await acquire()
+      try {
+        if (visited.has(normKey(task.dir))) continue
+        await processOne(task.dir, task.depth)
+      } finally {
+        release()
+      }
+    }
+  }
+
+  // 根目录层先串行读一层（数量少），随后多 worker 并发处理
   for (const root of roots) {
     let level1: import('node:fs').Dirent[]
     try {
@@ -353,46 +449,19 @@ export async function scanPortable(
     } catch {
       continue
     }
-    // 只看 root 下两层目录：root/App 与 root/Category/App
-    const queue: { dir: string; depth: number }[] = []
     for (const e of level1) if (e.isDirectory()) queue.push({ dir: join(root, e.name), depth: 1 })
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, queue.length)) }, () => worker()))
 
-    while (queue.length) {
-      const { dir, depth } = queue.shift()!
-      const key = normKey(dir)
-      if (visited.has(key)) continue
-      visited.add(key)
-      onProgress?.(dir, found.length)
-
-      const manual = manualMarks.get(key) === true
-      if (manualMarks.get(key) === false) continue // 用户显式纠正为「非便携」
-
-      const cand = await scorePortableDir(dir, installedPaths, manual)
-      if (cand && cand.score >= threshold) {
-        found.push({
-          id: softwareId(cand.dir, cand.name),
-          name: cand.name,
-          version: cand.version || '',
-          publisher: cand.publisher || '',
-          installPath: cand.dir,
-          mainExe: cand.mainExe,
-          iconHash: iconHashOf([cand.mainExe]),
-          source: 'portable',
-          sizeBytes: cand.sizeBytes,
-          portableScore: cand.score,
-          portableEvidence: cand.evidence
-        })
-        continue // 命中即不再深入其子目录
-      }
-      if (depth < 2) {
-        try {
-          const subs = await fs.readdir(dir, { withFileTypes: true })
-          for (const s of subs) if (s.isDirectory()) queue.push({ dir: join(dir, s.name), depth: depth + 1 })
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+  // 命中项体积并行补算（延迟到选择之后，非命中目录零开销）
+  if (pendingSize.length) {
+    const byExe = new Map(found.map((f) => [normKey(f.mainExe), f]))
+    await mapPool(pendingSize, 8, async (p) => {
+      const size = await dirSize(p.dir, 2, 3000)
+      const item = byExe.get(normKey(p.mainExe))
+      if (item) item.sizeBytes = size
+      return size
+    })
   }
   return found
 }
@@ -459,18 +528,27 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
   const cleaned = raw.uninstall.filter((u) => !isNoise(u))
   const total = cleaned.length || 1
   let done = 0
-  let batch: SoftwareItem[] = []
 
-  for (const u of cleaned) {
-    if (signal?.cancelled) break
-    done++
+  // v2.0.0 M1：findMainExe（目录深度 2 遍历 + 逐 exe stat）是纯 IO 等待，
+  // 串行 280 项约 1.5s；并发后主要等待互相重叠。进度计数按完成数推进。
+  const mainExeList = await mapPool(cleaned, 8, async (u) => {
+    if (signal?.cancelled) return ''
     const name = (u.DisplayName || '').trim()
-    onProgress?.('解析已安装软件', (done / total) * 60, name, items.length)
-
     const installPath = inferInstallPath(u)
     const hint = u.DisplayIcon ? normPath(u.DisplayIcon.split(',')[0]) : appPathByExe.get(name.toLowerCase() + '.exe')
     const mainExe = await findMainExe(installPath, name, hint && extName(hint) === 'exe' ? hint : undefined)
+    done++
+    if (done % 10 === 0) onProgress?.('解析已安装软件', (done / total) * 60, name, done)
+    return mainExe
+  })
+  if (signal?.cancelled) return dedupe(items)
 
+  const batch: SoftwareItem[] = []
+  for (let i = 0; i < cleaned.length; i++) {
+    const u = cleaned[i]
+    const mainExe = mainExeList[i]
+    const name = (u.DisplayName || '').trim()
+    const installPath = inferInstallPath(u)
     // 既无安装目录又无主程序 → 无法参与依赖图谱，跳过
     if (!installPath && !mainExe) continue
 
@@ -495,19 +573,23 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
     batch.push(item)
     if (batch.length >= 25) {
       onBatch?.(batch)
-      batch = []
+      batch.length = 0
     }
   }
   if (batch.length) onBatch?.(batch)
 
-  // Microsoft Store 应用
+  // Microsoft Store 应用（同样并发化 findMainExe）
   onProgress?.('解析 Store 应用', 70, '', items.length)
+  const storeTargets = raw.store.filter((s) => normPath(s.InstallLocation))
+  const storeExes = await mapPool(storeTargets, 8, async (s) => {
+    if (signal?.cancelled) return ''
+    return findMainExe(normPath(s.InstallLocation), s.Name)
+  })
   const storeItems: SoftwareItem[] = []
-  for (const s of raw.store) {
-    if (signal?.cancelled) break
+  for (let i = 0; i < storeTargets.length; i++) {
+    const s = storeTargets[i]
+    const mainExe = storeExes[i]
     const loc = normPath(s.InstallLocation)
-    if (!loc) continue
-    const mainExe = await findMainExe(loc, s.Name)
     const displayName = s.Name.replace(/^[^.]*\./, '') || s.Name
     storeItems.push({
       id: softwareId(loc, s.PackageFullName),
@@ -636,8 +718,31 @@ function mergePick(a: SoftwareItem, b: SoftwareItem): SoftwareItem {
   }
 }
 
-/** 完整软件发现流程 */
-export async function discoverSoftware(opts: ScanSoftwareOptions = {}): Promise<SoftwareItem[]> {
+/**
+ * 定并发映射池（v2.0.0 M1）：文件系统调用是 IO 等待，串行逐项 await 会把
+ * 延迟完全串联（280 项 findMainExe 串行 1.45s）。结果按输入顺序返回。
+ */
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const raw = Number(concurrency)
+  const conc = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 8
+  const workers = Array.from({ length: Math.min(conc, items.length) }, async () => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+/** 完整软件发现流程 */export async function discoverSoftware(opts: ScanSoftwareOptions = {}): Promise<SoftwareItem[]> {
   const { onProgress, onBatch, signal } = opts
   onProgress?.('枚举注册表与系统来源', 4, '正在读取注册表卸载项…', 0)
   const raw = await enumerateWindows()
