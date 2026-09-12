@@ -8,9 +8,49 @@
  *   高风险 → 必须手动输入「确认删除」四个字
  */
 import { computed, ref, watch } from 'vue'
-import type { CleanResult, DeletePlan, RiskLevel } from '@shared/types'
+import type { CleanResult, DeletePlan, LockerInfo, RiskLevel } from '@shared/types'
 import { RISK_LABEL } from '@shared/types'
 import { formatBytes } from '@shared/util'
+
+/** 占用查询与重启后删除（v2.0.0 M2/B2+B3） */
+const lockers = ref<Record<string, LockerInfo[]>>({})
+const lockerBusy = ref<string>('')
+const lockerText = ref('')
+const rebootText = ref('')
+const rebootOk = ref(false)
+
+async function queryLocker(path: string): Promise<void> {
+  lockerBusy.value = path
+  lockerText.value = ''
+  try {
+    const r = await window.api.cleanLockers(path)
+    lockers.value = { ...lockers.value, [path]: r.lockers ?? [] }
+    if (r.lockers?.length) {
+      lockerText.value =
+        `占用者：` + r.lockers.map((l) => `${l.name}(PID ${l.pid}${l.appType === 3 ? ', 服务' : ''})`).join('、')
+    } else {
+      lockerText.value = r.error ? `查询失败：${r.error}` : '未检测到占用进程（可能已被释放或需管理员权限）'
+    }
+  } catch (e) {
+    lockerText.value = `查询失败：${(e as Error).message}`
+  } finally {
+    lockerBusy.value = ''
+  }
+}
+
+async function rebootDelete(paths: string[]): Promise<void> {
+  rebootText.value = ''
+  try {
+    const r = await window.api.cleanRebootDelete(paths)
+    rebootOk.value = r.ok > 0
+    if (r.ok > 0) rebootText.value = `已登记 ${r.ok} 项，重启后自动删除。`
+    else if (r.needsElevation) rebootText.value = '需要以管理员身份运行本程序才能登记重启后删除。'
+    else rebootText.value = r.errors.join('；') || '登记失败'
+  } catch (e) {
+    rebootOk.value = false
+    rebootText.value = `登记失败：${(e as Error).message}`
+  }
+}
 
 const props = defineProps<{
   plan: DeletePlan | null
@@ -104,13 +144,30 @@ function proceed(): void {
           </div>
 
           <div v-if="result.failed.length" class="cd-sec">
-            <div class="cd-sec-t">失败项（{{ result.failed.length }}）</div>
+            <div class="cd-sec-t">
+              失败项（{{ result.failed.length }}）
+              <span class="dim cd-sec-hint">被占用项可查占用进程或登记为重启后删除</span>
+            </div>
             <ul class="cd-list">
               <li v-for="f in result.failed.slice(0, 40)" :key="f.path">
                 <span class="mono cd-p">{{ f.path }}</span>
                 <span class="risk-medium cd-r">{{ f.reason }}</span>
+                <span class="cd-acts">
+                  <button class="cd-mini" :disabled="lockerBusy === f.path" @click="queryLocker(f.path)">
+                    {{ lockerBusy === f.path ? '查询中…' : '查占用' }}
+                  </button>
+                  <button
+                    v-if="lockers[f.path]?.length"
+                    class="cd-mini"
+                    @click="rebootDelete([f.path])"
+                  >
+                    重启后删除
+                  </button>
+                </span>
               </li>
             </ul>
+            <div v-if="lockerText" class="cd-note mono">{{ lockerText }}</div>
+            <div v-if="rebootText" class="cd-note" :class="rebootOk ? '' : 'risk-medium'">{{ rebootText }}</div>
             <div v-if="result.failed.length > 40" class="dim cd-more">还有 {{ result.failed.length - 40 }} 项…</div>
           </div>
 
@@ -434,5 +491,32 @@ function proceed(): void {
 }
 .cd-res-grid b {
   font-size: 16px;
+}
+.cd-sec-hint {
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 8px;
+}
+.cd-acts {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.cd-mini {
+  background: var(--bg-hover);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.cd-mini:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.cd-mini:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 </style>

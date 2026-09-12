@@ -41,6 +41,8 @@ const api: SoftGraphApi = {
   // 清理
   cleanPlan: (payload) => ipcRenderer.invoke(CH.CLEAN_PLAN, payload),
   cleanExecute: (payload) => ipcRenderer.invoke(CH.CLEAN_EXECUTE, payload),
+  cleanLockers: (path) => ipcRenderer.invoke(CH.CLEAN_LOCKERS, { path }),
+  cleanRebootDelete: (paths) => ipcRenderer.invoke(CH.CLEAN_REBOOT_DELETE, { paths }),
   quarantineList: () => ipcRenderer.invoke(CH.QUARANTINE_LIST),
   quarantineRestore: (payload) => ipcRenderer.invoke(CH.QUARANTINE_RESTORE, payload),
   quarantinePurge: (payload) => ipcRenderer.invoke(CH.QUARANTINE_PURGE, payload),

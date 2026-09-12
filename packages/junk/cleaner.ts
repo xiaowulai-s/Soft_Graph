@@ -419,32 +419,19 @@ export async function purge(
   return { ok, freed }
 }
 
-/** 查询占用某文件的进程（按需调用，用于失败项的可操作提示） */
-export async function findLockingProcesses(path: string): Promise<{ pid: number; name: string }[]> {
-  try {
-    const { psJson, asArray } = await import('../scanner/psbridge')
-    const rows = asArray(
-      await psJson<{ pid: number; name: string }[]>(
-        String.raw`
-$target = $env:SG_TARGET
-$out = New-Object System.Collections.ArrayList
-try {
-  $procs = Get-Process | Where-Object { $_.Path } 
-  foreach ($p in $procs) {
-    try {
-      foreach ($m in $p.Modules) {
-        if ($m.FileName -eq $target) { [void]$out.Add([pscustomobject]@{ pid = $p.Id; name = $p.ProcessName }); break }
-      }
-    } catch { }
-  }
-} catch { }
-Write-SgJson @($out)
-`,
-        { timeoutMs: 30_000, env: { SG_TARGET: path } }
-      )
-    )
-    return rows
-  } catch {
-    return []
-  }
-}
+/**
+ * 查询占用某文件的进程（失败项的可操作提示）
+ *
+ * v2.0.0 M2/B3：改用 Restart Manager（P/Invoke），替代 v1.0.0 的
+ * 「遍历所有进程的模块列表」—— 后者要枚举数百个进程且对受保护进程会失败，
+ * 实测既慢又不准；RM 直接由系统给出持有句柄的进程，且能识别服务与关键进程。
+ * 实现见 packages/junk/locks.ts。
+ */
+export {
+  findLockingProcesses,
+  findLockingProcessesDetailed,
+  scheduleDeleteOnReboot,
+  isElevated,
+  type LockerInfo,
+  type RebootDeleteResult
+} from './locks'

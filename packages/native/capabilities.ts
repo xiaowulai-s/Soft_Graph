@@ -48,6 +48,12 @@ export interface NativeCapabilities {
   usn: boolean
   /** Restart Manager 占用检测与延迟删除可用 */
   restartManager: boolean
+  /**
+   * Restart Manager 是否可由 PowerShell P/Invoke 提供（默认路径）
+   * v2.0.0 M2：即便没有原生模块，也能通过 Add-Type P/Invoke 拿到真实能力，
+   * 因此 UI 不应简单显示「不可用」，而要区分原生 / P/Invoke / 完全不可用。
+   */
+  restartManagerPs: boolean
   /** API Set 动态映射可用 */
   apiSet: boolean
   /** 原生模块版本（若加载成功） */
@@ -71,6 +77,8 @@ export function loadNativeCapabilities(force = false): NativeCapabilities {
     source: 'fallback',
     usn: false,
     restartManager: false,
+    // Windows 上默认走 PowerShell P/Invoke：Rstrtmgr.dll 与 kernel32 均为系统自带
+    restartManagerPs: process.platform === 'win32',
     apiSet: false,
     version,
     loadError,
@@ -109,6 +117,7 @@ export function loadNativeCapabilities(force = false): NativeCapabilities {
     source: anyEnabled ? 'native' : 'fallback',
     usn,
     restartManager,
+    restartManagerPs: process.platform === 'win32',
     apiSet,
     version,
     loadError: anyEnabled ? undefined : '原生模块已加载但未导出任何已实现的增强能力',
@@ -132,9 +141,10 @@ export function getNativeModule(): NativeModuleShape | null {
  * 降级策略说明表 —— 供 UI（关于页/诊断包）与日志使用。
  * 让「为什么没启用增强能力」对用户与排查者都是明确的。
  */
-export const FALLBACK_STRATEGY: Record<'usn' | 'restartManager' | 'apiSet', string> = {
+export const FALLBACK_STRATEGY: Record<'usn' | 'restartManager' | 'restartManagerPs' | 'apiSet', string> = {
   usn: '改用按卷 mtime 水位增量扫描（非 NTFS 卷同样适用），代价是全量首扫仍需完整遍历',
-  restartManager: '改用移动失败按 errno 判定占用，并给出「关闭占用进程后重试」提示',
+  restartManager: '未安装可选原生模块，改用 PowerShell P/Invoke 调用 Restart Manager（能力等价）',
+  restartManagerPs: '非 Windows 平台不可用时，占用检测降级为「按 errno 判定 + 关闭进程后重试」提示',
   apiSet: '改用内置静态前缀映射表覆盖常见 API Set 族群，未命中者标记为虚拟而非缺失'
 }
 
@@ -152,9 +162,13 @@ export function describeCapabilities(caps: NativeCapabilities = loadNativeCapabi
     rows: [
       { capability: 'USN Journal 增量扫描', enabled: caps.usn, fallback: caps.usn ? undefined : FALLBACK_STRATEGY.usn },
       {
-        capability: 'Restart Manager 占用检测',
-        enabled: caps.restartManager,
-        fallback: caps.restartManager ? undefined : FALLBACK_STRATEGY.restartManager
+        capability: '占用检测与重启后删除（Restart Manager）',
+        enabled: caps.restartManager || caps.restartManagerPs,
+        fallback: caps.restartManager
+          ? undefined
+          : caps.restartManagerPs
+            ? FALLBACK_STRATEGY.restartManager
+            : FALLBACK_STRATEGY.restartManagerPs
       },
       {
         capability: 'API Set 动态映射',

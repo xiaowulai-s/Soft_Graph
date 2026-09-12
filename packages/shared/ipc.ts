@@ -15,6 +15,7 @@ import type {
   GraphModel,
   JunkItem,
   JunkSummary,
+  LockerInfo,
   QuarantineRecord,
   ScanProgress,
   SoftwareItem
@@ -49,6 +50,10 @@ export const CH = {
   CLEAN_PLAN: 'clean:plan',
   CLEAN_EXECUTE: 'clean:execute',
   CLEAN_PROGRESS: 'clean:progress',
+  /** v2.0.0 M2/B3：查询占用某文件的进程（Restart Manager） */
+  CLEAN_LOCKERS: 'clean:lockers',
+  /** v2.0.0 M2/B2：登记重启后删除（MOVEFILE_DELAY_UNTIL_REBOOT） */
+  CLEAN_REBOOT_DELETE: 'clean:rebootDelete',
   QUARANTINE_LIST: 'quarantine:list',
   QUARANTINE_RESTORE: 'quarantine:restore',
   QUARANTINE_PURGE: 'quarantine:purge',
@@ -118,6 +123,10 @@ export interface SoftGraphApi {
 
   cleanPlan(payload: { itemIds: string[]; useQuarantine: boolean }): Promise<DeletePlan>
   cleanExecute(payload: { itemIds: string[]; useQuarantine: boolean }): Promise<CleanResult>
+  /** 占用查询（Restart Manager；失败返回空数组与原因，不抛异常） */
+  cleanLockers(path: string): Promise<{ lockers: LockerInfo[]; error?: string }>
+  /** 重启后删除登记；需要管理员权限，未提权时返回 needsElevation */
+  cleanRebootDelete(paths: string[]): Promise<{ ok: number; needsElevation: boolean; errors: string[] }>
   quarantineList(): Promise<QuarantineRecord[]>
   quarantineRestore(payload: { ids: string[] }): Promise<{ ok: number; failed: string[] }>
   quarantinePurge(payload: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }>

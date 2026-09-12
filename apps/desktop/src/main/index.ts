@@ -222,6 +222,30 @@ function registerIpc(): void {
     })()
   )
   h(CH.QUARANTINE_LIST, () => scan.quarantineList())
+
+  // v2.0.0 M2/B3：占用查询（Restart Manager，失败不抛异常）
+  h(CH.CLEAN_LOCKERS, async (payload: { path: string }) => {
+    const { findLockingProcessesDetailed } = await import('@junk/locks')
+    const r = await findLockingProcessesDetailed(payload.path)
+    return { lockers: r.lockers, error: r.error }
+  })
+
+  // v2.0.0 M2/B2：登记重启后删除（需管理员权限；未提权时返回 needsElevation 供 UI 引导）
+  h(CH.CLEAN_REBOOT_DELETE, async (payload: { paths: string[] }) => {
+    const { scheduleDeleteOnReboot } = await import('@junk/locks')
+    let ok = 0
+    let needsElevation = false
+    const errors: string[] = []
+    for (const p of payload.paths ?? []) {
+      const r = await scheduleDeleteOnReboot(p)
+      if (r.ok) ok++
+      else {
+        if (r.needsElevation) needsElevation = true
+        errors.push(`${p}：${r.reason ?? '未知原因'}`)
+      }
+    }
+    return { ok, needsElevation, errors: errors.slice(0, 10) }
+  })
   h(CH.QUARANTINE_RESTORE, (payload: { ids: string[] }) => scan.quarantineRestore(payload.ids))
   h(CH.QUARANTINE_PURGE, (payload: { ids?: string[]; expiredOnly?: boolean }) => scan.quarantinePurge(payload))
 

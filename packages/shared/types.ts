@@ -273,6 +273,16 @@ export interface DeletePlan
   blocked: { path: string; reason: string }[]
 }
 
+/** 文件占用者（v2.0.0 M2/B3 · Restart Manager） */
+export interface LockerInfo {
+  pid: number
+  name: string
+  /** Restart Manager 应用类型：0=未知 1=主窗口 2=其他窗口 3=服务 4=资源管理器 5=控制台 6=关键进程 */
+  appType: number
+  /** 系统是否认为该进程可安全重启 */
+  restartable: boolean
+}
+
 export interface CleanResult {
   taskId: string
   ok: number
