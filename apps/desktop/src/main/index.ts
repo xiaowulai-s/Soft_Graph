@@ -439,6 +439,9 @@ if (!gotLock) {
     registry?.dispose()
     await settings?.flush()
     await store?.close()
+    // 结束常驻 PowerShell 会话池（A1：避免遗留 powershell.exe 子进程）
+    const { shutdownPsPool } = await import('@scanner/psbridge')
+    shutdownPsPool()
   })
 
   app.on('activate', () => createMainWindow())

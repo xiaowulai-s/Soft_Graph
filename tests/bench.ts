@@ -246,7 +246,7 @@ async function main(): Promise<void> {
   for (const rule of activeRules) {
     const t0 = Date.now()
     try {
-      const res = await scanJunk({ schemaVersion: 1, updatedAt: '', rules: [rule] }, ctx, {})
+      const res = await scanJunk({ schemaVersion: 1, updatedAt: '', rules: [rule], warnings: [] }, ctx, {})
       const ms = Date.now() - t0
       const c = res.summary.categories[0]
       perCategory.push({ id: rule.id, name: rule.name, ms, bytes: c?.sizeBytes ?? 0, count: c?.count ?? 0 })

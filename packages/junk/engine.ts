@@ -306,81 +306,138 @@ export async function walkRule(
     onHit({ path: full, size, mtime, isDir })
   }
 
+  // ── 目录级并发（v2.0.0 M1 / A 线）──
+  // fs 遍历是 IO 密集：串行版每个 syscall 的延迟完全串联（实测 GC-12 62.6s 几乎全是等待）。
+  // 这里用信号量让多个目录同时 readdir/stat。真实并行度还受 libuv 线程池限制（默认 4），
+  // 建议 SG_WALK_CONCURRENCY ≤ 线程池大小；基准运行器已注入 UV_THREADPOOL_SIZE=16。
+  // 注意：env 可能被外部写成非法值（如字符串 "undefined"），Number() 会得到 NaN，
+  // NaN 会让信号量判定 `active < CONCURRENCY` 恒为假从而死锁 —— 必须兜底
+  const rawConc = Number(process.env.SG_WALK_CONCURRENCY ?? 8)
+  const CONCURRENCY = Number.isFinite(rawConc) && rawConc >= 1 ? Math.floor(rawConc) : 8
+
+  let active = 0 // 信号量持有数
+  let pending = 0 // 未完成任务数（根任务 + 子目录任务，同步预计数避免竞态）
+  const waiters: Array<() => void> = []
+  let finished: (() => void) | null = null
+  let failed: Error | null = null
+
+  const acquire = (): Promise<void> => {
+    if (active < CONCURRENCY) {
+      active++
+      return Promise.resolve()
+    }
+    return new Promise<void>((r) => waiters.push(() => { active++; r() }))
+  }
+  const release = (): void => {
+    active--
+    const w = waiters.shift()
+    if (w) w()
+  }
+  /** 任务完成：递减计数，归零即整个遍历结束 */
+  const doneOne = (): void => {
+    pending--
+    if (pending === 0) finished?.()
+  }
+
   async function walk(dir: string, depth: number): Promise<void> {
-    if (signal?.cancelled) return
-    if (depth > rule.maxDepth) return
-
-    let entries: import('node:fs').Dirent[]
+    await acquire()
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      stats.denied++
-      return
-    }
-
-    for (const e of entries) {
       if (signal?.cancelled) return
-      const full = join(dir, e.name)
+      if (depth > rule.maxDepth) return
 
-      if (++tickCounter % 2000 === 0) onTick?.(full, stats.scanned)
-
-      // 符号链接 / reparse point 一律不跟随（9.1 符号链接防护）
-      if (e.isSymbolicLink()) continue
-
-      if (e.isDirectory()) {
-        if (SKIP_DIR_NAMES.has(e.name.toLowerCase())) continue
-        if (!isScannable(full)) continue
-        await walk(full, depth + 1)
-        continue
-      }
-      if (!e.isFile()) continue
-
-      stats.scanned++
-      const name = e.name
-      if (!matchAny(name, rule.patterns) && !matchAny(full, rule.patterns)) continue
-      if (rule.exclude.length && (matchAny(full, rule.exclude) || matchAny(name, rule.exclude))) continue
-      if (!isScannable(full)) continue
-
-      let st: import('node:fs').Stats
+      let entries: import('node:fs').Dirent[]
       try {
-        st = await fs.stat(full)
+        entries = await fs.readdir(dir, { withFileTypes: true })
       } catch {
-        continue
+        stats.denied++
+        return
       }
-      consider(normPath(full), st.size, st.mtimeMs, false)
+
+      for (const e of entries) {
+        if (signal?.cancelled) return
+        const full = join(dir, e.name)
+
+        if (++tickCounter % 2000 === 0) onTick?.(full, stats.scanned)
+
+        // 符号链接 / reparse point 一律不跟随（9.1 符号链接防护）
+        if (e.isSymbolicLink()) continue
+
+        if (e.isDirectory()) {
+          if (SKIP_DIR_NAMES.has(e.name.toLowerCase())) continue
+          if (!isScannable(full)) continue
+          pending++
+          void walk(full, depth + 1)
+            .catch((err) => {
+              failed = failed ?? err
+            })
+            .finally(doneOne)
+          continue
+        }
+        if (!e.isFile()) continue
+
+        stats.scanned++
+        const name = e.name
+        if (!matchAny(name, rule.patterns) && !matchAny(full, rule.patterns)) continue
+        if (rule.exclude.length && (matchAny(full, rule.exclude) || matchAny(name, rule.exclude))) continue
+        if (!isScannable(full)) continue
+
+        let st: import('node:fs').Stats
+        try {
+          st = await fs.stat(full)
+        } catch {
+          continue
+        }
+        consider(normPath(full), st.size, st.mtimeMs, false)
+      }
+    } finally {
+      release()
     }
   }
 
-  for (const root of rule.roots) {
-    if (signal?.cancelled) return
-    let st: import('node:fs').Stats
-    try {
-      st = await fs.stat(root)
-    } catch {
-      continue
-    }
+  await new Promise<void>((resolve) => {
+    finished = resolve
+    for (const root of rule.roots) {
+      if (signal?.cancelled) break
+      pending++ // 同步预计数：根任务的 stat 期间 pending 也不会短暂归零
+      void (async () => {
+        let st: import('node:fs').Stats
+        try {
+          st = await fs.stat(root)
+        } catch {
+          return
+        }
 
-    if (st.isFile()) {
-      // root 直接指向文件（如 %LOCALAPPDATA%\IconCache.db）
-      stats.scanned++
-      if (matchAny(baseName(root), rule.patterns) && isScannable(root)) {
-        consider(normPath(root), st.size, st.mtimeMs, false)
-      }
-      continue
-    }
-    if (!st.isDirectory()) continue
+        if (st.isFile()) {
+          // root 直接指向文件（如 %LOCALAPPDATA%\IconCache.db）
+          stats.scanned++
+          if (matchAny(baseName(root), rule.patterns) && isScannable(root)) {
+            consider(normPath(root), st.size, st.mtimeMs, false)
+          }
+          return
+        }
+        if (!st.isDirectory()) return
 
-    // wholeDir：整个目录作为一个条目计入（如 Windows.old）
-    if (rule.wholeDir) {
-      if (!isScannable(root)) continue
-      const size = await quickDirSize(root, signal)
-      if (size > 0) consider(normPath(root), size, st.mtimeMs, true)
-      continue
-    }
+        // wholeDir：整个目录作为一个条目计入（如 Windows.old）
+        if (rule.wholeDir) {
+          if (!isScannable(root)) return
+          const size = await quickDirSize(root, signal)
+          if (size > 0) consider(normPath(root), size, st.mtimeMs, true)
+          return
+        }
 
-    onTick?.(root, stats.scanned)
-    await walk(root, 0)
-  }
+        onTick?.(root, stats.scanned)
+        await walk(root, 0)
+      })()
+        .catch((err) => {
+          failed = failed ?? err
+        })
+        .finally(doneOne)
+    }
+    // 全部根节点被取消跳过（signal）时不会有任何任务产生 —— 直接完成
+    if (pending === 0) finished?.()
+  })
+
+  if (failed) throw failed
 }
 
 /** 目录体积快速统计（用于 wholeDir 规则） */

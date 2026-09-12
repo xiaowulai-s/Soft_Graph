@@ -38,5 +38,10 @@ execFileSync(
   { cwd: root, stdio: 'inherit' }
 )
 
-const r = spawnSync(process.execPath, [bundle, ...process.argv.slice(2)], { cwd: root, stdio: 'inherit' })
+const r = spawnSync(process.execPath, [bundle, ...process.argv.slice(2)], {
+  cwd: root,
+  stdio: 'inherit',
+  // libuv 线程池只在进程初始化时读取环境变量，必须在 spawn 时注入（并发遍历依赖它）
+  env: { ...process.env, UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE ?? '16' }
+})
 process.exit(r.status ?? 1)
