@@ -108,8 +108,13 @@ async function main() {
   const token = getToken()
   log(`凭据就绪（PAT scope=repo）。发布 ${REPO} ${tag}`)
 
-  // 1. 确保 tag 存在（无则创建并推送）
-  const tags = await withRetry('ls-remote tags', () => req(`/repos/${OWNER}/${REPO}/git/ref/tags/${tag}`, { token }))
+  // 1. 确保 tag 存在（无则创建并推送；404 = 尚不存在，属正常路径，不重试）
+  let tags = null
+  try {
+    tags = await req(`/repos/${OWNER}/${REPO}/git/ref/tags/${tag}`, { token })
+  } catch (e) {
+    if (e.status !== 404) throw e
+  }
   if (!tags?.object?.sha) {
     log(`创建 tag ${tag} …`)
     const commit = await req(`/repos/${OWNER}/${REPO}/git/refs/heads/main`, { token })
