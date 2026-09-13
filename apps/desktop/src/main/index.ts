@@ -190,7 +190,9 @@ function registerIpc(): void {
   })
 
   // ── 垃圾 ──
-  h(CH.JUNK_SCAN, (payload?: { categoryIds?: string[] }) => scan.scanJunkNow(payload?.categoryIds))
+  h(CH.JUNK_SCAN, (payload?: { categoryIds?: string[]; force?: boolean }) =>
+    scan.scanJunkNow(payload?.categoryIds, payload?.force ?? false)
+  )
   h(CH.JUNK_CANCEL, () => scan.cancelJunkScan())
   h(CH.JUNK_SUMMARY, () => scan.junkSummary())
   h(CH.JUNK_ITEMS, (payload: { categoryId: string; offset?: number; limit?: number; sort?: 'size' | 'mtime' | 'path' }) =>

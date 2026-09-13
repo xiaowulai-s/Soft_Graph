@@ -110,7 +110,7 @@ export interface SoftGraphApi {
   expandGroup(payload: { softwareId: string; nodeId: string }): Promise<GraphModel>
   fileDetail(payload: { path: string }): Promise<FileDetail>
 
-  scanJunk(payload?: { categoryIds?: string[] }): Promise<{ scanId: string }>
+  scanJunk(payload?: { categoryIds?: string[]; force?: boolean }): Promise<{ scanId: string }>
   cancelJunkScan(): Promise<void>
   junkSummary(): Promise<JunkSummary | null>
   junkItems(payload: {

@@ -11,6 +11,16 @@ import type { JunkCategorySummary, JunkItem, JunkSummary, RiskLevel } from '../s
 import { baseName, normKey, normPath, uid } from '../shared/util'
 import { isOneClickEligible } from '../shared/safety'
 import { walkRule, quickDirSize, looksOrphan, type CompiledRule, type RuleSet, type WalkStats } from './engine'
+import {
+  collectSignatures,
+  emptyCache,
+  isCacheUsable,
+  refreshItems,
+  signaturesEqual,
+  CACHE_VERSION,
+  type CacheFile,
+  type RuleCache
+} from './incremental'
 
 export interface JunkScanContext {
   /** 已安装软件名（GC-08 孤儿目录判定） */
@@ -26,12 +36,20 @@ export interface JunkScanOptions {
   categoryIds?: string[]
   onProgress?: (phase: string, percent: number, current: string, found: number) => void
   signal?: { cancelled: boolean }
+  /** 增量缓存（M2/A5）：提供则可与上次签名比对，未变化的规则直接复用结果 */
+  cache?: CacheFile
+  /** 强制全量重扫（忽略增量缓存） */
+  force?: boolean
 }
 
 export interface JunkScanResult {
   scanId: string
   items: JunkItem[]
   summary: JunkSummary
+  /** 更新后的缓存（调用方负责持久化） */
+  cache: CacheFile
+  /** 本次复用了缓存的规则 id */
+  reusedRules: string[]
 }
 
 function itemId(path: string, categoryId: string): string {
@@ -372,6 +390,10 @@ export async function scanJunk(
   const t0 = Date.now()
   const scanId = uid('scan_')
 
+  const cache: CacheFile = opts.cache ?? emptyCache()
+  const cacheUsable = !opts.force && isCacheUsable(cache)
+  const reusedRules: string[] = []
+
   const active = ruleSet.rules.filter((r) => !categoryIds || categoryIds.length === 0 || categoryIds.includes(r.id))
   const allItems: JunkItem[] = []
   const categories: JunkCategorySummary[] = []
@@ -392,32 +414,53 @@ export async function scanJunk(
 
     let items: JunkItem[] = []
     const stats: WalkStats = { scanned: 0, denied: 0 }
+    let cachedHit = false
 
     const tick = (phase: string, cur: string, n: number): void => {
       onProgress?.(`${rule.name} · ${phase}`, base + span * 0.6, cur, allItems.length + n)
     }
 
-    try {
-      switch (rule.algorithm) {
-        case 'duplicate':
-          items = await findDuplicates(rule, signal, tick)
-          break
-        case 'bigfile':
-          items = await findBigFiles(rule, signal, tick)
-          break
-        case 'deadlink':
-          items = await findDeadLinks(rule, signal, tick)
-          break
-        case 'orphan':
-          items = await findOrphans(rule, ctx, signal, tick)
-          break
-        default: {
-          const acc: JunkItem[] = []
-          await walkRule(
-            rule,
-            (hit) => {
-              acc.push({
-                id: itemId(hit.path, rule.id),
+    // ── 增量快路径（M2/A5）：目录签名未变 → 复用上次结果，仅重新 stat 刷新大小 ──
+    // 签名采集本身只做 readdir + 目录 stat（实测约为完整遍历的 15% 成本）。
+    let sig = null as Awaited<ReturnType<typeof collectSignatures>> | null
+    if (cacheUsable && cache.rules[rule.id]) {
+      try {
+        sig = await collectSignatures(rule, signal)
+        const prev = cache.rules[rule.id]
+        if (signaturesEqual(sig, prev.sig)) {
+          items = await refreshItems(prev.items, signal)
+          cachedHit = true
+          reusedRules.push(rule.id)
+          onProgress?.(`${rule.name} · 复用增量缓存`, base + span * 0.9, '', allItems.length + items.length)
+        }
+      } catch {
+        sig = null
+        cachedHit = false
+      }
+    }
+
+    if (!cachedHit) {
+      try {
+        switch (rule.algorithm) {
+          case 'duplicate':
+            items = await findDuplicates(rule, signal, tick)
+            break
+          case 'bigfile':
+            items = await findBigFiles(rule, signal, tick)
+            break
+          case 'deadlink':
+            items = await findDeadLinks(rule, signal, tick)
+            break
+          case 'orphan':
+            items = await findOrphans(rule, ctx, signal, tick)
+            break
+          default: {
+            const acc: JunkItem[] = []
+            await walkRule(
+              rule,
+              (hit) => {
+                acc.push({
+                  id: itemId(hit.path, rule.id),
                 categoryId: rule.id,
                 fullPath: hit.path,
                 name: baseName(hit.path),
@@ -437,6 +480,7 @@ export async function scanJunk(
     } catch {
       items = []
     }
+    } // end if (!cachedHit)
 
     items = items.filter((it) => !excluded(it.fullPath))
     // 去重：规则的多个根目录可能相互重叠（例如 %USERPROFILE% 与 %SG_DOCUMENTS%
@@ -460,12 +504,32 @@ export async function scanJunk(
       defaultSelected: rule.defaultSelected,
       sizeBytes: releasable.reduce((s, it) => s + it.sizeBytes, 0),
       count: items.length,
-      denied: stats.denied > 0 && items.length === 0 ? true : undefined
+      denied: stats.denied > 0 && items.length === 0 ? true : undefined,
+      cached: cachedHit
     })
     allItems.push(...items)
+
+    // 更新缓存：签名未变则沿用旧签名，否则写入本次结果
+    if (!signal?.cancelled) {
+      if (!cachedHit) {
+        try {
+          const s = sig ?? (await collectSignatures(rule, signal))
+          const entry: RuleCache = { sig: s, items, at: Date.now() }
+          cache.rules[rule.id] = entry
+        } catch {
+          /* 签名采集失败：清除该规则的缓存，下次全量 */
+          delete cache.rules[rule.id]
+        }
+      } else if (cache.rules[rule.id]) {
+        cache.rules[rule.id].items = items
+        cache.rules[rule.id].at = Date.now()
+      }
+    }
     onProgress?.(`完成：${rule.name}`, base + span, '', allItems.length)
   }
 
+  cache.version = CACHE_VERSION
+  cache.updatedAt = Date.now()
   const totalBytes = categories.reduce((s, c) => s + c.sizeBytes, 0)
   const oneClickBytes = categories
     .filter((c) => isOneClickEligible(c.risk, c.defaultSelected))
@@ -482,7 +546,9 @@ export async function scanJunk(
       categories,
       scanMs: Date.now() - t0,
       scannedFiles
-    }
+    },
+    cache,
+    reusedRules
   }
 }
 

@@ -177,6 +177,22 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 
 **M1 顺延项**（不在验收清单内或收益有限）：图标懒加载（A2，本就在 done 事件后执行不阻塞）、便携 mtime 缓存（A3，冷路径达标后降级为应用内二次扫描提速项）、依赖解析 worker 并行（12.8s，非验收项）。
 
+### M2 原生能力（🔄 进行中 · 2026-09-13）
+
+| 项 | 内容 | 结果 |
+|---|---|---|
+| **B3 占用检测** | `packages/junk/locks.ts`：PowerShell `Add-Type` P/Invoke 调 Restart Manager（RmStartSession/RmRegisterResources/RmGetList/RmEndSession），替代 v1.0.0 的「遍历所有进程模块列表」 | ✅ 真机验证：独立进程以 `FileShare.None` 持句柄期间精确查出 PID（appType=1），删除尝试 `EBUSY` 一致；释放后 0 条无误报 |
+| **B2 重启后删除** | P/Invoke `MoveFileExW` + `MOVEFILE_DELAY_UNTIL_REBOOT`（目标路径用 `IntPtr` 重载表达 NULL）；校验 `PendingFileRenameOperations` | ✅ 非提权环境明确返回 `needsElevation`（Win32 错误 5）；接线至清理结果页「查占用 / 重启后删除」 |
+| **A5 增量扫描** | `packages/junk/incremental.ts`：目录签名水位（目录 mtime + 条目数），未变则复用结果、仅重新 stat 命中项 | ✅ GC-11+GC-12 二次扫描 **45.2s → 15.6s（−65%）**，结果完全一致（429 项 / 21.49 GB） |
+
+**A5 的关键实测依据**：本机 `D:\下载`（5353 目录 / 39770 文件）—— 完整遍历 8.82s，仅 readdir 1.33s → **85% 的耗时来自逐文件 stat**。因此增量不是「跳过遍历」，而是**仍走 readdir 算签名、跳过逐文件 stat 与算法级处理**。
+
+**A5 过程中修掉的缺陷**：`collectSignatures` 未套用 `walkRule` 的剪枝（`SKIP_DIR_NAMES` / `isScannable`），GC-12 要走 77261 个目录、18.4s，比它自己的完整扫描还慢；对齐剪枝后 50528 目录 / 10.0s。
+
+**已知边界（已写入代码注释与 UI）**：
+1. 目录内文件被**原地覆写**时不改目录 mtime → 该分类在 TTL（3 天）内可能沿用旧结果；UI 提供「强制重扫」按钮与 `force` 通道绕过缓存
+2. `%USERPROFILE%` 下的 `Temp` / 着色器缓存目录持续写入（实测每轮 3 个目录变化），会使其所属分类无法命中缓存 —— 这是 USN（B1）才能真正解决的场景
+
 **M1 第一波过程中发现并修复的缺陷**
 
 | 编号 | 缺陷 | 严重度 |

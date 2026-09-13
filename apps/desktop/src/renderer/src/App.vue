@@ -279,10 +279,10 @@ async function exportGraphReport(): Promise<void> {
 
 // ───────────────── 垃圾与清理 ─────────────────
 
-async function scanJunk(): Promise<void> {
+async function scanJunk(force = false): Promise<void> {
   junkScanning.value = true
-  junkProgress.value = { scanId: '', phase: '准备扫描…', percent: 1, current: '', found: 0 }
-  await window.api.scanJunk()
+  junkProgress.value = { scanId: '', phase: force ? '强制全量重扫…' : '准备扫描…', percent: 1, current: '', found: 0 }
+  await window.api.scanJunk({ force })
 }
 
 async function cancelJunk(): Promise<void> {
@@ -514,6 +514,7 @@ const statusText = computed(() => {
           :scanning="junkScanning"
           :progress="junkProgress"
           @scan="scanJunk"
+          @scan-force="scanJunk(true)"
           @cancel="cancelJunk"
           @delete-categories="planCategories"
           @delete-items="planItems"

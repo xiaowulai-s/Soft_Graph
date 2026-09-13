@@ -21,6 +21,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'scan'): void
+  /** 强制全量重扫（忽略增量缓存，M2/A5） */
+  (e: 'scan-force'): void
   (e: 'cancel'): void
   (e: 'delete-categories', ids: string[]): void
   (e: 'delete-items', ids: string[]): void
@@ -253,6 +255,14 @@ const RISK_TIP: Record<RiskLevel, string> = {
       <span class="js-title">垃圾分布</span>
       <div class="js-head-act">
         <button v-if="!scanning" class="ghost" title="导出垃圾清单" @click="emit('export')">导出</button>
+        <button
+          v-if="!scanning && summary"
+          class="ghost"
+          title="忽略增量缓存，重新完整遍历磁盘（结果最准，耗时较长）"
+          @click="emit('scan-force')"
+        >
+          强制重扫
+        </button>
         <button v-if="!scanning" class="primary" @click="emit('scan')">
           {{ summary ? '重新扫描' : '开始扫描' }}
         </button>

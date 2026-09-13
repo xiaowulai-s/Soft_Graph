@@ -30,6 +30,7 @@ import { resolveDependencies } from '@scanner/deps'
 import { buildGraph } from '@graph-core/build'
 import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
+import type { CacheFile } from '@junk/incremental'
 import { buildPlan, execute, listQuarantine, purge, restore } from '@junk/cleaner'
 import type { Store } from '../db/store'
 import type { AppPaths, SettingsStore } from './env'
@@ -45,6 +46,8 @@ export class ScanService {
   private softwareToken: CancelToken | null = null
   private junkToken: CancelToken | null = null
   private ruleSet: RuleSet | null = null
+  /** 垃圾扫描增量缓存（M2/A5），懒加载自 paths.junkCacheFile */
+  private junkCache: CacheFile | null = null
   private graphBuilding = new Set<string>()
 
   constructor(
@@ -351,7 +354,7 @@ export class ScanService {
 
   // ───────────────── 垃圾扫描 ─────────────────
 
-  async scanJunkNow(categoryIds?: string[]): Promise<{ scanId: string }> {
+  async scanJunkNow(categoryIds?: string[], force = false): Promise<{ scanId: string }> {
     if (this.junkToken) this.junkToken.cancelled = true
     const token: CancelToken = { cancelled: false }
     this.junkToken = token
@@ -375,9 +378,17 @@ export class ScanService {
           excludes: this.settings.get().excludePaths
         }
 
+        // 增量缓存（M2/A5）：首次为空缓存，扫描后回写
+        if (!this.junkCache) {
+          const { loadCache } = await import('@junk/incremental')
+          this.junkCache = await loadCache(this.paths.junkCacheFile)
+        }
+
         const result = await scanJunk(ruleSet, ctx, {
           categoryIds,
           signal: token,
+          force,
+          cache: this.junkCache,
           onProgress: (phase, percent, current, found) =>
             this.emit('junk:progress', {
               scanId,
@@ -401,6 +412,19 @@ export class ScanService {
 
         this.store.saveJunk(result.scanId, result.items, result.summary)
         await this.store.persist()
+        // 回写增量缓存（供下次扫描比对目录签名）
+        this.junkCache = result.cache
+        const { saveCache } = await import('@junk/incremental')
+        await saveCache(this.paths.junkCacheFile, result.cache)
+        if (result.reusedRules.length) {
+          this.emit('junk:progress', {
+            scanId,
+            phase: `增量命中 ${result.reusedRules.length} 类（${result.reusedRules.join('、')}）`,
+            percent: 100,
+            current: '',
+            found: result.items.length
+          } satisfies ScanProgress)
+        }
         this.store.recordScan(scanId, 'junk', startedAt, Date.now(), 'ok', {
           total: result.summary.totalBytes
         })

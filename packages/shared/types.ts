@@ -247,6 +247,8 @@ export interface JunkCategorySummary {
   count: number
   /** 扫描是否因权限失败 */
   denied?: boolean
+  /** v2.0.0 M2/A5：本次结果是否来自增量缓存（目录签名未变化） */
+  cached?: boolean
 }
 
 export interface JunkSummary {

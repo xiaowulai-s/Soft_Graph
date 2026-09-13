@@ -20,6 +20,8 @@ export interface AppPaths {
   settingsFile: string
   rulesFile: string
   reportDir: string
+  /** 垃圾扫描增量缓存（M2/A5：目录签名水位） */
+  junkCacheFile: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -34,12 +36,22 @@ export function resolvePaths(): AppPaths {
     dbFile: join(root, 'data', 'softgraph.db'),
     settingsFile: join(root, 'settings.json'),
     rulesFile: join(root, 'rules', 'junk-rules.json'),
-    reportDir: join(root, 'reports')
+    reportDir: join(root, 'reports'),
+    junkCacheFile: join(root, 'cache', 'junk-incremental.json')
   }
 }
 
 export async function ensurePaths(p: AppPaths): Promise<void> {
-  for (const d of [p.root, p.dataDir, p.iconDir, p.quarantineDir, p.pluginDir, join(p.root, 'rules'), p.reportDir]) {
+  for (const d of [
+    p.root,
+    p.dataDir,
+    p.iconDir,
+    p.quarantineDir,
+    p.pluginDir,
+    join(p.root, 'rules'),
+    join(p.root, 'cache'),
+    p.reportDir
+  ]) {
     await fs.mkdir(d, { recursive: true }).catch(() => {})
   }
 }
