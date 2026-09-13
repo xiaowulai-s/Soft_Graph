@@ -464,6 +464,54 @@ export class Store {
     await this.db.persist()
   }
 
+  /**
+   * 诊断用统计（v2.0.0 M3/C5）。
+   * 只返回**计数**，不含任何路径或名称 —— 诊断包因此不需要额外脱敏。
+   */
+  dbStats(): { driver: string; tables: Record<string, number>; lastScans: Record<string, unknown> } {
+    const tables = [
+      'software',
+      'file_index',
+      'dependency',
+      'pe_cache',
+      'graph_cache',
+      'junk_item',
+      'junk_category',
+      'scan_meta',
+      'portable_mark'
+    ]
+    const counts: Record<string, number> = {}
+    for (const t of tables) {
+      try {
+        counts[t] = this.db.get<{ c: number }>(`SELECT COUNT(*) AS c FROM ${t}`)?.c ?? 0
+      } catch {
+        counts[t] = -1
+      }
+    }
+    const lastScans: Record<string, unknown> = {}
+    for (const type of ['software', 'junk', 'graph']) {
+      const r = this.lastScan(type)
+      lastScans[type] = r ? { status: r.status, finishedAt: r.finished_at } : null
+    }
+    const summary = this.junkSummary()
+    return {
+      driver: this.db.driverName,
+      tables: counts,
+      lastScans: {
+        ...lastScans,
+        junkSummary: summary
+          ? {
+              totalBytes: summary.totalBytes,
+              totalCount: summary.totalCount,
+              scannedFiles: summary.scannedFiles,
+              scanMs: summary.scanMs,
+              categories: summary.categories.length
+            }
+          : null
+      }
+    }
+  }
+
   async close(): Promise<void> {
     await this.db.close()
   }

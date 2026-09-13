@@ -8,6 +8,7 @@ const alias = {
   '@junk': resolve('packages/junk'),
   '@graph-core': resolve('packages/graph-core'),
   '@rules': resolve('packages/rules'),
+  '@native': resolve('packages/native'),
   '@main': resolve('apps/desktop/src/main'),
   '@renderer': resolve('apps/desktop/src/renderer/src')
 }

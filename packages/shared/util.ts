@@ -173,3 +173,8 @@ const SHARED_RUNTIME_RE = [
 export function isSharedRuntime(name: string): boolean {
   return SHARED_RUNTIME_RE.some((r) => r.test(name))
 }
+
+/** 正则字面量转义：把任意字符串（路径、用户名）安全嵌入正则 */
+export function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

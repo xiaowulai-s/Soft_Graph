@@ -103,6 +103,45 @@ export class ScanService {
   /** 最近一次解析到的用户库目录（供诊断包与设置页展示） */
   shellFolders: Partial<Record<string, string>> | null = null
 
+  /** 立即解析用户库目录（供启动时初始化日志脱敏器）；已解析过则直接返回 */
+  async ensureShellFolders(): Promise<Partial<Record<string, string>> | null> {
+    if (!this.shellFolders) await this.resolveShellFolders()
+    return this.shellFolders
+  }
+
+  /**
+   * 规则库摘要（诊断包用，C5）。
+   * 只含规则定义本身 —— 规则是程序内置的，不含任何用户数据，
+   * 因此诊断包里带上它有助于复现「某类垃圾没被扫到」的问题。
+   */
+  async rulesSummary(): Promise<{
+    schemaVersion: number
+    updatedAt: string
+    ruleCount: number
+    rules: Record<string, unknown>[]
+  }> {
+    const rs = await this.rules()
+    return {
+      schemaVersion: rs.schemaVersion,
+      updatedAt: rs.updatedAt,
+      ruleCount: rs.rules.length,
+      rules: rs.rules.map((r) => ({
+        id: r.id,
+        name: r.name,
+        risk: r.risk,
+        defaultSelected: r.defaultSelected,
+        algorithm: r.algorithm ?? 'walk',
+        roots: r.roots.length,
+        patterns: r.patterns.length,
+        excludes: r.exclude.length,
+        maxDepth: r.maxDepth,
+        minSizeBytes: r.minSizeBytes,
+        hasMaxAge: r.maxAgeMs > 0,
+        wholeDir: !!r.wholeDir
+      }))
+    }
+  }
+
   /** 释放扫描 Worker（应用退出时调用） */
   disposeWorker(): void {
     this.worker?.dispose()

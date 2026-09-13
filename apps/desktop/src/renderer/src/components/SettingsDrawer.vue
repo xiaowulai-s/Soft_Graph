@@ -193,6 +193,30 @@ async function purgeExpired(): Promise<void> {
 
 const qTotal = computed(() => quarantine.value.reduce((s, r) => s + r.sizeBytes, 0))
 
+/** 诊断包导出（C5） */
+const diagBusy = ref(false)
+const diagText = ref('')
+const diagOk = ref(false)
+
+async function exportDiag(): Promise<void> {
+  diagBusy.value = true
+  diagText.value = ''
+  try {
+    const r = await window.api.diagExport()
+    diagOk.value = r.ok
+    if (r.ok && r.file) {
+      diagText.value = `已生成：${r.file}（${formatBytes(r.bytes ?? 0)}，含 ${r.entries?.length ?? 0} 个文件），已在资源管理器中定位`
+    } else {
+      diagText.value = `导出失败：${r.error ?? '未知原因'}`
+    }
+  } catch (e) {
+    diagOk.value = false
+    diagText.value = `导出失败：${(e as Error).message}`
+  } finally {
+    diagBusy.value = false
+  }
+}
+
 function daysLeft(r: QuarantineRecord): string {
   const d = (r.keepUntil - Date.now()) / 86_400_000
   if (d <= 0) return '已过期'
@@ -558,6 +582,17 @@ function daysLeft(r: QuarantineRecord): string {
               以标准用户权限运行即可完成绝大多数清理；受 TrustedInstaller 保护的目录（WinSxS 等）不做所有权接管，
               仅检测并提示，以避免破坏系统文件完整性。
             </div>
+            <!-- 诊断包（C5）：一键导出脱敏运行日志，便于反馈问题 -->
+            <div class="sd-row">
+              <button class="ghost" :disabled="diagBusy" @click="exportDiag">
+                {{ diagBusy ? '正在打包…' : '导出诊断包' }}
+              </button>
+              <span class="sd-hint sd-inline">
+                生成脱敏 zip（环境信息 / 设置 / 数据库统计 / 最近日志）。
+                日志在**写入磁盘前**已抹除用户名与计算机名；不含扫描明细与删除清单。
+              </span>
+            </div>
+            <div v-if="diagText" class="sd-hint" :class="diagOk ? '' : 'risk-medium'">{{ diagText }}</div>
           </section>
         </template>
       </div>
@@ -683,6 +718,14 @@ function daysLeft(r: QuarantineRecord): string {
   background: var(--panel-2);
   padding: 1px 4px;
   border-radius: 3px;
+}
+.sd-hint.sd-inline {
+  margin: 0;
+  flex: 1;
+  min-width: 220px;
+}
+.risk-medium {
+  color: var(--risk-medium);
 }
 .sd-check {
   display: flex;

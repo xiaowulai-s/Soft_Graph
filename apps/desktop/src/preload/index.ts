@@ -56,6 +56,7 @@ const api: SoftGraphApi = {
   setSettings: (patch) => ipcRenderer.invoke(CH.SETTINGS_SET, patch),
   appInfo: () => ipcRenderer.invoke(CH.APP_INFO),
   exportReport: (payload) => ipcRenderer.invoke(CH.EXPORT_REPORT, payload),
+  diagExport: () => ipcRenderer.invoke(CH.DIAG_EXPORT),
 
   // 浮窗
   floatGetSettings: () => ipcRenderer.invoke(CH.FLOAT_GET_SETTINGS),

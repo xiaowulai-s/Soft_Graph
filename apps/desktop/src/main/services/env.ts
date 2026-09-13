@@ -28,6 +28,8 @@ export interface AppPaths {
   tmpDir: string
   /** API Set 动态映射缓存（M2/B5） */
   apiSetCacheFile: string
+  /** 结构化日志目录（M3/C5） */
+  logDir: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -46,7 +48,8 @@ export function resolvePaths(): AppPaths {
     junkCacheFile: join(root, 'cache', 'junk-incremental.json'),
     comIndexFile: join(root, 'cache', 'com-index.json'),
     tmpDir: join(root, 'tmp'),
-    apiSetCacheFile: join(root, 'cache', 'apiset-map.json')
+    apiSetCacheFile: join(root, 'cache', 'apiset-map.json'),
+    logDir: join(root, 'logs')
   }
 }
 

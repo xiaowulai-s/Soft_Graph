@@ -5,6 +5,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, clipboard, shell, screen } from 'electron'
 import { join } from 'node:path'
+import { hostname } from 'node:os'
 import { promises as fs } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { CH, type AppInfo } from '@shared/ipc'
@@ -16,6 +17,8 @@ import { ScanService } from './services/scan'
 import { ensurePaths, ensureRules, isElevated, resolvePaths, SettingsStore, type AppPaths } from './services/env'
 import { FloatWindowManager, floatRendererTarget } from './float/window'
 import { PluginRegistry } from './float/registry'
+import { initLogger, log, makeRedactor } from './services/logger'
+import { describeCapabilities, loadNativeCapabilities } from '@native/capabilities'
 import builtinRules from '@rules/junk-rules.json'
 
 // 关于 10.2 的 UV_THREADPOOL_SIZE=16：libuv 在进程初始化时读取该环境变量，
@@ -93,6 +96,21 @@ function createMainWindow(): BrowserWindow {
   else void mainWindow.loadFile(join(RENDERER_OUT, 'index.html'))
 
   return mainWindow
+}
+
+/** 隔离区摘要（C5 诊断包用）：只统计批次/条数/体积，不含任何文件名 */
+async function quarantineSummary(): Promise<{ batches: number; records: number; totalBytes: number }> {
+  try {
+    const list = await scan.quarantineList()
+    const batches = new Set(list.map((r) => r.quarantinedPath.replace(/\\[^\\]*$/, '')))
+    return {
+      batches: batches.size,
+      records: list.length,
+      totalBytes: list.reduce((s, r) => s + r.sizeBytes, 0)
+    }
+  } catch {
+    return { batches: 0, records: 0, totalBytes: 0 }
+  }
 }
 
 function emitToAll(channel: string, payload: unknown): void {
@@ -190,9 +208,20 @@ function registerIpc(): void {
   })
 
   // ── 垃圾 ──
-  h(CH.JUNK_SCAN, (payload?: { categoryIds?: string[]; force?: boolean }) =>
-    scan.scanJunkNow(payload?.categoryIds, payload?.force ?? false)
-  )
+  h(CH.JUNK_SCAN, async (payload?: { categoryIds?: string[]; force?: boolean }) => {
+    log.info('junk', '扫描开始', {
+      categories: payload?.categoryIds?.length ?? 0,
+      force: !!payload?.force
+    })
+    try {
+      const r = await scan.scanJunkNow(payload?.categoryIds, payload?.force ?? false)
+      log.info('junk', '扫描结束', { scanId: r.scanId })
+      return r
+    } catch (e) {
+      log.error('junk', '扫描失败', e)
+      throw e
+    }
+  })
   h(CH.JUNK_CANCEL, () => scan.cancelJunkScan())
   h(CH.JUNK_SUMMARY, () => scan.junkSummary())
   h(CH.JUNK_ITEMS, (payload: { categoryId: string; offset?: number; limit?: number; sort?: 'size' | 'mtime' | 'path' }) =>
@@ -220,13 +249,48 @@ function registerIpc(): void {
   h(CH.CLEAN_EXECUTE, (payload: { itemIds: string[]; useQuarantine: boolean; oneClick?: boolean }) =>
     (async () => {
       const ids = payload.oneClick ? await scan.oneClickItems() : payload.itemIds
-      return scan.clean(ids, payload.useQuarantine)
+      log.info('clean', '清理请求', {
+        count: ids.length,
+        quarantine: payload.useQuarantine,
+        oneClick: !!payload.oneClick
+      })
+      const r = await scan.clean(ids, payload.useQuarantine)
+      log.info('clean', '清理完成', {
+        ok: r.ok,
+        failed: r.failed.length,
+        blocked: r.blocked.length,
+        freedBytes: r.freedBytes,
+        quarantineId: r.quarantineId ?? null,
+        pendingReboot: r.pendingReboot
+      })
+      return r
     })()
   )
   h(CH.QUARANTINE_LIST, () => scan.quarantineList())
 
   // v2.0.0 M3/E3：提权清理（独立提权进程，只接收明确的文件清单）
-  h(CH.CLEAN_ELEVATE, (payload: { itemIds: string[] }) => scan.cleanElevated(payload.itemIds ?? []))
+  h(CH.CLEAN_ELEVATE, async (payload: { itemIds: string[] }) => {
+    const ids = payload.itemIds ?? []
+    log.info('elevate', '提权清理请求', { count: ids.length })
+    const r = await scan.cleanElevated(ids)
+    if (r.ok) {
+      log.info('elevate', '提权清理完成', {
+        batchId: r.batchId,
+        succeeded: r.succeeded,
+        freedBytes: r.freedBytes,
+        failed: r.failed.length,
+        rejected: r.rejected?.length ?? 0
+      })
+    } else {
+      log.warn('elevate', '提权清理未完成', {
+        denied: !!r.denied,
+        unsupported: !!r.unsupported,
+        rejected: r.rejected?.length ?? 0,
+        error: r.error
+      })
+    }
+    return r
+  })
 
   // v2.0.0 M2/B3：占用查询（Restart Manager，失败不抛异常）
   h(CH.CLEAN_LOCKERS, async (payload: { path: string }) => {
@@ -307,6 +371,27 @@ function registerIpc(): void {
     return file
   })
 
+  // v2.0.0 M3/C5：导出脱敏诊断包
+  h(CH.DIAG_EXPORT, async () => {
+    const { exportDiagnostics } = await import('./services/diagnostics')
+    const r = await exportDiagnostics({
+      paths,
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron ?? '',
+      nodeVersion: process.versions.node ?? '',
+      chromeVersion: process.versions.chrome ?? '',
+      settings: settings.get(),
+      capabilities: describeCapabilities(await loadNativeCapabilities()),
+      stats: store.dbStats(),
+      quarantine: await quarantineSummary(),
+      rulesSummary: await scan.rulesSummary(),
+      shellFolders: scan.shellFolders ?? {},
+      extraRedactions: [hostname()]
+    })
+    if (r.ok && r.file) shell.showItemInFolder(r.file)
+    return r
+  })
+
   // ── 浮窗（模块二） ──
   h(CH.FLOAT_GET_SETTINGS, () => settings.get().float)
   h(CH.FLOAT_SET_SETTINGS, (patch: Partial<FloatSettings>) => {
@@ -374,6 +459,18 @@ async function bootstrap(): Promise<void> {
   await ensurePaths(paths)
   await ensureRules(paths, builtinRules)
 
+  // ── 结构化日志（M3/C5）──
+  // 脱敏在**写入前**完成，因此磁盘上的日志本身就不含用户名/计算机名
+  const logLevel = (process.env.SG_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info'
+  const lg = initLogger({ dir: paths.logDir, level: logLevel, echo: !!DEV_URL })
+  void lg.prune()
+  log.info('app', '启动', {
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    node: process.versions.node,
+    dev: !!DEV_URL
+  })
+
   settings = await SettingsStore.load(paths.settingsFile)
 
   const db = await openDb({
@@ -387,6 +484,18 @@ async function bootstrap(): Promise<void> {
   void scan.purgeExpired()
   // 后台预热 COM 反查索引（M2/B4），让用户点开图谱时 E6 证据已就绪
   void scan.warmupComIndex()
+  // 解析用户库目录并把结果交给日志脱敏器（含被重定向到其它盘的库目录）
+  void scan.ensureShellFolders().then((folders) => {
+    const extra = Object.values(folders ?? {}).filter((v): v is string => !!v)
+    lg.setRedactor(
+      makeRedactor({
+        userProfile: process.env.USERPROFILE,
+        computerName: hostname(),
+        extraPaths: extra
+      })
+    )
+    log.info('app', '用户库目录已解析', { count: Object.keys(folders ?? {}).length })
+  })
 
   // 浮窗与插件
   const target = floatRendererTarget(DEV_URL, RENDERER_OUT)
@@ -466,14 +575,18 @@ if (!gotLock) {
 
   app.on('before-quit', async () => {
     quitting = true
+    log.info('app', '退出', { uptimeMs: Math.round(process.uptime() * 1000) })
     if (floatTimer) clearInterval(floatTimer)
     registry?.dispose()
     scan?.disposeWorker()
     await settings?.flush()
     await store?.close()
-    // 结束常驻 PowerShell 会话池（A1：避免遗留 powershell.exe 子进程）
+    // 结束常驻会话池（A1：避免遗留子进程）
     const { shutdownPsPool } = await import('@scanner/psbridge')
     shutdownPsPool()
+    // 日志落盘（C5）：放在最后，确保前面的关闭动作都有痕迹
+    const { logger } = await import('./services/logger')
+    await logger().flushNow()
   })
 
   app.on('activate', () => createMainWindow())

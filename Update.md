@@ -227,6 +227,7 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 
 | 项 | 内容 | 结果 |
 |---|---|---|
+| **C5 本地诊断包** | `services/logger.ts`（结构化 JSONL 日志，**写入前脱敏**、批量落盘、7 天轮转、单文件 8MB 上限）+ `services/diagnostics.ts`（收集环境/设置/能力/统计/隔离区摘要/规则摘要/最近日志）+ `services/zip.ts`（**零依赖** store 模式 ZIP 写入器） | ✅ 真机验证见下 |
 | **E3 提权子进程规范化** | `packages/junk/elevated.ts`（纯策略层）+ `elevated-helper.ts`（提权侧脚本）+ `services/elevate.ts`（调度）：提权通道**只接收明确的文件清单**，不接受通配符 / 脚本 / 命令字符串；清单在生成侧与执行侧**各校验一次**；helper 脚本内容内嵌于代码、落盘前比对 hash；启动命令行里只有两个常量路径（经环境变量传递，杜绝参数注入） | ✅ 真机验证见下 |
 
 **E3 验证细节（真机）**
@@ -240,6 +241,17 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 | 隔离区与还原能力 | `Quarantine\<batchId>\00001_a.tmp / 00002_b.log` + `manifest.json`（`elevated=true`，records=2）；**与普通删除同一格式，可被隔离区页面还原** |
 | 篡改防护 | 把条目改成 `C:\Windows\System32\kernel32.dll` → 执行侧拒绝；改成通配符路径 → 拒绝 |
 | 单元测试 | 新增 `tests/unit/elevated.test.ts`：23 个用例（通配符 / UNC / 相对段 / 脚本类型 / 受保护路径 / 非法字段 / 任务级校验 / 启动命令构造 / 清单分流 / 保留期分级），全绿 |
+
+**C5 验证细节（真机）**
+
+| 验证项 | 结果 |
+|---|---|
+| ZIP 合法性 | Python 标准库 `zipfile` 打开：**CRC 全条目通过**、9 个条目（README / environment / paths / settings / capabilities / stats / quarantine / rules-summary / logs） |
+| 脱敏彻底性 | 全包文本搜索用户名、计算机名、用户目录 → **零残留**；路径呈现为 `C:\Users\%USER%\AppData\Local\SoftGraph` |
+| 日志脱敏时机 | 直接读磁盘 JSONL 校验：**写入磁盘时已不含**用户名/计算机名（不是导出时才处理） |
+| 内容有用性 | 实测包内含：318 个软件、file_index 2602 / dependency 2735 条、垃圾 28023 项 · 18.26 GB · 扫描 80.4s、13 条规则摘要、原生能力降级表；环境含 OS 版本 / CPU 核数 / 内存 / 时区 / 运行时版本 |
+| 单元测试 | 新增 `tests/unit/diagnostics.test.ts`：10 个用例（ZIP 读回 / 中文文件名 / CRC 标准向量 0xCBF43926 / 空包 / 二进制 / 脱敏五类 / 递归脱敏 / 幂等），全绿 |
+| 实现差异 | ZIP 未引入压缩库（archiver / jszip）—— 诊断包都是文本，store 模式足够，保住「零原生依赖、单 exe 分发」原则 |
 
 **E3 中发现并修复的安全缺口（BUG-19，已固化为测试用例）**
 

@@ -69,6 +69,8 @@ export const CH = {
   SETTINGS_SET: 'settings:set',
   APP_INFO: 'app:info',
   EXPORT_REPORT: 'export:report',
+  /** v2.0.0 M3/C5：导出脱敏诊断包 */
+  DIAG_EXPORT: 'diag:export',
 
   // 浮窗（模块二）
   FLOAT_GET_SETTINGS: 'float:getSettings',
@@ -146,6 +148,8 @@ export interface SoftGraphApi {
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
   appInfo(): Promise<AppInfo>
   exportReport(payload: { kind: 'graph' | 'junk'; format: 'json' | 'csv' | 'html'; softwareId?: string }): Promise<string | null>
+  /** 导出脱敏诊断包（C5）；返回 zip 绝对路径，失败返回 null */
+  diagExport(): Promise<{ ok: boolean; file?: string; bytes?: number; error?: string }>
 
   // 浮窗
   floatGetSettings(): Promise<FloatSettings>
