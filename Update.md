@@ -77,6 +77,8 @@
 
 | 项 | 内容 | 结果 |
 |---|---|---|
+| **F1 插件清单校验与权限授权** | \`float/plugin-manifest.ts\`（严格 schema：id 点分段 / interval / view / semver + 能力声明 fs/network/powershell，未知能力拒绝）+ \`float/approvals.ts\`（授权记录持久化）+ 注册表接线：未授权插件不执行 setup / 不参与 tick / 不驱动定时器；设置抽屉权限徽标 + 授权按钮 | ✅ 15 用例，详见下表 |
+| **F2 插件一键安装 / 分发** | \`installSource\`（vm 沙箱提取 manifest——无 require/process，顶层摸系统即失败→校验→落盘→正式加载→collect 缺失自动回滚）+ \`installFromUrl\`（只接受 https，256KB 上限，15s 超时）+ \`removeExternal\`（删文件+清授权）；UI 从文件安装 / 粘贴 URL 安装 | ✅ 含沙箱逃逸 / 回滚 / 冲突拒绝用例 |
 | **E4 审计日志** | `packages/junk/audit.ts`：JSONL append-only（`%LOCALAPPDATA%\SoftGraph\audit\audit.jsonl`），覆盖清理/提权/重启删除/还原/销毁五类动作，逐文件留痕（含失败原因）+ 隔离批次（还原依据）+ 释放字节；**不脱敏、不进诊断包**（审计价值在于完整路径，属用户私有记录）；设置抽屉展示最近 50 条 | ✅ 往返校验通过（append→flush→recent，新→旧排序、损坏行跳过）；接线全部删除类动作 |
 | **G4 一键发布** | `scripts/publish-release.mjs`（npm run release）：git credential 取 PAT → 自动打 tag → 创建/复用 Release → 上传附件（**按名 + 按字节双重去重**、名字规范化、900s 超时、失败重试）→ 生成 SHA256SUMS.txt；--dry-run 模式 | ✅ dry-run 真机验证（凭据/复用/去重全对）；过程中误传的重复附件已清理，暴露的去重缺口已修复 |
 
@@ -315,6 +317,22 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 > 修复：新增「提权可清理区」白名单（`isElevationAllowed`）—— 只允许系统级垃圾目录、
 > 任意用户的 `AppData\Local\Temp` / 崩溃转储 / 回收站，以及明确的少数文件（MEMORY.DMP 等）。
 
+**F1/F2 验证细节**
 
+| 验证项 | 结果 |
+|---|---|
+| manifest 严格校验 | id 必须 vendor.name 小写点分段；interval 0~3600000 整数；view 五种内置模板；version semver；未知能力（shell/admin/FS/process）全部拒绝 |
+| 沙箱提取 | vm 新上下文只给 module/exports 骨架——顶层 `require('fs')` / `process.env` 探测**全部失败**，不落盘不执行 |
+| 授权闭环 | 带 fs+network 声明的插件：安装后 pending 非空、tick 跳过（0 payload）；部分授权后仍拦剩余；全授权后采集正常；授权持久化（新实例免再授权）；revoke 生效 |
+| 安装回滚 | 有 manifest 无 collect → 加载被拒 → **已写文件自动回滚**，目录零残留 |
+| 冲突与安全 | id 冲突拒绝；http:// 来源拒绝（只允许 https）；>256KB 拒绝 |
 
+**D1 渐进渲染真机 FPS 验证（CDP · 8001 节点 / 8000 边合成图）**
 
+| 验证项 | 结果 |
+|---|---|
+| 渐进补齐 | 注入后 5400 → 7800 → 8001 全量（约 3 秒内），全程状态栏「渐进渲染中…」可见 |
+| 布局耗时 | 近似布局 **5ms**（>3000 节点自动走近似路径） |
+| 帧率 | 静止 **60.1 fps** / 交互模拟 **60.1 fps** / 收敛后 **60 fps**，3×5s 采样窗口**零掉帧**（>33ms 计 0 次） |
+
+**v2.0.0 正式发布**：版本号 1.0.0 → 2.0.0，`npm run pack:win` 产出 NSIS Setup + portable，经 `npm run release`（G4 流水线：PAT→tag→Release→上传→SHA256SUMS）发布 GitHub Release v2.0.0。

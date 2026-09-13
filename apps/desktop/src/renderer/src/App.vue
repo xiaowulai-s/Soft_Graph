@@ -8,6 +8,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type {
   CleanResult,
   DeletePlan,
+  GraphEdge,
   GraphModel,
   GraphNode,
   JunkSummary,
@@ -85,6 +86,79 @@ function showToast(msg: string): void {
 const unsubs: (() => void)[] = []
 
 onMounted(async () => {
+  // D1 压测钩子：dev 构建常驻；生产构建仅在 localStorage 标记时启用
+  // （触发前提是打开 DevTools / CDP 远程调试，正常用户不可达）
+  if (import.meta.env.DEV || localStorage.getItem('sg-stress') === '1') {
+    ;(window as unknown as Record<string, unknown>).__sgStress = (n: number) => {
+      const nodes: GraphNode[] = [
+        {
+          id: 'sw:stress',
+          type: 'software',
+          label: '压测合成软件',
+          tier: 0,
+          radius: 34,
+          software: {
+            id: 'stress', name: '压测合成软件', version: '0.0.0', publisher: null, installPath: 'C:\\stress',
+            mainExe: 'C:\\stress\\main.exe', iconFile: null, installedAt: Date.now(), lastScanAt: Date.now(),
+            sizeBytes: 0, fileCount: n, parseFailed: 0, missingCount: 0, confidence: 1
+          } as never
+        }
+      ]
+      const edges: GraphEdge[] = []
+      const kinds = ['dll', 'dll', 'exe', 'ocx', 'data'] as const
+      const t1 = Math.min(150, Math.floor(n * 0.2))
+      const t2 = Math.min(800, Math.floor(n * 0.25))
+      let made = 0
+      const mkNode = (tier: 1 | 2 | 3, i: number): GraphNode => {
+        const kind = kinds[i % kinds.length]
+        return {
+          id: `f:${tier}:${i}`,
+          type: 'file',
+          label: `mod${i}.${kind}`,
+          tier,
+          radius: 8 + (i % 5) * 2,
+          file: {
+            id: `stress-${tier}-${i}`, fullPath: `C:\\stress\\bin${tier}\\mod${i}.${kind}`,
+            name: `mod${i}.${kind}`, sizeBytes: 1024 * (i % 97 + 4), mtime: Date.now(),
+            kind, ext: `.${kind}`, signStatus: 'unsigned', arch: 'x64', refCount: 1 + (i % 7),
+            parseStatus: 'ok'
+          }
+        }
+      }
+      for (let i = 0; i < t1; i++, made++) {
+        const nd = mkNode(1, i)
+        nodes.push(nd)
+        edges.push({ id: `e1:${i}`, source: 'sw:stress', target: nd.id, type: 'imports', confidence: 0.9, evidence: ['E1'] })
+      }
+      for (let i = 0; i < t2; i++, made++) {
+        const nd = mkNode(2, i)
+        nodes.push(nd)
+        edges.push({ id: `e2:${i}`, source: `f:1:${i % t1}`, target: nd.id, type: 'imports', confidence: 0.7, evidence: ['E2'] })
+      }
+      let t3i = 0
+      while (made < n) {
+        const nd = mkNode(3, t3i)
+        nodes.push(nd)
+        edges.push({ id: `e3:${t3i}`, source: `f:2:${t3i % Math.max(t2, 1)}`, target: nd.id, type: 'delay_loads', confidence: 0.55, evidence: ['E3'] })
+        t3i++
+        made++
+      }
+      graph.value = {
+        softwareId: 'stress',
+        nodes,
+        edges,
+        stats: {
+          nodeCount: nodes.length, edgeCount: edges.length, fileCount: nodes.length - 1,
+          missingCount: 0, parsedOk: nodes.length - 1, parseFailed: 0,
+          totalSizeBytes: 0, buildMs: 0, fromCache: false, groups: {}
+        }
+      }
+      selected.value = null
+      drillStack.value = []
+      return `已注入合成图谱：${nodes.length} 节点 / ${edges.length} 边`
+    }
+  }
+
   const st = await window.api.getSettings()
   theme.value = st.theme
   allowDirectDelete.value = st.allowDirectDelete
