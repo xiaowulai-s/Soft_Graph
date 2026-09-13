@@ -382,6 +382,8 @@ async function bootstrap(): Promise<void> {
 
   scan = new ScanService(store, paths, settings, emitToAll)
   void scan.purgeExpired()
+  // 后台预热 COM 反查索引（M2/B4），让用户点开图谱时 E6 证据已就绪
+  void scan.warmupComIndex()
 
   // 浮窗与插件
   const target = floatRendererTarget(DEV_URL, RENDERER_OUT)

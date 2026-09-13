@@ -135,13 +135,91 @@ function pickType(types: Set<DependencyType>, evidence: Set<EvidenceCode>): Depe
 // ───────────────── COM / 服务反查索引（证据 E6） ─────────────────
 
 let comIndex: Map<string, string[]> | null = null
+/** 索引落盘位置（由主进程注入；为空则只做内存缓存） */
+let comIndexFile: string | null = null
+/** 后台构建中：避免并发重复构建 */
+let comIndexBuilding: Promise<Map<string, string[]>> | null = null
+/** 索引有效期：COM 注册变化不频繁，7 天足够 */
+const COM_INDEX_TTL_MS = 7 * 86_400_000
+
+export function setComIndexCachePath(p: string): void {
+  comIndexFile = p
+}
 
 /**
  * 建立 InprocServer32 → CLSID 反查索引。
- * 注册表 CLSID 子键数量常在万级，一次性读取约 2~5s，因此全局只做一次并缓存。
+ *
+ * v2.0.0 M2/B4：实测（会话池下）构建仅需 **1.7s**、2657 个 DLL 条目 / 7142 条
+ * CLSID 映射 —— v1.0.0 曾误判为「分钟级」而默认关闭。现改为：
+ *   1. 优先读磁盘缓存（7 天有效），冷启动后近乎零成本；
+ *   2. 缓存缺失时构建并落盘，且可由 preloadComIndex() 在后台预热；
+ *   3. 构建中并发调用共享同一个 Promise，绝不重复构建。
  */
 export async function loadComIndex(): Promise<Map<string, string[]>> {
-  if (comIndex) return comIndex
+  if (comIndex) {
+    // 内存已就绪：仍要检查磁盘是否有可用副本，否则每个新进程都要重建
+    void persistComIndex(comIndex)
+    return comIndex
+  }
+  if (comIndexBuilding) return comIndexBuilding
+
+  // 磁盘缓存：避免每个进程重复付出 1.7s 的注册表遍历
+  if (comIndexFile) {
+    try {
+      const { promises: fsp } = await import('node:fs')
+      const raw = JSON.parse(await fsp.readFile(comIndexFile, 'utf8')) as {
+        at?: number
+        entries?: [string, string[]][]
+      }
+      if (raw?.entries && typeof raw.at === 'number' && Date.now() - raw.at < COM_INDEX_TTL_MS) {
+        comIndex = new Map(raw.entries)
+        return comIndex
+      }
+    } catch {
+      /* 无缓存或已过期 → 走构建 */
+    }
+  }
+
+  comIndexBuilding = buildComIndex()
+  try {
+    return await comIndexBuilding
+  } finally {
+    comIndexBuilding = null
+  }
+}
+
+/** 后台预热：应用启动后调用，避免首次依赖解析时才付构建成本 */
+export async function preloadComIndex(): Promise<void> {
+  try {
+    await loadComIndex()
+  } catch {
+    /* 预热失败不影响任何功能 */
+  }
+}
+
+/**
+ * 落盘（仅当磁盘副本缺失或过期时）。
+ * 失败静默：索引只影响 E6 证据，不影响其它依赖分析。
+ */
+async function persistComIndex(idx: Map<string, string[]>): Promise<void> {
+  if (!comIndexFile) return
+  try {
+    const { promises: fsp } = await import('node:fs')
+    const { dirname } = await import('node:path')
+    const st = await fsp.stat(comIndexFile).catch(() => null)
+    if (st && Date.now() - st.mtimeMs < COM_INDEX_TTL_MS) return
+    await fsp.mkdir(dirname(comIndexFile), { recursive: true })
+    await fsp.writeFile(
+      comIndexFile,
+      JSON.stringify({ version: 1, at: Date.now(), entries: [...idx] }),
+      'utf8'
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+async function buildComIndex(): Promise<Map<string, string[]>> {
   const idx = new Map<string, string[]>()
   try {
     const { psJson, asArray } = await import('./psbridge')
@@ -188,6 +266,7 @@ Write-SgJson @($out)
     /* 读不到就跳过 E6，不影响其他证据 */
   }
   comIndex = idx
+  void persistComIndex(idx)
   return idx
 }
 

@@ -102,6 +102,20 @@ export class ScanService {
     this.ruleSet = null
   }
 
+  /**
+   * 预热 COM 反查索引（证据 E6）。
+   * 启动时后台跑，避免用户第一次点开图谱时才付 1.7s 的注册表遍历成本。
+   */
+  async warmupComIndex(): Promise<void> {
+    try {
+      const { setComIndexCachePath, preloadComIndex } = await import('@scanner/deps')
+      setComIndexCachePath(this.paths.comIndexFile)
+      await preloadComIndex()
+    } catch {
+      /* 预热失败不影响任何功能 */
+    }
+  }
+
   // ───────────────── 软件发现 ─────────────────
 
   async scanSoftware(roots?: string[]): Promise<{ scanId: string }> {
@@ -221,10 +235,11 @@ export class ScanService {
         maxDepth: maxDepth ?? this.settings.get().maxDepth,
         refCounts,
         signal: token,
-        // E6 需要遍历 HKLM\SOFTWARE\Classes\CLSID（本机可达上万子键），首次约分钟级，
-        // 与「单软件图谱构建 ≤ 3s」的性能目标冲突，因此默认关闭；
-        // E7（快捷方式）成本低，默认开启。
-        enableComEvidence: false,
+        // E6（COM 反查）v2.0.0 M2/B4 起默认开启：
+        //   实测构建 1.7s（2657 DLL / 7142 CLSID），且有 7 天磁盘缓存 + 启动后台预热，
+        //   会话内后续图谱零成本；v1.0.0 因误判为「分钟级」而默认关闭。
+        // E7（快捷方式）成本低，同样默认开启。
+        enableComEvidence: true,
         enableShortcutEvidence: true,
         onProgress: (phase, percent, current) =>
           this.emit('graph:progress', {

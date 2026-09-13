@@ -22,6 +22,8 @@ export interface AppPaths {
   reportDir: string
   /** 垃圾扫描增量缓存（M2/A5：目录签名水位） */
   junkCacheFile: string
+  /** COM 反查索引缓存（M2/B4：证据 E6） */
+  comIndexFile: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -37,7 +39,8 @@ export function resolvePaths(): AppPaths {
     settingsFile: join(root, 'settings.json'),
     rulesFile: join(root, 'rules', 'junk-rules.json'),
     reportDir: join(root, 'reports'),
-    junkCacheFile: join(root, 'cache', 'junk-incremental.json')
+    junkCacheFile: join(root, 'cache', 'junk-incremental.json'),
+    comIndexFile: join(root, 'cache', 'com-index.json')
   }
 }
 
