@@ -42,6 +42,11 @@ export interface JunkScanOptions {
   cache?: CacheFile
   /** 强制全量重扫（忽略增量缓存） */
   force?: boolean
+  /**
+   * 每条规则完成后回传缓存快照（M2/C2）。
+   * 供 worker 落盘，使进程崩溃后重启能跳过已完成的规则（崩溃续扫）。
+   */
+  onRuleCache?: (cache: CacheFile) => void
 }
 
 export interface JunkScanResult {
@@ -586,6 +591,12 @@ export async function scanJunk(
       } else if (cache.rules[rule.id]) {
         cache.rules[rule.id].items = items
         cache.rules[rule.id].at = Date.now()
+      }
+      // 单规则完成即回传（崩溃续扫的落盘点）
+      try {
+        opts.onRuleCache?.(cache)
+      } catch {
+        /* 回调失败不影响扫描 */
       }
     }
     onProgress?.(`完成：${rule.name}`, base + span, '', allItems.length)

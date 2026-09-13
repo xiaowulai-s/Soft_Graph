@@ -24,6 +24,8 @@ export interface AppPaths {
   junkCacheFile: string
   /** COM 反查索引缓存（M2/B4：证据 E6） */
   comIndexFile: string
+  /** 临时工作目录（M2/C2：Worker 结果文件落盘处） */
+  tmpDir: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -40,7 +42,8 @@ export function resolvePaths(): AppPaths {
     rulesFile: join(root, 'rules', 'junk-rules.json'),
     reportDir: join(root, 'reports'),
     junkCacheFile: join(root, 'cache', 'junk-incremental.json'),
-    comIndexFile: join(root, 'cache', 'com-index.json')
+    comIndexFile: join(root, 'cache', 'com-index.json'),
+    tmpDir: join(root, 'tmp')
   }
 }
 
@@ -53,6 +56,7 @@ export async function ensurePaths(p: AppPaths): Promise<void> {
     p.pluginDir,
     join(p.root, 'rules'),
     join(p.root, 'cache'),
+    p.tmpDir,
     p.reportDir
   ]) {
     await fs.mkdir(d, { recursive: true }).catch(() => {})

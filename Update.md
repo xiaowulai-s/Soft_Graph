@@ -189,6 +189,8 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 | **B1 USN 增量（第 1 级：卷哨兵）** | `packages/junk/usn.ts` + 缓存 `volumes` 字段：`fsutil usn queryjournal` 取卷级 `nextUsn`（**无需提权**），两次扫描间未变 ⇒ 整卷零写入 ⇒ 连目录签名遍历都跳过 | ✅ 实测：`GC-11:volume` 命中（D 盘静止）→ 三轮 38.7s / 30.0s / **10.8s（−72%）**，结果一致（429 项 / 21.49 GB） |
 | B1 USN 增量（第 2 级：变更记录） | `readJournal` 读取变更路径，精确到目录级失效。**本机实测 `fsutil usn readjournal` 返回错误 5（需提权）**，因此实现完成后默认关闭，待提权环境验证 | ⏳ 待提权验证（解析器按中英文双套关键字 + 位置兜底） |
 
+| **C2 扫描进程隔离与自愈** | `apps/desktop/src/main/workers/junk-scan-worker.ts` + `services/junk-worker.ts`：垃圾扫描跑在 Electron `utilityProcess`；主进程只收进度与摘要，**命中项走文件不过 IPC**（实测结果文件 7.4MB / 2.8 万条）；Worker 崩溃自动重启并**续扫**（缓存按规则落盘，节流 10s）；非 Electron 环境或连续崩溃自动回退进程内扫描 | ✅ 真机验证：扫描全程在 Worker 中执行（`tmp/junk-*.json` + `cache/junk-incremental.json` 均由 Worker 落盘）；**强杀 Worker 后触发「重启并续扫」，扫描最终完成**（28023 项 / 18.26 GB，事件 1128 条） |
+
 **B1 过程中修掉的缺陷**
 
 | 编号 | 缺陷 | 严重度 |

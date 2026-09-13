@@ -17,7 +17,15 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: { alias },
     build: {
-      lib: { entry: resolve('apps/desktop/src/main/index.ts') },
+      // 主进程 + 扫描 Worker（M2/C2）两个入口：
+      // Worker 由 utilityProcess.fork(__dirname/junk-scan-worker.js) 启动，
+      // 必须是独立 chunk（不能内联进主进程 bundle）
+      lib: {
+        entry: {
+          index: resolve('apps/desktop/src/main/index.ts'),
+          'junk-scan-worker': resolve('apps/desktop/src/main/workers/junk-scan-worker.ts')
+        }
+      },
       rollupOptions: {
         output: { format: 'cjs', entryFileNames: '[name].js' }
       }

@@ -465,6 +465,7 @@ if (!gotLock) {
     quitting = true
     if (floatTimer) clearInterval(floatTimer)
     registry?.dispose()
+    scan?.disposeWorker()
     await settings?.flush()
     await store?.close()
     // 结束常驻 PowerShell 会话池（A1：避免遗留 powershell.exe 子进程）

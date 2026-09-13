@@ -48,6 +48,8 @@ export class ScanService {
   private ruleSet: RuleSet | null = null
   /** 垃圾扫描增量缓存（M2/A5），懒加载自 paths.junkCacheFile */
   private junkCache: CacheFile | null = null
+  /** 垃圾扫描 Worker（M2/C2），懒创建 */
+  private worker: import('./junk-worker').JunkScanWorker | null = null
   private graphBuilding = new Set<string>()
 
   constructor(
@@ -97,6 +99,12 @@ export class ScanService {
 
   /** 最近一次解析到的用户库目录（供诊断包与设置页展示） */
   shellFolders: Partial<Record<string, string>> | null = null
+
+  /** 释放扫描 Worker（应用退出时调用） */
+  disposeWorker(): void {
+    this.worker?.dispose()
+    this.worker = null
+  }
 
   invalidateRules(): void {
     this.ruleSet = null
@@ -369,6 +377,101 @@ export class ScanService {
 
   // ───────────────── 垃圾扫描 ─────────────────
 
+  /**
+   * 执行垃圾扫描：优先 utilityProcess，失败回退进程内（M2/C2）。
+   */
+  private async scanJunkWithWorker(
+    ruleSet: Awaited<ReturnType<ScanService['rules']>>,
+    ctx: JunkScanContext,
+    opts: {
+      scanId: string
+      categoryIds?: string[]
+      force: boolean
+      token: CancelToken
+      emitProgress: (phase: string, percent: number, current: string, found: number) => void
+    }
+  ): Promise<{
+    scanId: string
+    items: JunkItem[]
+    summary: JunkSummary
+    cache: CacheFile
+    reusedRules: string[]
+    restarts: number
+  }> {
+    const { scanId, categoryIds, force, token, emitProgress } = opts
+
+    // 进程内实现（回退路径与单测覆盖的路径）
+    const inProcess = async (): Promise<{
+      scanId: string
+      items: JunkItem[]
+      summary: JunkSummary
+      cache: CacheFile
+      reusedRules: string[]
+      restarts: number
+    }> => {
+      const r = await scanJunk(ruleSet, ctx, {
+        categoryIds,
+        signal: token,
+        force,
+        cache: this.junkCache ?? undefined,
+        onProgress: emitProgress
+      })
+      return { ...r, restarts: 0 }
+    }
+
+    if (!this.worker) {
+      const { JunkScanWorker } = await import('./junk-worker')
+      if (!JunkScanWorker.isSupported()) return inProcess()
+      // worker 入口与主进程同级（electron-vite 打包为 out/main/junk-scan-worker.js）
+      this.worker = new JunkScanWorker(join(__dirname, 'junk-scan-worker.js'), this.paths.tmpDir)
+    }
+
+    const software = this.store.listSoftware()
+    try {
+      const agg: JunkItem[] = []
+      const resultPath = join(this.paths.tmpDir, `junk-${scanId}.json`)
+      const r = await this.worker.run(
+        {
+          scanId,
+          rulesFile: this.paths.rulesFile,
+          cachePath: this.paths.junkCacheFile,
+          resultPath,
+          categoryIds,
+          force,
+          knownNames: [...ctx.knownNames],
+          knownPublishers: [...ctx.knownPublishers],
+          knownDirs: [...ctx.knownDirs],
+          excludes: ctx.excludes
+        },
+        {
+          onProgress: emitProgress,
+          maxRestarts: 1
+        }
+      )
+      // items 走文件（数万条不过 IPC）；读完即清理，避免 tmp 目录堆积
+      const raw = JSON.parse(await fs.readFile(r.resultPath, 'utf8')) as { items: JunkItem[] }
+      agg.push(...raw.items)
+      void fs.unlink(r.resultPath).catch(() => {})
+      const { loadCache } = await import('@junk/incremental')
+      const cache = await loadCache(this.paths.junkCacheFile)
+      if (r.restarts > 0) {
+        emitProgress(`扫描进程曾异常退出，已重启续扫 ${r.restarts} 次`, 99, '', agg.length)
+      }
+      void software
+      return {
+        scanId,
+        items: agg,
+        summary: r.summary,
+        cache,
+        reusedRules: r.reusedRules,
+        restarts: r.restarts
+      }
+    } catch (e) {
+      emitProgress(`进程内扫描（Worker 不可用：${(e as Error).message.slice(0, 60)}）`, 1, '', 0)
+      return inProcess()
+    }
+  }
+
   async scanJunkNow(categoryIds?: string[], force = false): Promise<{ scanId: string }> {
     if (this.junkToken) this.junkToken.cancelled = true
     const token: CancelToken = { cancelled: false }
@@ -399,19 +502,24 @@ export class ScanService {
           this.junkCache = await loadCache(this.paths.junkCacheFile)
         }
 
-        const result = await scanJunk(ruleSet, ctx, {
+        const emitProgress = (phase: string, percent: number, current: string, found: number): void => {
+          this.emit('junk:progress', {
+            scanId,
+            phase,
+            percent: Math.min(99, Math.round(percent)),
+            current,
+            found
+          } satisfies ScanProgress)
+        }
+
+        // ── M2/C2：优先在 utilityProcess 中扫描（UI 不阻塞、崩溃可续扫）──
+        // 非 Electron 环境（测试 / CLI）或 Worker 反复崩溃时，回退到进程内扫描。
+        const result = await this.scanJunkWithWorker(ruleSet, ctx, {
+          scanId,
           categoryIds,
-          signal: token,
           force,
-          cache: this.junkCache,
-          onProgress: (phase, percent, current, found) =>
-            this.emit('junk:progress', {
-              scanId,
-              phase,
-              percent: Math.min(99, Math.round(percent)),
-              current,
-              found
-            } satisfies ScanProgress)
+          token,
+          emitProgress
         })
 
         if (token.cancelled) {
@@ -454,7 +562,7 @@ export class ScanService {
       } catch (e) {
         this.emit('junk:progress', {
           scanId,
-          phase: `扫描失败：${(e as Error).message}`,
+          phase: `扫描失败：${(e as Error)?.message || String(e) || '未知错误'}`,
           percent: 100,
           current: '',
           found: 0
