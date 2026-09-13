@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     const ms = Date.now() - t0
     await saveCache(cacheFile, res.cache)
     console.log(
-      `第 ${round} 轮：${(ms / 1000).toFixed(2)}s · ${res.summary.totalCount} 项 · ${formatBytes(res.summary.totalBytes)} · 复用 [${res.reusedRules.join(',') || '无'}]`
+      `第 ${round} 轮：${(ms / 1000).toFixed(2)}s · ${res.summary.totalCount} 项 · ${formatBytes(res.summary.totalBytes)} · 复用 [${res.reusedRules.map((r) => r + ':' + res.reuseSource[r]).join(',') || '无'}]`
     )
   }
   await fs.rm(cacheFile, { force: true }).catch(() => {})

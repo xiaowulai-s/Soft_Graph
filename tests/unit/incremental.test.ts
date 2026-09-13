@@ -164,6 +164,56 @@ describe('增量扫描缓存（M2/A5）', () => {
     }
   })
 
+  it('熔断：连续 2 次签名不匹配后不再尝试签名比对（避免白付遍历）', async () => {
+    const base = await makeTree()
+    try {
+      const ruleSet = loadRulesSync({
+        schemaVersion: 1,
+        updatedAt: '',
+        rules: [
+          {
+            id: 'GC-TEST',
+            name: '测试',
+            description: '',
+            risk: 'low',
+            defaultSelected: false,
+            match: { roots: [base], patterns: ['*.tmp'], maxDepth: 3 }
+          }
+        ]
+      })
+      const ctx = { knownNames: new Set<string>(), knownPublishers: new Set<string>(), knownDirs: new Set<string>(), excludes: [] }
+
+      const r1 = await scanJunk(ruleSet, ctx, {})
+      assert.equal(r1.cache.rules['GC-TEST'].missStreak ?? 0, 0, '首次扫描未命中计数应为 0')
+      assert.ok(!r1.cache.rules['GC-TEST'].disabled, '首次扫描不应熔断')
+
+      // 第 2 次：目录变化 → 未命中 1 次
+      await fs.writeFile(join(base, 'x1.tmp'), 'a')
+      const r2 = await scanJunk(ruleSet, ctx, { cache: r1.cache })
+      assert.equal(r2.cache.rules['GC-TEST'].missStreak, 1, '未命中应累计为 1')
+      assert.ok(!r2.cache.rules['GC-TEST'].disabled, '1 次未命中不应熔断')
+
+      // 第 3 次：再次变化 → 累计 2 次 → 熔断
+      await fs.writeFile(join(base, 'x2.tmp'), 'b')
+      const r3 = await scanJunk(ruleSet, ctx, { cache: r2.cache })
+      assert.equal(r3.cache.rules['GC-TEST'].missStreak, 2)
+      assert.equal(r3.cache.rules['GC-TEST'].disabled, true, '连续 2 次未命中应熔断')
+
+      // 第 4 次：熔断生效 → 不再采签名（仍全量扫），结果依然正确
+      await fs.writeFile(join(base, 'x3.tmp'), 'c')
+      const r4 = await scanJunk(ruleSet, ctx, { cache: r3.cache })
+      assert.ok(r4.items.some((i) => i.fullPath.endsWith('x3.tmp')), '熔断后仍必须扫出新文件')
+      assert.equal(r4.cache.rules['GC-TEST'].disabled, true, '熔断状态应延续')
+
+      // 强制重扫 → 重置熔断
+      const r5 = await scanJunk(ruleSet, ctx, { cache: r4.cache, force: true })
+      assert.equal(r5.cache.rules['GC-TEST'].disabled, false, '强制重扫应重置熔断')
+      assert.equal(r5.cache.rules['GC-TEST'].missStreak, 0)
+    } finally {
+      await fs.rm(base, { recursive: true, force: true })
+    }
+  })
+
   it('缓存文件可持久化与回读；TTL 过期后不可用', async () => {
     const file = join(tmpdir(), `sg-cache-${randomBytes(4).toString('hex')}.json`)
     const c = emptyCache()

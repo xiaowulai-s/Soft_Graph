@@ -13,6 +13,7 @@ import { isOneClickEligible } from '../shared/safety'
 import { walkRule, quickDirSize, looksOrphan, type CompiledRule, type RuleSet, type WalkStats } from './engine'
 import {
   collectSignatures,
+  collectVolumeUsns,
   emptyCache,
   isCacheUsable,
   refreshItems,
@@ -21,6 +22,7 @@ import {
   type CacheFile,
   type RuleCache
 } from './incremental'
+import { volumeOf } from './usn'
 
 export interface JunkScanContext {
   /** 已安装软件名（GC-08 孤儿目录判定） */
@@ -50,6 +52,8 @@ export interface JunkScanResult {
   cache: CacheFile
   /** 本次复用了缓存的规则 id */
   reusedRules: string[]
+  /** 复用来源：volume = 卷哨兵未变（连签名都跳过）；signature = 目录签名未变 */
+  reuseSource: Record<string, 'volume' | 'signature'>
 }
 
 function itemId(path: string, categoryId: string): string {
@@ -393,6 +397,7 @@ export async function scanJunk(
   const cache: CacheFile = opts.cache ?? emptyCache()
   const cacheUsable = !opts.force && isCacheUsable(cache)
   const reusedRules: string[] = []
+  const reuseSource: Record<string, 'volume' | 'signature'> = {}
 
   const active = ruleSet.rules.filter((r) => !categoryIds || categoryIds.length === 0 || categoryIds.includes(r.id))
   const allItems: JunkItem[] = []
@@ -403,6 +408,31 @@ export async function scanJunk(
   const excluded = (p: string): boolean => {
     const k = normKey(p)
     return excludeKeys.some((e) => e && (k === e || k.startsWith(e + '\\')))
+  }
+
+  // ── 卷级 USN 哨兵（M2/B1）──
+  // nextUsn 是卷级写入计数：两次扫描之间完全相同 ⇒ 该卷无任何写入。
+  // 命中的话连目录签名遍历都能跳过，是比 A5 更快的一层。
+  const allVolumes = new Set<string>()
+  for (const r of active) for (const root of r.roots) {
+    const v = volumeOf(root)
+    if (v) allVolumes.add(v)
+  }
+  const currentUsns = await collectVolumeUsns(allVolumes)
+  const prevUsns = cache.volumes ?? {}
+  const volumeUnchanged = (rule: CompiledRule): boolean => {
+    const vs = new Set<string>()
+    for (const root of rule.roots) {
+      const v = volumeOf(root)
+      if (v) vs.add(v)
+    }
+    if (vs.size === 0) return false
+    for (const v of vs) {
+      const now = currentUsns[v]
+      // 取不到当前值 → 视为未知，必须走签名比对
+      if (!now || !prevUsns[v] || now !== prevUsns[v]) return false
+    }
+    return true
   }
 
   for (let i = 0; i < active.length; i++) {
@@ -420,10 +450,28 @@ export async function scanJunk(
       onProgress?.(`${rule.name} · ${phase}`, base + span * 0.6, cur, allItems.length + n)
     }
 
-    // ── 增量快路径（M2/A5）：目录签名未变 → 复用上次结果，仅重新 stat 刷新大小 ──
-    // 签名采集本身只做 readdir + 目录 stat（实测约为完整遍历的 15% 成本）。
+    // ── 增量快路径 1：卷哨兵未变（M2/B1）──
+    // 整卷零写入 ⇒ 直接复用，连目录签名都不用采
+    if (cacheUsable && cache.rules[rule.id] && volumeUnchanged(rule)) {
+      items = await refreshItems(cache.rules[rule.id].items, signal)
+      cachedHit = true
+      reusedRules.push(rule.id)
+      reuseSource[rule.id] = 'volume'
+      // 命中即解除熔断（卷重新安静下来了）
+      cache.rules[rule.id].missStreak = 0
+      cache.rules[rule.id].disabled = false
+      onProgress?.(`${rule.name} · 卷无变更，复用`, base + span * 0.9, '', allItems.length + items.length)
+    }
+    // ── 增量快路径 2：目录签名未变（M2/A5）──
+    // 签名采集本身只做 readdir + 目录 stat（实测约为完整遍历的 15% 成本）
+    //
+    // 熔断：若该规则连续 2 次签名不匹配（目录抖动，如 Temp / 着色器缓存），
+    // 则不再尝试签名复用 —— 否则每轮都要白付一次签名遍历（GC-12 实测约 10s，
+    // 比直接全量扫还慢）。
+    const entry = cache.rules[rule.id]
+    const sigCheckAllowed = !entry?.disabled
     let sig = null as Awaited<ReturnType<typeof collectSignatures>> | null
-    if (cacheUsable && cache.rules[rule.id]) {
+    if (!cachedHit && cacheUsable && entry && sigCheckAllowed) {
       try {
         sig = await collectSignatures(rule, signal)
         const prev = cache.rules[rule.id]
@@ -431,7 +479,13 @@ export async function scanJunk(
           items = await refreshItems(prev.items, signal)
           cachedHit = true
           reusedRules.push(rule.id)
+          reuseSource[rule.id] = 'signature'
+          prev.missStreak = 0
           onProgress?.(`${rule.name} · 复用增量缓存`, base + span * 0.9, '', allItems.length + items.length)
+        } else {
+          // 签名不匹配：累计未命中；连续 2 次即熔断，避免持续白付签名遍历
+          prev.missStreak = (prev.missStreak ?? 0) + 1
+          if (prev.missStreak >= 2) prev.disabled = true
         }
       } catch {
         sig = null
@@ -514,8 +568,17 @@ export async function scanJunk(
       if (!cachedHit) {
         try {
           const s = sig ?? (await collectSignatures(rule, signal))
-          const entry: RuleCache = { sig: s, items, at: Date.now() }
-          cache.rules[rule.id] = entry
+          const prevEntry = cache.rules[rule.id]
+          const nextEntry: RuleCache = {
+            sig: s,
+            items,
+            at: Date.now(),
+            // 熔断状态在重扫后延续（抖动未消失前不再尝试签名比对）；
+            // 强制重扫是用户的明确意图 → 重置熔断，重新尝试一次
+            missStreak: opts.force ? 0 : (prevEntry?.missStreak ?? 0),
+            disabled: opts.force ? false : (prevEntry?.disabled ?? false)
+          }
+          cache.rules[rule.id] = nextEntry
         } catch {
           /* 签名采集失败：清除该规则的缓存，下次全量 */
           delete cache.rules[rule.id]
@@ -530,6 +593,10 @@ export async function scanJunk(
 
   cache.version = CACHE_VERSION
   cache.updatedAt = Date.now()
+  // 基线必须取「扫描结束时」的值：取扫描开始时会把整轮扫描的窗口算进差异里，
+  // 使哨兵几乎永不命中（实测 GC-11 在 D 盘、D 盘静止可命中，却因基线过宽而落空）
+  const endUsns = await collectVolumeUsns(allVolumes)
+  cache.volumes = Object.keys(endUsns).length ? endUsns : prevUsns
   const totalBytes = categories.reduce((s, c) => s + c.sizeBytes, 0)
   const oneClickBytes = categories
     .filter((c) => isOneClickEligible(c.risk, c.defaultSelected))
@@ -548,7 +615,8 @@ export async function scanJunk(
       scannedFiles
     },
     cache,
-    reusedRules
+    reusedRules,
+    reuseSource
   }
 }
 

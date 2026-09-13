@@ -39,6 +39,15 @@ export interface RuleCache {
   items: JunkItem[]
   /** 写入时间戳（ms） */
   at: number
+  /**
+   * 连续未命中次数（M2/B1）。抖动目录（Temp / 着色器缓存）会让签名反复变化，
+   * 此时「采签名 → 发现不匹配 → 仍要全量扫」等于白付一次签名遍历（GC-12 实测
+   * 10s）。连续 2 次未命中即熔断：该规则短期内不再尝试签名复用，只保留
+   * 成本极低的卷哨兵；强制重扫会重置熔断。
+   */
+  missStreak?: number
+  /** 熔断中：跳过签名比对（卷哨兵仍生效） */
+  disabled?: boolean
 }
 
 /** 规则 id → 缓存 */
@@ -52,11 +61,37 @@ export interface CacheFile {
   version: number
   updatedAt: number
   rules: ScanCache
+  /**
+   * 卷级 USN 哨兵（M2/B1）：卷号 → 上次扫描时的 nextUsn。
+   * nextUsn 未变 ⇒ 该卷无任何写入 ⇒ 连目录签名遍历都可跳过。
+   */
+  volumes?: Record<string, string>
 }
 
 /** 空缓存 */
 export function emptyCache(): CacheFile {
-  return { version: CACHE_VERSION, updatedAt: 0, rules: {} }
+  return { version: CACHE_VERSION, updatedAt: 0, rules: {}, volumes: {} }
+}
+
+/**
+ * 卷级哨兵：采集各卷当前的 nextUsn（M2/B1）。
+ * 失败（非 NTFS / 无权限 / 无 fsutil）时返回空对象，上层按「未知」处理 —— 即照常走签名比对。
+ */
+export async function collectVolumeUsns(volumes: Iterable<string>): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  try {
+    const { queryJournal } = await import('./usn')
+    const list = [...new Set([...volumes].filter(Boolean))]
+    await Promise.all(
+      list.map(async (v) => {
+        const info = await queryJournal(v)
+        if (info?.nextUsn) out[info.volume] = info.nextUsn
+      })
+    )
+  } catch {
+    /* ignore */
+  }
+  return out
 }
 
 export async function loadCache(file: string): Promise<CacheFile> {
