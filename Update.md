@@ -253,6 +253,27 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 | 单元测试 | 新增 `tests/unit/diagnostics.test.ts`：10 个用例（ZIP 读回 / 中文文件名 / CRC 标准向量 0xCBF43926 / 空包 / 二进制 / 脱敏五类 / 递归脱敏 / 幂等），全绿 |
 | 实现差异 | ZIP 未引入压缩库（archiver / jszip）—— 诊断包都是文本，store 模式足够，保住「零原生依赖、单 exe 分发」原则 |
 
+| **C3 路径健壮性** | 构造含中文/空格/特殊字符/emoji、507 字符长路径（30 层）、UNC、多用户目录的测试树，端到端探测「创建 → 安全判定 → 扫描 → 隔离 → 提权判定」全链路；`guardPath` 新增 Windows 子树收紧判定 | ✅ 真机 16/16 通过，详见下表；发现并修复 **BUG-21**（普通通道版白名单缺口） |
+
+**C3 验证细节（真机）**
+
+| 场景 | 结果 |
+|---|---|
+| 中文/空格/特殊字符（`中文 目录 #1`、`a&b;c=d#1.tmp`、emoji 文件名） | ✅ Node 创建/读回/扫描 5 项全命中/隔离 5 项 0 失败；guardPath 与提权通道判定正确 |
+| 长路径（**507 字符** / 30 层目录） | ✅ Node 创建与 stat 正常；guardPath/提权通道正常；本机 `LongPathsEnabled=1`，PowerShell Test-Path 亦正常 |
+| UNC 路径 | ✅ 普通通道与提权通道均明确拒绝 |
+| 多用户 | ✅ 其他用户的 `AppData\Local\Temp`：普通+提权通道均放行（提权的真实用武之地）；其他用户的桌面：提权拒绝（非垃圾目录） |
+
+**C3 发现并修复的安全缺口（BUG-21，普通通道版白名单缺口）**
+
+> E3 已发现提权通道版缺口（BUG-19）并修复，本项探测发现**普通删除通道存在同类问题**：
+> `C:\Windows\中 文\x.tmp`、`C:\Windows\notepad.exe.bak` 这类 Windows 子树内的
+> 非缓存目录文件能通过 guardPath（GC-05 需要清 Windows\Temp，因此 Windows 整树不可能列为受保护）。
+> 修复：`guardPath` 新增收紧判定 —— **Windows 子树内只允许 CLEANABLE_EXCEPTIONS 明确列出的缓存目录**
+> （Temp / SoftwareDistribution\Download / Installer / Logs / Prefetch / Minidump / Windows.old / $WINDOWS.~BT），
+> 其余一律拦截。已用脚本验证 13 条规则的根子项**零误伤**（`tests/diag-rulecheck.ts`），
+> 并固化为 6 个单元用例（252 用例全绿）。
+
 **E3 中发现并修复的安全缺口（BUG-19，已固化为测试用例）**
 
 > 普通删除通道允许清理 `C:\Windows` 的子目录（Temp / Logs / Installer …，见规则 GC-05），

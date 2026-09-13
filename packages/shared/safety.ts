@@ -148,6 +148,17 @@ export function guardPath(realPath: string): GuardVerdict {
     }
   }
 
+  // Windows 目录的收紧判定（C3 路径健壮性 · BUG-19 的普通通道版本）：
+  // GC-05 需要清理 Windows\Temp 等明确缓存目录，因此不能把整棵 C:\Windows
+  // 列为受保护树 —— 但这也意味着 Windows 根目录的直接子项
+  // （如 C:\Windows\notepad.exe.bak、C:\Windows\中 文\x.tmp）能滑过前面的检查。
+  // 修复：Windows 子树内只允许 CLEANABLE_EXCEPTIONS 明确列出的缓存目录，
+  // 其余一律拦截，防止规则污染或程序缺陷把系统文件带进删除清单。
+  const windir = (env('SystemRoot') || `${sysDrive()}\\Windows`).toLowerCase().replace(/\\+$/, '')
+  if (isSubPath(p, windir) && !CLEANABLE_EXCEPTIONS().some((r) => isSubPath(p, r))) {
+    return { allowed: false, reason: 'Windows 目录下仅允许清理明确列出的缓存目录（Temp/Logs/Installer 等）' }
+  }
+
   const name = baseName(p)
   if (CRITICAL_NAMES.has(name)) return { allowed: false, reason: `系统关键文件禁止删除：${name}` }
 

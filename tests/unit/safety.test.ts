@@ -142,3 +142,32 @@ describe('一键删除安全边界（不可通过设置关闭）', () => {
   it('低风险但未默认勾选也排除', () => assert.equal(isOneClickEligible('low', false), false))
   it('提示级不参与', () => assert.equal(isOneClickEligible('hint', true), false))
 })
+
+describe('C3/BUG-19 收紧：Windows 子树内只允许明确列出的缓存目录', () => {
+  it('Windows 根目录下的直接子项被拦截（普通通道此前会放行）', () => {
+    assert.equal(guardPath(`${SYS}\\notepad.exe.bak`).allowed, false)
+    assert.equal(guardPath(`${SYS}\\some.log`).allowed, false)
+  })
+  it('Windows 下含中文/空格的未知子目录同样拦截', () => {
+    assert.equal(guardPath(`${SYS}\\中 文\\x.tmp`).allowed, false)
+    assert.equal(guardPath(`${SYS}\\随机 目录\\子\\y.log`).allowed, false)
+  })
+  it('例外目录（Temp / Logs / Installer / Prefetch / Minidump）内部仍放行', () => {
+    assert.equal(guardPath(`${SYS}\\Temp\\中文 目录\\a.tmp`).allowed, true)
+    assert.equal(guardPath(`${SYS}\\Logs\\CBS\\x.log`).allowed, true)
+    assert.equal(guardPath(`${SYS}\\Installer\\x.msi`).allowed, true)
+    assert.equal(guardPath(`${SYS}\\Prefetch\\x.pf`).allowed, true)
+    assert.equal(guardPath(`${SYS}\\Minidump\\x.dmp`).allowed, true)
+  })
+  it('SoftwareDistribution\\Download（GC-05）不受收紧影响', () => {
+    assert.equal(guardPath(`${SYS}\\SoftwareDistribution\\Download\\a.cab`).allowed, true)
+  })
+  it('受保护树（System32 / Fonts / WinSxS）依旧拦截', () => {
+    assert.equal(guardPath(`${SYS}\\System32\\中 文\\x.tmp`).allowed, false)
+    assert.equal(guardPath(`${SYS}\\Fonts\\x.tmp`).allowed, false)
+  })
+  it('Windows.old 与 $WINDOWS.~BT 不受影响', () => {
+    assert.equal(guardPath('C://Windows.old//Users//x//a.txt').allowed, true)
+    assert.equal(guardPath('C://$WINDOWS.~BT//x.tmp').allowed, true)
+  })
+})
