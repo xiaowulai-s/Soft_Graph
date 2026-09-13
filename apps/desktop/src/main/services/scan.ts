@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import type {
   CleanResult,
   DeletePlan,
+  ElevateOutcome,
   FileNode,
   GraphModel,
   JunkItem,
@@ -32,6 +33,8 @@ import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
 import type { CacheFile } from '@junk/incremental'
 import { buildPlan, execute, listQuarantine, purge, restore } from '@junk/cleaner'
+import { buildElevatedTask } from '@junk/elevated'
+import { runElevated } from './elevate'
 import type { Store } from '../db/store'
 import type { AppPaths, SettingsStore } from './env'
 import builtinRules from '@rules/junk-rules.json'
@@ -620,9 +623,66 @@ export class ScanService {
     return result
   }
 
+  /**
+   * 提权清理（M3/E3）：普通权限删不掉的项交给独立提权进程。
+   *
+   * 与普通删除的差异：
+   *   - 走的是**独立进程**，通过 UAC 提权，主进程不继承管理员权限
+   *   - 清单在生成侧与执行侧各校验一次；被拒条目连同原因返回，不静默丢弃
+   *   - 只有「明确的垃圾目录」内的文件能进清单（见 packages/junk/elevated.ts）
+   */
+  async cleanElevated(itemIds: string[]): Promise<ElevateOutcome> {
+    const st = this.settings.get()
+    const items = this.store.junkByIds(itemIds)
+    if (items.length === 0) {
+      return { ok: false, failed: [], error: '没有可处理的条目' }
+    }
+
+    // 隔离批命名与普通删除保持一致（YYYYMMDD-HHMMSS）
+    const d = new Date()
+    const p2 = (n: number): string => String(n).padStart(2, '0')
+    const batchId = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(
+      d.getMinutes()
+    )}${p2(d.getSeconds())}`
+
+    const { task, rejected } = buildElevatedTask(items, {
+      taskId: uid('task_'),
+      quarantineRoot: this.paths.quarantineDir,
+      batchId,
+      keepDaysLow: st.quarantineKeepDaysLow,
+      keepDaysHigh: st.quarantineKeepDaysHigh
+    })
+
+    if (!task) {
+      return {
+        ok: false,
+        failed: [],
+        rejected,
+        error: `没有条目通过提权通道校验（${rejected.length} 条被拒）`
+      }
+    }
+
+    const outcome = await runElevated(task, {
+      root: this.paths.root,
+      tmpDir: this.paths.tmpDir
+    })
+
+    if (outcome.ok) {
+      // 成功项从数据库移除，并修正侧边栏统计
+      const done = new Set(
+        task.items.filter((i) => !outcome.failed.some((f) => f.path === i.path)).map((i) => i.path)
+      )
+      const okIds = items.filter((i) => done.has(i.fullPath)).map((i) => i.id)
+      this.store.removeJunk(okIds)
+      this.refreshSummaryAfterClean()
+      await this.store.persist()
+    }
+
+    return { ...outcome, rejected }
+  }
+
   /** 删除后重算侧边栏统计，避免 UI 显示已删除的空间 */
-  private refreshSummaryAfterClean(): void {
-    const summary = this.store.junkSummary()
+  private refreshSummaryAfterClean(): void {    const summary = this.store.junkSummary()
     if (!summary) return
     const next: JunkSummary = { ...summary, categories: [] }
     let total = 0

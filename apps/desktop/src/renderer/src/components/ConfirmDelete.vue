@@ -19,6 +19,11 @@ const lockerText = ref('')
 const rebootText = ref('')
 const rebootOk = ref(false)
 
+/** 提权清理（v2.0.0 M3/E3） */
+const elevateBusy = ref(false)
+const elevateText = ref('')
+const elevateOk = ref(false)
+
 async function queryLocker(path: string): Promise<void> {
   lockerBusy.value = path
   lockerText.value = ''
@@ -98,6 +103,43 @@ const impactRest = computed(() => Math.max(0, (props.plan?.items.length ?? 0) - 
 const needTyping = computed(() => maxRisk.value === 'high')
 const needStep2 = computed(() => maxRisk.value === 'medium' || maxRisk.value === 'high')
 
+/**
+ * 把失败项交给提权进程重试（E3）。
+ * 只传条目 id —— 清单在提权侧会再次校验，UI 不做任何路径拼接。
+ */
+async function elevateFailed(): Promise<void> {
+  elevateBusy.value = true
+  elevateText.value = ''
+  try {
+    const failedPaths = new Set((props.result?.failed ?? []).map((f) => f.path))
+    const ids = (props.plan?.items ?? []).filter((i) => failedPaths.has(i.fullPath)).map((i) => i.id)
+    if (ids.length === 0) {
+      elevateOk.value = false
+      elevateText.value =
+        '没有可提权处理的失败项（失败项通常不在提权可清理区内，或文件已被移除）'
+      return
+    }
+    const r = await window.api.cleanElevate(ids)
+    elevateOk.value = r.ok
+    if (r.ok) {
+      const extra = r.failed.length ? `，仍有 ${r.failed.length} 项失败` : ''
+      elevateText.value = `提权清理完成：成功 ${r.succeeded ?? 0} 项${extra}（可在隔离区还原）`
+    } else if (r.denied) {
+      elevateText.value = '已取消管理员授权，未做任何改动。'
+    } else if (r.unsupported) {
+      elevateText.value = '当前系统不支持提权清理。'
+    } else {
+      const why = r.rejected?.length ? `；首条被拒原因：${r.rejected[0].reason}` : ''
+      elevateText.value = `提权清理未执行：${r.error ?? '未知原因'}${why}`
+    }
+  } catch (e) {
+    elevateOk.value = false
+    elevateText.value = `提权清理失败：${(e as Error).message}`
+  } finally {
+    elevateBusy.value = false
+  }
+}
+
 const canProceed = computed(() => {
   if (!props.plan || props.plan.items.length === 0) return false
   if (needTyping.value && typed.value.trim() !== CONFIRM_TEXT) return false
@@ -168,6 +210,16 @@ function proceed(): void {
             </ul>
             <div v-if="lockerText" class="cd-note mono">{{ lockerText }}</div>
             <div v-if="rebootText" class="cd-note" :class="rebootOk ? '' : 'risk-medium'">{{ rebootText }}</div>
+            <!-- E3：提权重试（独立提权进程，只接收明确文件清单） -->
+            <div class="cd-elev">
+              <button class="cd-mini" :disabled="elevateBusy" @click="elevateFailed">
+                {{ elevateBusy ? '等待管理员授权…' : '以管理员身份清理失败项' }}
+              </button>
+              <span class="dim cd-elev-hint">
+                会弹出 UAC 授权窗口；提权进程只处理「明确的垃圾目录」内的文件，不接受通配符或脚本
+              </span>
+            </div>
+            <div v-if="elevateText" class="cd-note" :class="elevateOk ? '' : 'risk-medium'">{{ elevateText }}</div>
             <div v-if="result.failed.length > 40" class="dim cd-more">还有 {{ result.failed.length - 40 }} 项…</div>
           </div>
 
@@ -397,6 +449,19 @@ function proceed(): void {
 .cd-more {
   font-size: 10.5px;
   margin-top: 4px;
+}
+.cd-elev {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.cd-elev-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  flex: 1;
+  min-width: 200px;
 }
 .cd-note {
   margin-top: 10px;

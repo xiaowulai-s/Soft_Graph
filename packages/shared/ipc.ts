@@ -8,6 +8,7 @@ import type {
   AppSettings,
   CleanResult,
   DeletePlan,
+  ElevateOutcome,
   FileDetail,
   FloatPluginManifest,
   FloatPluginPayload,
@@ -54,6 +55,8 @@ export const CH = {
   CLEAN_LOCKERS: 'clean:lockers',
   /** v2.0.0 M2/B2：登记重启后删除（MOVEFILE_DELAY_UNTIL_REBOOT） */
   CLEAN_REBOOT_DELETE: 'clean:rebootDelete',
+  /** v2.0.0 M3/E3：提权清理——只接收明确文件清单，走独立提权进程 */
+  CLEAN_ELEVATE: 'clean:elevate',
   QUARANTINE_LIST: 'quarantine:list',
   QUARANTINE_RESTORE: 'quarantine:restore',
   QUARANTINE_PURGE: 'quarantine:purge',
@@ -127,6 +130,11 @@ export interface SoftGraphApi {
   cleanLockers(path: string): Promise<{ lockers: LockerInfo[]; error?: string }>
   /** 重启后删除登记；需要管理员权限，未提权时返回 needsElevation */
   cleanRebootDelete(paths: string[]): Promise<{ ok: number; needsElevation: boolean; errors: string[] }>
+  /**
+   * 提权清理（E3）：把普通权限删不掉的文件交给独立提权进程。
+   * 只接受已扫描出的条目 id —— 提权进程侧不会收到任何通配符或命令。
+   */
+  cleanElevate(itemIds: string[]): Promise<ElevateOutcome>
   quarantineList(): Promise<QuarantineRecord[]>
   quarantineRestore(payload: { ids: string[] }): Promise<{ ok: number; failed: string[] }>
   quarantinePurge(payload: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }>

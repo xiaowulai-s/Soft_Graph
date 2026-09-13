@@ -225,6 +225,9 @@ function registerIpc(): void {
   )
   h(CH.QUARANTINE_LIST, () => scan.quarantineList())
 
+  // v2.0.0 M3/E3：提权清理（独立提权进程，只接收明确的文件清单）
+  h(CH.CLEAN_ELEVATE, (payload: { itemIds: string[] }) => scan.cleanElevated(payload.itemIds ?? []))
+
   // v2.0.0 M2/B3：占用查询（Restart Manager，失败不抛异常）
   h(CH.CLEAN_LOCKERS, async (payload: { path: string }) => {
     const { findLockingProcessesDetailed } = await import('@junk/locks')

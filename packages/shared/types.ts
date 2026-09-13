@@ -295,6 +295,25 @@ export interface CleanResult {
   pendingReboot: number
 }
 
+/**
+ * 提权清理结果（v2.0.0 M3/E3）。
+ * 提权通道只处理**明确的文件清单**，因此结果里没有 blocked（清单外的项在生成阶段就被拒了）。
+ */
+export interface ElevateOutcome {
+  ok: boolean
+  /** 用户在 UAC 处取消授权 */
+  denied?: boolean
+  /** 平台不支持（非 Windows） */
+  unsupported?: boolean
+  batchId?: string
+  succeeded?: number
+  freedBytes?: number
+  failed: { path: string; reason: string }[]
+  /** 生成阶段被拒绝的条目（含原因，供 UI 与审计呈现） */
+  rejected?: { path: string; reason: string }[]
+  error?: string
+}
+
 export interface QuarantineRecord {
   id: string
   originalPath: string
