@@ -31,6 +31,7 @@ const api: SoftGraphApi = {
   expandGroup: (payload) => ipcRenderer.invoke(CH.GRAPH_EXPAND, payload),
   graphDrilldown: (fileId) => ipcRenderer.invoke(CH.GRAPH_DRILLDOWN, { fileId }),
   graphDiff: (softwareId) => ipcRenderer.invoke(CH.GRAPH_DIFF, { softwareId }),
+  auditRecent: () => ipcRenderer.invoke(CH.AUDIT_LIST),
   fileDetail: (payload) => ipcRenderer.invoke(CH.FILE_DETAIL, payload),
 
   // 垃圾

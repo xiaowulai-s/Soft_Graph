@@ -38,7 +38,8 @@
     "smoke": "node scripts/run-smoke.mjs",
     "e2e": "node scripts/run-e2e.mjs",
     "pack:dir": "electron-vite build && electron-builder --dir",
-    "pack:win": "electron-vite build && electron-builder --win nsis portable"
+    "pack:win": "electron-vite build && electron-builder --win nsis portable",
+    "release": "node scripts/publish-release.mjs"
   },
   "dependencies": {
     "sql.js": "^1.11.0"

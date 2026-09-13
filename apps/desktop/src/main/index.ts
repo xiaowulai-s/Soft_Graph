@@ -180,6 +180,8 @@ function registerIpc(): void {
   h(CH.GRAPH_DRILLDOWN, (payload: { fileId: string }) => scan.buildFileGraph(payload.fileId))
   // v2.0.0 M4/D3：依赖 Diff
   h(CH.GRAPH_DIFF, (payload: { softwareId: string }) => scan.graphDiff(payload.softwareId))
+  // v2.0.0 M5/E4：审计日志查看
+  h(CH.AUDIT_LIST, () => scan.auditRecent(50))
 
   h(CH.FILE_DETAIL, async (payload: { path: string }) => {
     const p = payload.path
@@ -312,6 +314,7 @@ function registerIpc(): void {
     let ok = 0
     let needsElevation = false
     const errors: string[] = []
+    const results: { path: string; sizeBytes: number; ok: boolean; reason?: string }[] = []
     for (const p of payload.paths ?? []) {
       const r = await scheduleDeleteOnReboot(p)
       if (r.ok) ok++
@@ -319,7 +322,16 @@ function registerIpc(): void {
         if (r.needsElevation) needsElevation = true
         errors.push(`${p}：${r.reason ?? '未知原因'}`)
       }
+      results.push({ path: p, sizeBytes: 0, ok: r.ok, reason: r.ok ? undefined : r.reason })
     }
+    // 审计（M5/E4）：登记重启后删除
+    await scan.appendAudit({
+      ts: Date.now(),
+      action: 'reboot-delete',
+      taskId: 'reboot_' + Date.now(),
+      freedBytes: 0,
+      results
+    })
     return { ok, needsElevation, errors: errors.slice(0, 10) }
   })
   h(CH.QUARANTINE_RESTORE, (payload: { ids: string[] }) => scan.quarantineRestore(payload.ids))
@@ -586,6 +598,7 @@ if (!gotLock) {
     if (floatTimer) clearInterval(floatTimer)
     registry?.dispose()
     scan?.disposeWorker()
+    await scan?.flushAudit().catch(() => {})
     await settings?.flush()
     await store?.close()
     // 结束常驻会话池（A1：避免遗留子进程）

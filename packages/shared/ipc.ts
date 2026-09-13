@@ -41,6 +41,8 @@ export const CH = {
   GRAPH_DRILLDOWN: 'graph:drilldown',
   /** v2.0.0 M4/D3：依赖 Diff（与上一次快照对比） */
   GRAPH_DIFF: 'graph:diff',
+  /** v2.0.0 M5/E4：读取最近审计条目 */
+  AUDIT_LIST: 'audit:list',
   FILE_DETAIL: 'file:detail',
 
   // 垃圾
@@ -123,6 +125,8 @@ export interface SoftGraphApi {
   graphDrilldown(fileId: string): Promise<GraphModel>
   /** 依赖 Diff（D3）；无历史快照时 ok=false */
   graphDiff(softwareId: string): Promise<{ ok: boolean; diff?: import('./types').GraphDiff; reason?: string }>
+  /** 最近审计条目（E4） */
+  auditRecent(): Promise<import('./types').AuditEntry[]>
   fileDetail(payload: { path: string }): Promise<FileDetail>
 
   scanJunk(payload?: { categoryIds?: string[]; force?: boolean }): Promise<{ scanId: string }>

@@ -39,6 +39,7 @@ async function loadAll(): Promise<void> {
   plugins.value = await window.api.floatPlugins()
   rules.value = await window.api.junkRules()
   await loadQuarantine()
+  window.api.auditRecent().then((a) => (audit.value = a)).catch(() => {})
 }
 
 async function loadQuarantine(): Promise<void> {
@@ -192,6 +193,17 @@ async function purgeExpired(): Promise<void> {
 }
 
 const qTotal = computed(() => quarantine.value.reduce((s, r) => s + r.sizeBytes, 0))
+
+/** 审计日志（E4） */
+const audit = ref<{ ts: number; action: string; taskId: string; batchId?: string; freedBytes: number; results: { path: string; ok: boolean }[] }[]>([])
+const AUDIT_LABEL: Record<string, string> = {
+  clean: '隔离清理',
+  'clean-direct': '直接删除',
+  'clean-elevate': '提权清理',
+  'reboot-delete': '登记重启删除',
+  restore: '隔离还原',
+  purge: '隔离销毁'
+}
 
 /** 规则库在线更新（E2） */
 const rulesBusy = ref(false)
@@ -640,6 +652,27 @@ function daysLeft(r: QuarantineRecord): string {
               </span>
             </div>
             <div v-if="diagText" class="sd-hint" :class="diagOk ? '' : 'risk-medium'">{{ diagText }}</div>
+
+            <!-- 审计日志（E4）：删除类动作的留痕 -->
+            <div class="sd-row col">
+              <h4 style="margin: 6px 0 0">审计记录（最近 {{ audit.length }} 条）</h4>
+              <div class="sd-audit">
+                <div v-for="(a, i) in audit" :key="i" class="sd-audit-row">
+                  <span class="mono dim">{{ new Date(a.ts).toLocaleString() }}</span>
+                  <span class="sd-audit-act" :class="a.action.includes('elevate') ? 'risk-medium' : ''">
+                    {{ AUDIT_LABEL[a.action] ?? a.action }}
+                  </span>
+                  <span class="mono">{{ a.results.length }} 项</span>
+                  <span class="mono dim">{{ formatBytes(a.freedBytes) }}</span>
+                </div>
+                <div v-if="audit.length === 0" class="dim" style="padding: 6px 0">
+                  暂无记录 —— 所有删除 / 还原 / 提权动作都会在这里留痕
+                </div>
+              </div>
+              <span class="sd-hint" style="padding: 0">
+                审计文件位于数据目录 audit\audit.jsonl（追加写入、不脱敏、不随诊断包导出）。
+              </span>
+            </div>
           </section>
         </template>
       </div>
@@ -765,6 +798,25 @@ function daysLeft(r: QuarantineRecord): string {
   background: var(--panel-2);
   padding: 1px 4px;
   border-radius: 3px;
+}
+.sd-audit {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+.sd-audit-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 10.5px;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.sd-audit-act {
+  font-weight: 600;
+  min-width: 84px;
 }
 .sd-hint.sd-inline {
   margin: 0;

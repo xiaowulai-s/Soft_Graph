@@ -210,6 +210,32 @@ export interface GraphDiff {
   toAt: number
 }
 
+// ───────────────── 审计日志（v2.0.0 M5/E4）─────────────────────────
+
+export type AuditAction =
+  | 'clean'
+  | 'clean-direct'
+  | 'clean-elevate'
+  | 'reboot-delete'
+  | 'restore'
+  | 'purge'
+
+export interface AuditFileResult {
+  path: string
+  sizeBytes: number
+  ok: boolean
+  reason?: string
+}
+
+export interface AuditEntry {
+  ts: number
+  action: AuditAction
+  taskId: string
+  batchId?: string
+  freedBytes: number
+  results: AuditFileResult[]
+}
+
 // ───────────────────────── 垃圾 ─────────────────────────
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'hint'

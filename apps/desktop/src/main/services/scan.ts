@@ -36,9 +36,10 @@ import { snapshotFromModel, diffSnapshots, type GraphSnapshot, type GraphDiff } 
 import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
 import type { CacheFile } from '@junk/incremental'
-import { log } from './logger'
+import { log, logger } from './logger'
 import { buildPlan, execute, listQuarantine, purge, restore } from '@junk/cleaner'
 import { buildElevatedTask } from '@junk/elevated'
+import { AuditLog } from '@junk/audit'
 import { runElevated } from './elevate'
 import type { Store } from '../db/store'
 import type { AppPaths, SettingsStore } from './env'
@@ -59,13 +60,17 @@ export class ScanService {
   /** 垃圾扫描 Worker（M2/C2），懒创建 */
   private worker: import('./junk-worker').JunkScanWorker | null = null
   private graphBuilding = new Set<string>()
+  /** 审计日志（M5/E4）：所有删除类动作的留痕（append-only，不脱敏，不进诊断包） */
+  private audit: AuditLog
 
   constructor(
     private store: Store,
     private paths: AppPaths,
     private settings: SettingsStore,
     private emit: Emitter
-  ) {}
+  ) {
+    this.audit = new AuditLog(join(paths.root, 'audit'))
+  }
 
   // ───────────────── 规则库 ─────────────────
 
@@ -716,6 +721,20 @@ export class ScanService {
     this.store.removeJunk([...okIds])
     this.refreshSummaryAfterClean()
     await this.store.persist()
+
+    // 审计（M5/E4）：删除动作留痕
+    await this.audit.append({
+      ts: Date.now(),
+      action: useQuarantine ? 'clean' : 'clean-direct',
+      taskId: plan.taskId,
+      batchId: result.quarantineId,
+      freedBytes: result.freedBytes,
+      results: plan.items.map((i) => {
+        const f = result.failed.find((x) => x.path === i.fullPath)
+        return { path: i.fullPath, sizeBytes: i.sizeBytes, ok: !f, reason: f?.reason }
+      })
+    })
+    void logger().flushNow()
     return result
   }
 
@@ -773,6 +792,25 @@ export class ScanService {
       this.refreshSummaryAfterClean()
       await this.store.persist()
     }
+
+    // 审计（M5/E4）：提权清理是管理面动作，无论成败都留痕
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'clean-elevate',
+      taskId: task.taskId,
+      batchId: outcome.batchId,
+      freedBytes: outcome.freedBytes ?? 0,
+      results: task.items.map((i) => {
+        const f = outcome.failed.find((x) => x.path === i.path)
+        return {
+          path: i.path,
+          sizeBytes: i.sizeBytes,
+          ok: outcome.ok && !f,
+          reason: f?.reason ?? (outcome.ok ? undefined : outcome.error)
+        }
+      })
+    })
+    void logger().flushNow()
 
     return { ...outcome, rejected }
   }
@@ -943,11 +981,58 @@ export class ScanService {
 
   async quarantineRestore(ids: string[]): Promise<{ ok: number; failed: string[] }> {
     const r = await restore(this.paths.quarantineDir, ids, 'rename')
+    // 审计（E4）：还原动作留痕
+    const records = await this.quarantineList()
+    const byId = new Map(records.map((rec) => [rec.id, rec]))
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'restore',
+      taskId: 'restore_' + Date.now(),
+      freedBytes: 0,
+      results: ids.map((id) => {
+        const rec = byId.get(id)
+        const ok = !r.failed.includes(id)
+        return {
+          path: rec?.originalPath ?? `隔离条目 ${id}`,
+          sizeBytes: rec?.sizeBytes ?? 0,
+          ok,
+          reason: ok ? undefined : '还原失败（目标已存在或文件丢失）'
+        }
+      })
+    })
+    void logger().flushNow()
     return r
   }
 
   async quarantinePurge(opts: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }> {
-    return purge(this.paths.quarantineDir, opts)
+    const before = opts.expiredOnly ? null : await this.quarantineList()
+    const r = await purge(this.paths.quarantineDir, opts)
+    // 审计（E4）：销毁是不可逆动作，必须留痕
+    const targets = (opts.ids ? before?.filter((x) => opts.ids!.includes(x.id)) : before) ?? []
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'purge',
+      taskId: 'purge_' + Date.now(),
+      freedBytes: r.freed,
+      results: targets.map((t) => ({ path: t.originalPath, sizeBytes: t.sizeBytes, ok: true }))
+    })
+    void logger().flushNow()
+    return r
+  }
+
+  /** 最近审计条目（E4，设置抽屉展示） */
+  auditRecent(limit = 50) {
+    return this.audit.recent(limit)
+  }
+
+  /** 外部（index.ts handler）直接写入审计条目 */
+  appendAudit(entry: Parameters<AuditLog['append']>[0]): Promise<void> {
+    return this.audit.append(entry)
+  }
+
+  /** 退出前落盘审计（E4） */
+  flushAudit(): Promise<void> {
+    return this.audit.flush()
   }
 
   /** 启动时清理到期隔离项（保留策略见 5.6.2） */

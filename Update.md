@@ -73,6 +73,13 @@
 
 
 
+### M5 生态与发布（🔄 进行中 · 2026-09-13）
+
+| 项 | 内容 | 结果 |
+|---|---|---|
+| **E4 审计日志** | `packages/junk/audit.ts`：JSONL append-only（`%LOCALAPPDATA%\SoftGraph\audit\audit.jsonl`），覆盖清理/提权/重启删除/还原/销毁五类动作，逐文件留痕（含失败原因）+ 隔离批次（还原依据）+ 释放字节；**不脱敏、不进诊断包**（审计价值在于完整路径，属用户私有记录）；设置抽屉展示最近 50 条 | ✅ 往返校验通过（append→flush→recent，新→旧排序、损坏行跳过）；接线全部删除类动作 |
+| **G4 一键发布** | `scripts/publish-release.mjs`（npm run release）：git credential 取 PAT → 自动打 tag → 创建/复用 Release → 上传附件（**按名 + 按字节双重去重**、名字规范化、900s 超时、失败重试）→ 生成 SHA256SUMS.txt；--dry-run 模式 | ✅ dry-run 真机验证（凭据/复用/去重全对）；过程中误传的重复附件已清理，暴露的去重缺口已修复 |
+
 ### M4 体验增强（✅ 主体完成 · 2026-09-13）
 
 | 项 | 内容 | 结果 |
