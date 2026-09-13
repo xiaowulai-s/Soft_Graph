@@ -66,7 +66,7 @@ const visibleNodes = computed<GraphNode[]>(() => {
   if (!m) return []
   const hidden = new Set(props.hiddenKinds)
   const term = props.searchTerm.trim().toLowerCase()
-  return m.nodes.filter((n) => {
+  const filtered = m.nodes.filter((n) => {
     if (n.type === 'software') return true
     if (n.type === 'file' && n.file) {
       // 「共享运行库」是图例中的独立一档（伪类型），与节点配色保持同一判定，
@@ -80,7 +80,81 @@ const visibleNodes = computed<GraphNode[]>(() => {
     }
     return true
   })
+  return filtered
 })
+
+// ───────────────── 渐进渲染（M4/D1） ─────────────────
+// 大图（> PROGRESSIVE_THRESHOLD）先画 T0/T1/T2，T3 间接依赖分批补上，
+// 让用户「先看到骨架，再看到细节」，而不是盯着空白画布等一次性渲染。
+
+const PROGRESSIVE_THRESHOLD = 3000
+const REVEAL_BATCH = 800
+
+const revealing = ref(false)
+const revealCount = ref<number | null>(null) // null = 已全量
+let revealTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 过滤后按层级排序：T0/T1/T2 在前，T3 在后（渐进渲染的批次顺序） */
+const orderedNodes = computed<GraphNode[]>(() => {
+  const all = visibleNodes.value
+  if (all.length <= PROGRESSIVE_THRESHOLD) return all
+  const early: GraphNode[] = []
+  const late: GraphNode[] = []
+  for (const n of all) {
+    if (n.type === 'group' || n.tier <= 2 || n.type === 'software') early.push(n)
+    else late.push(n)
+  }
+  return [...early, ...late]
+})
+
+const progressive = computed(() => orderedNodes.value.length > PROGRESSIVE_THRESHOLD)
+
+/** 渐进生效时按 revealCount 截断 */
+const renderNodes = computed<GraphNode[]>(() => {
+  const all = orderedNodes.value
+  if (!progressive.value || revealCount.value === null) return all
+  return all.slice(0, Math.min(revealCount.value, all.length))
+})
+
+function stopReveal(): void {
+  if (revealTimer) {
+    clearTimeout(revealTimer)
+    revealTimer = null
+  }
+  revealing.value = false
+}
+
+/** 模型/过滤条件变化后重置渐进状态；完成后恢复全量 */
+watch(
+  () => [props.model, props.searchTerm, props.hiddenKinds],
+  () => {
+    stopReveal()
+    if (progressive.value) {
+      const earlyCount = orderedNodes.value.findIndex((n) => n.tier === 3 && n.type === 'file')
+      revealCount.value = earlyCount < 0 ? null : Math.max(PROGRESSIVE_THRESHOLD, earlyCount)
+      if (revealCount.value !== null && revealCount.value < orderedNodes.value.length) {
+        revealing.value = true
+        const step = (): void => {
+          if (!revealing.value) return
+          revealCount.value = Math.min((revealCount.value ?? 0) + REVEAL_BATCH, orderedNodes.value.length)
+          draw()
+          if (revealCount.value >= orderedNodes.value.length) {
+            revealing.value = false
+            revealCount.value = null
+            return
+          }
+          revealTimer = setTimeout(step, 120)
+        }
+        revealTimer = setTimeout(step, 120)
+      }
+    } else {
+      revealCount.value = null
+    }
+  },
+  { immediate: true, deep: true }
+)
+
+onBeforeUnmount(() => stopReveal())
 
 /** 图例分类键：missing / runtime / 具体文件类型 */
 function kindOfFile(f: NonNullable<GraphNode['file']>): string {
@@ -96,16 +170,16 @@ const edgeByTarget = computed(() => {
 })
 
 const visibleEdges = computed<GraphEdge[]>(() => {
-  const ids = new Set(visibleNodes.value.map((n) => n.id))
+  const ids = new Set(renderNodes.value.map((n) => n.id))
   return (props.model?.edges ?? []).filter((e) => {
     if (!ids.has(e.source) || !ids.has(e.target)) return false
     return e.confidence >= props.minConfidence
   })
 })
 
-const renderMode = computed<'svg' | 'canvas'>(() => (visibleNodes.value.length > SVG_LIMIT ? 'canvas' : 'svg'))
+const renderMode = computed<'svg' | 'canvas'>(() => (renderNodes.value.length > SVG_LIMIT ? 'canvas' : 'svg'))
 
-const nodeById = computed(() => new Map(visibleNodes.value.map((n) => [n.id, n])))
+const nodeById = computed(() => new Map(renderNodes.value.map((n) => [n.id, n])))
 
 // 悬停时相关链路高亮，其余降透明度至 30%（5.4.3 交互规范）
 const activeId = computed(() => pinnedId.value ?? hoverId.value)
@@ -239,7 +313,7 @@ watch(() => [props.model, props.layoutMode], runLayout, { immediate: false })
 
 function fitToView(): void {
   const pos = positions.value
-  const nodes = visibleNodes.value
+  const nodes = renderNodes.value
   if (nodes.length === 0) return
   let minX = Infinity
   let minY = Infinity
@@ -367,7 +441,7 @@ function pickAt(sx: number, sy: number): string | null {
   const wy = (sy - ty.value) / scale.value
   let best: string | null = null
   let bestD = Infinity
-  for (const n of visibleNodes.value) {
+  for (const n of renderNodes.value) {
     const p = positions.value[n.id]
     if (!p) continue
     const dx = p.x - wx
@@ -438,7 +512,7 @@ function onContextMenu(e: MouseEvent): void {
 // ───────────────── Canvas 绘制 ─────────────────
 
 function draw(): void {
-  emit('stats', { visible: visibleNodes.value.length, mode: renderMode.value })
+  emit('stats', { visible: renderNodes.value.length, mode: renderMode.value })
   if (renderMode.value !== 'canvas') return
   const cv = canvasEl.value
   if (!cv) return
@@ -510,7 +584,7 @@ function draw(): void {
   ctx.textBaseline = 'top'
   const cText = resolveColor('var(--text-2)')
 
-  for (const n of visibleNodes.value) {
+  for (const n of renderNodes.value) {
     const p = pos[n.id]
     if (!p || !inView(p)) continue
     const dim = rel && !rel.has(n.id)
@@ -569,7 +643,7 @@ async function exportPng(): Promise<string | null> {
   ctx.font = `${11 / scale.value}px sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  for (const n of visibleNodes.value) {
+  for (const n of renderNodes.value) {
     const p = pos[n.id]
     if (!p) continue
     ctx.beginPath()
@@ -606,7 +680,7 @@ onBeforeUnmount(() => {
   cancelInertia()
 })
 
-watch(visibleNodes, () => draw())
+watch(renderNodes, () => draw())
 watch([scale, tx, ty], () => draw())
 
 // ───────────────── 悬停对象 ─────────────────
@@ -623,7 +697,7 @@ const LEGEND: { kind: string; label: string; color: string }[] = [
   { kind: 'group', label: '聚合分组', color: 'var(--node-system)' }
 ]
 
-const centerNode = computed(() => visibleNodes.value.find((n) => n.type === 'software') ?? null)
+const centerNode = computed(() => renderNodes.value.find((n) => n.type === 'software') ?? null)
 </script>
 
 <template>
@@ -658,7 +732,7 @@ const centerNode = computed(() => visibleNodes.value.find((n) => n.type === 'sof
         </g>
         <g class="nodes">
           <g
-            v-for="n in visibleNodes"
+            v-for="n in renderNodes"
             :key="n.id"
             :transform="`translate(${positions[n.id]?.x ?? 0},${positions[n.id]?.y ?? 0})`"
             :opacity="relatedIds && !relatedIds.has(n.id) ? 0.3 : 1"
@@ -783,7 +857,7 @@ const centerNode = computed(() => visibleNodes.value.find((n) => n.type === 'sof
 
     <!-- 渲染状态 -->
     <div class="gc-meta">
-      <span>{{ renderMode === 'svg' ? 'SVG' : 'Canvas' }} · {{ visibleNodes.length }} 节点 · {{ visibleEdges.length }} 边</span>
+      <span>{{ renderMode === 'svg' ? 'SVG' : 'Canvas' }} · {{ renderNodes.length }}/{{ orderedNodes.length }} 节点 · {{ visibleEdges.length }} 边{{ revealing ? '（渐进渲染中…）' : '' }}</span>
       <span v-if="layoutInfo" class="dim">· {{ layoutInfo }}</span>
       <span class="dim">· {{ Math.round(scale * 100) }}%</span>
       <span v-if="model" class="dim">· 体积 {{ formatBytes(model.stats.totalSizeBytes) }}</span>
@@ -817,7 +891,7 @@ const centerNode = computed(() => visibleNodes.value.find((n) => n.type === 'sof
         中心为软件图标，外围直线连接其依赖文件；鼠标悬停文件节点可查看完整路径
       </div>
     </div>
-    <div v-else-if="visibleNodes.length <= 1" class="gc-empty">
+    <div v-else-if="renderNodes.length <= 1" class="gc-empty">
       <div class="gc-empty-icon">∅</div>
       <div>当前筛选条件下没有可显示的依赖节点</div>
       <div class="dim" style="margin-top: 6px; font-size: 11.5px">试试降低置信度阈值，或在图例中恢复被隐藏的类型</div>

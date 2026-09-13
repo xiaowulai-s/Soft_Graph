@@ -31,6 +31,7 @@ import { discoverSoftware } from '@scanner/software'
 import { extractIcons, querySignatures } from '@scanner/winenum'
 import { resolveDependencies } from '@scanner/deps'
 import { buildGraph } from '@graph-core/build'
+import { graphInteractiveHtml } from '@graph-core/html-export'
 import { snapshotFromModel, diffSnapshots, type GraphSnapshot, type GraphDiff } from '@graph-core/diff'
 import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
@@ -1019,7 +1020,7 @@ export class ScanService {
         .join('\n')
       await fs.writeFile(file, '\ufeff' + head + body, 'utf8')
     } else {
-      await fs.writeFile(file, graphHtml(sw, cached.model.stats, flat), 'utf8')
+      await fs.writeFile(file, graphInteractiveHtml(sw, cached.model), 'utf8')
     }
     return file
   }
@@ -1068,28 +1069,5 @@ ${rows
 </tbody></table></body></html>`
 }
 
-function graphHtml(
-  sw: SoftwareItem,
-  stats: GraphModel['stats'],
-  rows: { name: string; path: string; type: string; confidence: number; evidence: string; size: number }[]
-): string {
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${esc(sw.name)} 依赖清单</title>
-<style>body{font-family:"Microsoft YaHei",sans-serif;background:#0f1620;color:#e2e8f0;padding:24px}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
-th,td{border-bottom:1px solid #24314a;padding:6px 8px;text-align:left}th{color:#94a3b8}
-.sum{background:#182230;padding:14px;border-radius:10px;margin:12px 0}
-.hi{color:#22c55e}.mid{color:#f59e0b}.lo{color:#64748b}</style></head><body>
-<h1 style="font-size:20px">${esc(sw.name)} <span style="color:#94a3b8;font-size:13px">${esc(sw.version)}</span></h1>
-<div class="sum">安装目录 ${esc(sw.installPath)}<br>主程序 ${esc(sw.mainExe)}<br>
-依赖 ${stats.fileCount} 项 · 缺失 ${stats.missingCount} · 解析成功 ${stats.parsedOk} · 解析失败 ${stats.parseFailed}</div>
-<table><thead><tr><th>文件名</th><th>完整路径</th><th>关系</th><th>置信度</th><th>证据</th></tr></thead><tbody>
-${rows
-  .map(
-    (r) =>
-      `<tr><td>${esc(r.name)}</td><td>${esc(r.path)}</td><td>${r.type}</td><td class="${
-        r.confidence >= 0.75 ? 'hi' : r.confidence >= 0.5 ? 'mid' : 'lo'
-      }">${r.confidence.toFixed(2)}</td><td>${r.evidence}</td></tr>`
-  )
-  .join('')}
-</tbody></table></body></html>`
-}
+// graphHtml（静态表格）已被 graphInteractiveHtml（M4/D5 交互式 SVG 快照）取代，
+// 如需回归纯表格导出可从 git 历史（≤ 9a84bf9）恢复。
