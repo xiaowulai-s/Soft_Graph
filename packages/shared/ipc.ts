@@ -95,6 +95,10 @@ export const CH = {
   FLOAT_OPEN_MAIN: 'float:openMain',
   FLOAT_RELOAD_PLUGINS: 'float:reloadPlugins',
   FLOAT_PLUGIN_DIR: 'float:pluginDir',
+  /** v2.0.0 M5/F1+F2：插件安装（URL 或源码） / 授权 / 删除 */
+  FLOAT_PLUGIN_INSTALL: 'float:pluginInstall',
+  FLOAT_PLUGIN_APPROVE: 'float:pluginApprove',
+  FLOAT_PLUGIN_REMOVE: 'float:pluginRemove',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -175,6 +179,12 @@ export interface SoftGraphApi {
   floatRequestTick(): Promise<FloatPluginPayload[]>
   floatReloadPlugins(): Promise<FloatPluginManifest[]>
   floatOpenPluginDir(): Promise<void>
+  /** F2：从 https URL 或源码安装插件；成功后返回清单（含待授权能力） */
+  floatPluginInstall(payload: { url?: string; source?: string }): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }>
+  /** F1：授权插件能力 */
+  floatPluginApprove(payload: { id: string; permissions: string[] }): Promise<import('./types').FloatPluginManifest[]>
+  /** F2：删除外部插件 */
+  floatPluginRemove(id: string): Promise<{ ok: boolean; error?: string }>
   floatDrag(payload: { dx: number; dy: number }): Promise<void>
   floatDragEnd(): Promise<void>
   floatPeek(entered: boolean): Promise<void>

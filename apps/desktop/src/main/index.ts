@@ -430,6 +430,24 @@ function registerIpc(): void {
     restartFloatTimer()
     return list
   })
+  // v2.0.0 M5/F2：一键安装插件（https URL 或源码）
+  h(CH.FLOAT_PLUGIN_INSTALL, async (payload: { url?: string; source?: string }) => {
+    const r = payload.url
+      ? await registry.installFromUrl(payload.url)
+      : payload.source
+        ? await registry.installSource(payload.source)
+        : { ok: false, error: '未提供 url 或 source' }
+    if (r.ok) restartFloatTimer()
+    return r
+  })
+  // v2.0.0 M5/F1：用户授权插件能力
+  h(CH.FLOAT_PLUGIN_APPROVE, async (payload: { id: string; permissions: string[] }) => {
+    const list = await registry.approvePermissions(payload.id, payload.permissions ?? [])
+    restartFloatTimer()
+    return list
+  })
+  // v2.0.0 M5/F2：删除外部插件
+  h(CH.FLOAT_PLUGIN_REMOVE, async (payload: { id: string }) => registry.removeExternal(payload.id))
   h(CH.FLOAT_PLUGIN_DIR, async () => {
     await fs.mkdir(registry.externalDir, { recursive: true }).catch(() => {})
     void shell.openPath(registry.externalDir)
@@ -545,7 +563,7 @@ async function bootstrap(): Promise<void> {
       const { psJson } = await import('@scanner/psbridge')
       return psJson<T>(script, { timeoutMs: timeoutMs ?? 20_000 })
     }
-  })
+ }, join(paths.root, 'plugin-approvals.json'))
   await registry.load()
 
   registerIpc()

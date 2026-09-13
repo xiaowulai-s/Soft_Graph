@@ -130,6 +130,94 @@ function openPluginDir(): void {
   void window.api.floatOpenPluginDir()
 }
 
+/** F1：插件尚未授权的能力 */
+function pendingOf(p: FloatPluginManifest): string[] {
+  return p.pendingPermissions ?? []
+}
+
+function permTitle(perm: string): string {
+  const map: Record<string, string> = {
+    fs: '文件系统（读写插件目录之外的文件）',
+    network: '网络访问（发起 HTTP/HTTPS 请求）',
+    powershell: 'PowerShell 执行（系统命令 / WMI 查询）'
+  }
+  return map[perm] ?? perm
+}
+
+async function approvePlugin(p: FloatPluginManifest): Promise<void> {
+  busy.value = true
+  try {
+    const pending = pendingOf(p)
+    plugins.value = await window.api.floatPluginApprove({ id: p.id, permissions: pending })
+    emit('toast', `已授权 ${p.name}：${pending.join(' / ')}`)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function removePlugin(p: FloatPluginManifest): Promise<void> {
+  busy.value = true
+  try {
+    const r = await window.api.floatPluginRemove(p.id)
+    if (!r.ok) {
+      emit('toast', `删除失败：${r.error}`)
+      return
+    }
+    plugins.value = await window.api.floatPlugins()
+    emit('toast', `已删除插件 ${p.name}`)
+  } finally {
+    busy.value = false
+  }
+}
+
+const installUrl = ref('')
+const installInput = ref<HTMLInputElement | null>(null)
+
+function pickInstallFile(): void {
+  installInput.value?.click()
+}
+
+async function installFromFile(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = ''
+  if (!f) return
+  if (f.size > 256 * 1024) {
+    emit('toast', '插件超过 256KB 上限')
+    return
+  }
+  busy.value = true
+  try {
+    const source = await f.text()
+    const r = await window.api.floatPluginInstall({ source })
+    handleInstallResult(r, f.name)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function installFromUrl(): Promise<void> {
+  const url = installUrl.value.trim()
+  if (!url) return
+  busy.value = true
+  try {
+    const r = await window.api.floatPluginInstall({ url })
+    handleInstallResult(r, url)
+  } finally {
+    busy.value = false
+  }
+}
+
+function handleInstallResult(r: { ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }, origin: string): void {
+  if (!r.ok) {
+    emit('toast', `安装失败：${r.error}`)
+    return
+  }
+  emit('toast', `已安装 ${r.name}（${origin}）${r.permissions?.length ? `，含能力：${r.permissions.join(' / ')}，待授权` : ''}`)
+  installUrl.value = ''
+  void reloadPlugins()
+}
+
 async function reloadPlugins(): Promise<void> {
   busy.value = true
   try {
@@ -528,18 +616,34 @@ function daysLeft(r: QuarantineRecord): string {
                     <span class="badge">{{ p.builtin ? '内置' : '外部' }}</span>
                     <span class="badge">{{ p.view }}</span>
                     <span v-if="p.interval > 0" class="badge">{{ (p.interval / 1000).toFixed(p.interval < 1000 ? 1 : 0) }}s</span>
+                    <span v-for="perm in p.permissions ?? []" :key="perm" class="badge" :class="pendingOf(p).includes(perm) ? 'risk-medium' : 'perm-ok'" :title="permTitle(perm)">
+                      {{ perm }}
+                    </span>
                   </div>
                   <div class="dim sd-plugin-d">{{ p.description }}</div>
+                  <div v-if="pendingOf(p).length" class="sd-hint warn" style="margin: 4px 0 0">
+                    待授权：{{ pendingOf(p).map(permTitle).join('；') }} —— 未授权前不会运行
+                  </div>
                 </div>
-                <div v-if="pluginEnabled(p.id)" class="sd-plugin-ord">
-                  <button class="ghost" :disabled="idx === 0" @click="movePlugin(p.id, -1)">▲</button>
-                  <button class="ghost" @click="movePlugin(p.id, 1)">▼</button>
+                <div class="sd-plugin-ord" style="flex-direction: column; gap: 4px">
+                  <template v-if="pluginEnabled(p.id)">
+                    <button class="ghost" :disabled="idx === 0" @click="movePlugin(p.id, -1)">▲</button>
+                    <button class="ghost" @click="movePlugin(p.id, 1)">▼</button>
+                  </template>
+                  <button v-if="pendingOf(p).length" class="ghost" :disabled="busy" @click="approvePlugin(p)">授权</button>
+                  <button v-if="!p.builtin" class="ghost" :disabled="busy" @click="removePlugin(p)">删除</button>
                 </div>
               </li>
             </ul>
             <div class="sd-row">
               <button class="ghost" :disabled="busy" @click="reloadPlugins">重载插件</button>
               <button class="ghost" @click="openPluginDir">打开插件目录</button>
+              <button class="ghost" :disabled="busy" @click="pickInstallFile">从文件安装…</button>
+              <input ref="installInput" type="file" accept=".js" style="display: none" @change="installFromFile" />
+            </div>
+            <div class="sd-row" style="margin-top: 6px">
+              <input v-model="installUrl" type="text" placeholder="或粘贴 https:// 插件地址一键安装" style="flex: 1" @keydown.enter="installFromUrl" />
+              <button class="ghost" :disabled="busy || !installUrl.trim()" @click="installFromUrl">安装</button>
             </div>
             <div class="sd-hint">
               插件目录内已放置示例插件 <code>example-hello.js</code> 与 <code>README.md</code>。
@@ -831,6 +935,10 @@ function daysLeft(r: QuarantineRecord): string {
 }
 .risk-medium {
   color: var(--risk-medium);
+}
+.badge.perm-ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .sd-check {
   display: flex;

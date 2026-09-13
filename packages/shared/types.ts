@@ -403,6 +403,12 @@ export interface FloatPluginManifest {
   builtin: boolean
   version: string
   author?: string
+  /** F1：声明的能力（fs / network / powershell）；声明后需用户授权才被调度 */
+  permissions?: string[]
+  /** F1：运行时由注册表填充 —— 尚未授权的能力（空 = 可用） */
+  pendingPermissions?: string[]
+  /** F1：插件文件名（外部插件，供删除；内置为空） */
+  file?: string
 }
 
 export interface FloatPluginDatum {
