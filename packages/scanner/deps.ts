@@ -442,6 +442,10 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
   // ── 阶段一：主程序 PE 解析 ──
   const known = await loadKnownDlls()
   const pathDirs = buildPathDirs()
+  // API Set 动态映射（M2/B5）：解析前确保映射就绪。
+  // 首次约 1s（加载器探测 700+ 名字），之后走内存/磁盘缓存近乎零成本；
+  // 失败静默退回静态前缀表，绝不影响解析可用性。
+  await ensureApiSetsWarm()
   let mainPe: PeResult | null = null
   if (sw.mainExe) {
     mainPe = await parsePe(sw.mainExe)
@@ -730,4 +734,23 @@ function dotnetRuntimeDirs(): string[] {
   if (existsSync(gac)) out.push(gac)
   dotnetDirsCache = out
   return out
+}
+
+/**
+ * 预热 API Set 动态映射（M2/B5）。
+ * 幂等：内部有内存与磁盘缓存，失败静默（解析会退回静态前缀表）。
+ */
+async function ensureApiSetsWarm(): Promise<void> {
+  try {
+    const { loadApiSetSchema } = await import('./apiset')
+    await loadApiSetSchema(apiSetCacheFile ?? undefined)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 由主进程注入 API Set 缓存路径（与 COM 索引同样走 dataDir） */
+let apiSetCacheFile: string | null = null
+export function setApiSetCachePath(p: string): void {
+  apiSetCacheFile = p
 }

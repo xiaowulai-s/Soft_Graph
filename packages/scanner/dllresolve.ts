@@ -2,15 +2,16 @@
  * DLL 搜索路径解析 + Windows 三大特殊机制处理
  * 对应技术设计方案 5.2.3 / 5.2.4
  *
- * 与设计文档的差异说明（原 Rust 层能力降级）：
- *   API Set 映射本应从 PEB 的 ApiSetMap（ntdll .apiset 节）动态读取；
- *   纯 Node 环境无法访问 PEB，此处改为「静态前缀映射表 + 磁盘存在性校验」，
- *   覆盖 api-ms-win-crt-* / core-* / security-* / eventing-* 等主要族群，
- *   未命中的 api-ms-win-* 一律标记为虚拟 DLL 而非缺失依赖，
- *   从而达到设计目标：不让数十个无法定位的噪声节点污染图谱。
+ * API Set（v2.0.0 M2/B5 更新）：
+ *   原实现为「静态前缀映射表」（纯 Node 无法访问 PEB ApiSetMap）。
+ *   现改为**动态解析**：apiset.ts 用 Windows 加载器
+ *   （LoadLibraryW + GetModuleFileNameW）探测每个 API set 的真实宿主，
+ *   结果缓存 30 天。实测动态表与静态表有 30 条冲突（静态表会猜错宿主），
+ *   因此动态映射优先，静态表仅作未加载时的兜底。
  */
 
 import { existsSync } from 'node:fs'
+import { apiSetMapSync } from './apiset'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { normKey, normPath, baseName } from '../shared/util'
@@ -81,9 +82,22 @@ export function isApiSetName(dll: string): boolean {
   return n.startsWith('api-ms-win-') || n.startsWith('ext-ms-win-')
 }
 
+/**
+ * API Set 解析（v2.0.0 M2/B5）。
+ *
+ * 优先级：
+ *   1. **动态映射**（apiset.ts 用加载器探测出的权威结果）—— 覆盖系统实际存在的
+ *      全部 API set，且不会像静态前缀表那样猜错宿主（实测两者有 30 条冲突）
+ *   2. 静态前缀表兜底 —— 动态映射尚未加载时使用（例如 CLU 工具链、单测）
+ */
 export function mapApiSet(dll: string): string | null {
   const n = dll.toLowerCase()
   if (!isApiSetName(n)) return null
+  const dyn = apiSetMapSync()
+  if (dyn) {
+    const hit = dyn.get(n)
+    if (hit) return hit
+  }
   let best: string | null = null
   let bestLen = -1
   for (const [prefix, host] of API_SET_PREFIX_MAP) {

@@ -26,6 +26,8 @@ export interface AppPaths {
   comIndexFile: string
   /** 临时工作目录（M2/C2：Worker 结果文件落盘处） */
   tmpDir: string
+  /** API Set 动态映射缓存（M2/B5） */
+  apiSetCacheFile: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -43,7 +45,8 @@ export function resolvePaths(): AppPaths {
     reportDir: join(root, 'reports'),
     junkCacheFile: join(root, 'cache', 'junk-incremental.json'),
     comIndexFile: join(root, 'cache', 'com-index.json'),
-    tmpDir: join(root, 'tmp')
+    tmpDir: join(root, 'tmp'),
+    apiSetCacheFile: join(root, 'cache', 'apiset-map.json')
   }
 }
 

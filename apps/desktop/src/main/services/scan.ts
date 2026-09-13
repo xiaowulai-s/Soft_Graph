@@ -116,8 +116,9 @@ export class ScanService {
    */
   async warmupComIndex(): Promise<void> {
     try {
-      const { setComIndexCachePath, preloadComIndex } = await import('@scanner/deps')
+      const { setComIndexCachePath, preloadComIndex, setApiSetCachePath } = await import('@scanner/deps')
       setComIndexCachePath(this.paths.comIndexFile)
+      setApiSetCachePath(this.paths.apiSetCacheFile)
       await preloadComIndex()
     } catch {
       /* 预热失败不影响任何功能 */
