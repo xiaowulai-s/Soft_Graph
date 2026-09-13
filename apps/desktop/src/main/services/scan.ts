@@ -18,7 +18,9 @@ import type {
   DeletePlan,
   ElevateOutcome,
   FileNode,
+  GraphEdge,
   GraphModel,
+  GraphNode,
   JunkItem,
   JunkSummary,
   ScanProgress,
@@ -29,6 +31,7 @@ import { discoverSoftware } from '@scanner/software'
 import { extractIcons, querySignatures } from '@scanner/winenum'
 import { resolveDependencies } from '@scanner/deps'
 import { buildGraph } from '@graph-core/build'
+import { snapshotFromModel, diffSnapshots, type GraphSnapshot, type GraphDiff } from '@graph-core/diff'
 import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
 import type { CacheFile } from '@junk/incremental'
@@ -318,9 +321,61 @@ export class ScanService {
 
       this.store.saveGraph(model, null)
       await this.store.persist()
+      this.saveSnapshot(softwareId, model)
       return model
     } finally {
       this.graphBuilding.delete(softwareId)
+    }
+  }
+
+  // ── 依赖 Diff（v2.0.0 M4/D3）──
+
+  private snapshotKey(id: string): string {
+    return `graph:snap:${id}`
+  }
+
+  /** 每次成功构建后保存快照；若内容与上次不同，旧快照挪到 prev（供对比） */
+  private saveSnapshot(softwareId: string, model: GraphModel): void {
+    try {
+      const curr = snapshotFromModel(model)
+      const key = this.snapshotKey(softwareId)
+      const prevRaw = this.store.getKv(key)
+      if (prevRaw) {
+        try {
+          const prev = JSON.parse(prevRaw) as GraphSnapshot
+          const same =
+            Object.keys(prev.files).length === Object.keys(curr.files).length &&
+            Object.entries(prev.files).every(([k, v]) => curr.files[k]?.confidence === v.confidence)
+          if (!same) this.store.setKv(`graph:snap:prev:${softwareId}`, prevRaw)
+        } catch {
+          /* 旧快照损坏则直接覆盖 */
+        }
+      }
+      this.store.setKv(key, JSON.stringify(curr))
+    } catch {
+      /* 快照失败不影响图谱 */
+    }
+  }
+
+  /**
+   * 与上一次快照对比（D3）。
+   * 返回 null 表示没有可对比的历史（首次构建）。
+   */
+  async graphDiff(softwareId: string): Promise<{
+    ok: boolean
+    diff?: GraphDiff
+    reason?: string
+  }> {
+    const currRaw = this.store.getKv(this.snapshotKey(softwareId))
+    const prevRaw = this.store.getKv(`graph:snap:prev:${softwareId}`)
+    if (!currRaw) return { ok: false, reason: '当前图谱还没有快照（先构建一次）' }
+    if (!prevRaw) return { ok: false, reason: '没有可对比的历史快照（同一软件第二次构建后才有）' }
+    try {
+      const prev = JSON.parse(prevRaw) as GraphSnapshot
+      const curr = JSON.parse(currRaw) as GraphSnapshot
+      return { ok: true, diff: diffSnapshots(prev, curr) }
+    } catch (e) {
+      return { ok: false, reason: `快照解析失败：${(e as Error).message}` }
     }
   }
 
@@ -757,6 +812,95 @@ export class ScanService {
       log.warn('rules', '规则库更新未应用', { reason: r.reason })
     }
     return r
+  }
+
+  /**
+   * 以文件为中心的反向子图（v2.0.0 M4/D2 下钻 + D4 反向查询，闭合 I-10 占位）。
+   *
+   * 结构：
+   *   T0 = 目标文件（中心）
+   *   T1 = 引用该文件的软件（dependency 反查，含置信度）
+   *   T2 = 每个引用软件的其它直接依赖（每软件限 12 条，按置信度降序）——
+   *        用于直观对比「同一运行库被多少软件共享」
+   */
+  async buildFileGraph(fileId: string): Promise<GraphModel> {
+    const file = this.store.fileById(fileId)
+    if (!file) throw new Error('文件不存在（可能已被重新扫描清理）')
+
+    const nodes: GraphNode[] = []
+    const edges: GraphEdge[] = []
+    const nodeIds = new Set<string>([file.id])
+
+    // T0：中心文件
+    nodes.push({ id: file.id, type: 'file', label: file.name, tier: 0, radius: 26, file })
+
+    const refs = this.store.referencingSoftware(file.fullPath)
+    for (const ref of refs) {
+      const sw = this.store.getSoftware(ref.swId)
+      if (!sw) continue
+      if (!nodeIds.has(sw.id)) {
+        nodeIds.add(sw.id)
+        nodes.push({
+          id: sw.id,
+          type: 'software',
+          label: sw.name,
+          tier: 1,
+          radius: 34,
+          software: sw
+        })
+      }
+      edges.push({
+        id: `${ref.swId}|${file.id}`,
+        source: ref.swId,
+        target: file.id,
+        type: (ref.type as GraphEdge['type']) || 'imports',
+        confidence: ref.confidence,
+        evidence: (ref.evidence as GraphEdge['evidence']) || []
+      })
+
+      // T2：该软件的其它直接依赖（展示共享面）
+      for (const dep of this.store.directDeps(ref.swId, 12)) {
+        if (dep.file.id === file.id) continue
+        if (!nodeIds.has(dep.file.id)) {
+          nodeIds.add(dep.file.id)
+          nodes.push({
+            id: dep.file.id,
+            type: 'file',
+            label: dep.file.name,
+            tier: 2,
+            radius: 13,
+            file: dep.file
+          })
+        }
+        edges.push({
+          id: `${ref.swId}|${dep.file.id}`,
+          source: ref.swId,
+          target: dep.file.id,
+          type: (dep.type as GraphEdge['type']) || 'imports',
+          confidence: dep.confidence,
+          evidence: (dep.evidence as GraphEdge['evidence']) || []
+        })
+      }
+    }
+
+    const missingCount = nodes.filter((n) => n.file?.missing).length
+    return {
+      softwareId: `drill:${fileId}`,
+      nodes,
+      edges,
+      stats: {
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        fileCount: nodes.filter((n) => n.type === 'file').length,
+        missingCount,
+        parsedOk: 0,
+        parseFailed: 0,
+        totalSizeBytes: nodes.reduce((s, n) => s + (n.file?.sizeBytes ?? 0), 0),
+        buildMs: 0,
+        fromCache: false,
+        groups: {}
+      }
+    }
   }
 
   /** 删除后重算侧边栏统计，避免 UI 显示已删除的空间 */

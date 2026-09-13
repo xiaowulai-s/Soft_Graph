@@ -176,6 +176,10 @@ function registerIpc(): void {
   h(CH.GRAPH_EXPAND, (payload: { softwareId: string; nodeId: string }) =>
     scan.expandGroup(payload.softwareId, payload.nodeId)
   )
+  // v2.0.0 M4/D2+D4：以文件为中心的反向子图
+  h(CH.GRAPH_DRILLDOWN, (payload: { fileId: string }) => scan.buildFileGraph(payload.fileId))
+  // v2.0.0 M4/D3：依赖 Diff
+  h(CH.GRAPH_DIFF, (payload: { softwareId: string }) => scan.graphDiff(payload.softwareId))
 
   h(CH.FILE_DETAIL, async (payload: { path: string }) => {
     const p = payload.path

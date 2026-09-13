@@ -187,6 +187,29 @@ export interface GraphModel {
   stats: GraphStats
 }
 
+// ───────────────── 依赖 Diff（v2.0.0 M4/D3）─────────────────────────
+
+export interface GraphSnapshot {
+  builtAt: number
+  /** normKey(fullPath) → { name, confidence } */
+  files: Record<string, { name: string; confidence: number }>
+}
+
+export interface DiffChanged {
+  path: string
+  name: string
+  from: number
+  to: number
+}
+
+export interface GraphDiff {
+  added: { path: string; name: string; confidence: number }[]
+  removed: { path: string; name: string; confidence: number }[]
+  changed: DiffChanged[]
+  fromAt: number
+  toAt: number
+}
+
 // ───────────────────────── 垃圾 ─────────────────────────
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'hint'

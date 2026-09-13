@@ -37,6 +37,10 @@ export const CH = {
   GRAPH_BUILD: 'graph:build',
   GRAPH_EXPAND: 'graph:expand',
   GRAPH_PROGRESS: 'graph:progress',
+  /** v2.0.0 M4/D2+D4：以文件为中心的反向子图（下钻 / 反向查询） */
+  GRAPH_DRILLDOWN: 'graph:drilldown',
+  /** v2.0.0 M4/D3：依赖 Diff（与上一次快照对比） */
+  GRAPH_DIFF: 'graph:diff',
   FILE_DETAIL: 'file:detail',
 
   // 垃圾
@@ -115,6 +119,10 @@ export interface SoftGraphApi {
 
   buildGraph(payload: { softwareId: string; maxDepth?: number }): Promise<GraphModel>
   expandGroup(payload: { softwareId: string; nodeId: string }): Promise<GraphModel>
+  /** 以文件为中心的反向子图（D2 下钻 / D4 反向查询） */
+  graphDrilldown(fileId: string): Promise<GraphModel>
+  /** 依赖 Diff（D3）；无历史快照时 ok=false */
+  graphDiff(softwareId: string): Promise<{ ok: boolean; diff?: import('./types').GraphDiff; reason?: string }>
   fileDetail(payload: { path: string }): Promise<FileDetail>
 
   scanJunk(payload?: { categoryIds?: string[]; force?: boolean }): Promise<{ scanId: string }>

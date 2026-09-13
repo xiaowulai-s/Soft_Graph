@@ -29,6 +29,8 @@ const api: SoftGraphApi = {
   // 图谱
   buildGraph: (payload) => ipcRenderer.invoke(CH.GRAPH_BUILD, payload),
   expandGroup: (payload) => ipcRenderer.invoke(CH.GRAPH_EXPAND, payload),
+  graphDrilldown: (fileId) => ipcRenderer.invoke(CH.GRAPH_DRILLDOWN, { fileId }),
+  graphDiff: (softwareId) => ipcRenderer.invoke(CH.GRAPH_DIFF, { softwareId }),
   fileDetail: (payload) => ipcRenderer.invoke(CH.FILE_DETAIL, payload),
 
   // 垃圾

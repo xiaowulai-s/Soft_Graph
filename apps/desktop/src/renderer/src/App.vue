@@ -38,7 +38,7 @@ const graph = ref<GraphModel | null>(null)
 const graphLoading = ref(false)
 const graphLoadingText = ref('')
 const graphProgress = ref<ScanProgress | null>(null)
-const drillStack = ref<string[]>([])
+const drillStack = ref<{ title: string; model: GraphModel }[]>([])
 
 const junkSummary = ref<JunkSummary | null>(null)
 const junkScanning = ref(false)
@@ -244,11 +244,79 @@ async function expandGroup(node: GraphNode): Promise<void> {
   }
 }
 
-/** 双击文件节点：以该节点为新中心（此版本聚焦并提示，避免误导为完整下钻） */
-function drilldown(node: GraphNode): void {
-  if (!node.file || node.file.missing) return
-  canvasRef.value?.focusNode(node.id)
-  showToast(`已聚焦 ${node.label}（该文件被 ${node.file.refCount ?? 1} 个软件引用）`)
+/**
+ * 双击文件节点 → 真下钻（M4/D2，闭合 I-10）：
+ * 以该文件为中心重建反向子图（谁引用它 / 引用者的其它依赖），
+ * 原图谱压入面包屑栈，可逐级返回。
+ */
+async function drilldown(node: GraphNode): Promise<void> {
+  if (!node.file) return
+  if (node.file.missing) {
+    showToast('该文件已缺失，无法下钻')
+    return
+  }
+  graphLoading.value = true
+  graphLoadingText.value = `正在构建「${node.label}」的反向依赖图…`
+  try {
+    if (graph.value) {
+      drillStack.value.push({ title: currentGraphTitle.value, model: graph.value })
+    }
+    graph.value = await window.api.graphDrilldown(node.file.id)
+    showToast(`反向子图：${graph.value.stats.nodeCount} 节点 / ${graph.value.stats.edgeCount} 条引用边`)
+  } catch (e) {
+    showToast(`下钻失败：${(e as Error).message}`)
+  } finally {
+    graphLoading.value = false
+  }
+}
+
+/** 面包屑返回上一级 */
+function popDrill(index = -1): void {
+  const target = drillStack.value[index]
+  if (!target) return
+  drillStack.value = drillStack.value.slice(0, index)
+  graph.value = target.model
+  canvasRef.value?.fitToView()
+}
+
+/** D4：右键菜单「哪些软件引用它」→ 与下钻共用同一条数据链路 */
+async function reverseLookup(node: GraphNode): Promise<void> {
+  await drilldown(node)
+}
+
+/** 当前图谱标题（面包屑用） */
+const currentGraphTitle = computed(() => {
+  const m = graph.value
+  if (!m) return ''
+  const id = m.softwareId
+  if (id.startsWith('drill:')) {
+    const center = m.nodes.find((n) => n.id === id.slice(6))
+    return center?.label ?? '反向子图'
+  }
+  return selected.value?.name ?? '图谱'
+})
+
+/** 依赖 Diff（M4/D3） */
+const diffPanel = ref<null | {
+  added: { path: string; name: string; confidence: number }[]
+  removed: { path: string; name: string; confidence: number }[]
+  changed: { path: string; name: string; from: number; to: number }[]
+  fromAt: number
+  toAt: number
+}>(null)
+
+async function showDiff(): Promise<void> {
+  if (!selected.value) return
+  try {
+    const r = await window.api.graphDiff(selected.value.id)
+    if (!r.ok || !r.diff) {
+      showToast(r.reason ?? '暂无可对比的快照')
+      return
+    }
+    diffPanel.value = r.diff
+  } catch (e) {
+    showToast(`对比失败：${(e as Error).message}`)
+  }
 }
 
 function toggleKind(kind: string): void {
@@ -387,13 +455,14 @@ async function onThemeChange(t: 'dark' | 'light'): Promise<void> {
 }
 
 // 右键菜单动作
-function ctxAction(kind: 'reveal' | 'copy' | 'focus' | 'hide'): void {
+function ctxAction(kind: 'reveal' | 'copy' | 'focus' | 'hide' | 'reverse'): void {
   const n = contextMenu.value?.node
   if (!n) return
   if (kind === 'reveal' && n.file && !n.file.missing) void reveal(n.file.fullPath)
   if (kind === 'copy' && n.file) void copy(n.file.fullPath)
   if (kind === 'focus') canvasRef.value?.focusNode(n.id)
   if (kind === 'hide' && n.file) toggleKind(n.file.missing ? 'missing' : n.file.kind)
+  if (kind === 'reverse' && n.file) void drilldown(n)
   contextMenu.value = null
 }
 
@@ -484,6 +553,27 @@ const statusText = computed(() => {
           <button class="ghost" title="打开安装目录" @click="reveal(selected.installPath || selected.mainExe)">
             打开目录
           </button>
+          <button
+            class="ghost"
+            title="与上一次图谱快照对比：新增 / 消失 / 置信度变化的依赖（M4/D3）"
+            @click="showDiff"
+          >
+            对比上次
+          </button>
+        </div>
+        <!-- 下钻面包屑（M4/D2）：显示当前层级，点击任意一级返回 -->
+        <div v-if="drillStack.length" class="mid-breadcrumb">
+          <button class="ghost crumb" @click="selectSoftware(selected!, false)">
+            {{ selected?.name ?? '图谱' }}
+          </button>
+          <template v-for="(c, i) in drillStack" :key="i">
+            <span class="crumb-sep">›</span>
+            <button class="ghost crumb" @click="popDrill(i)">
+              {{ c.title }}
+            </button>
+          </template>
+          <span class="crumb-sep">›</span>
+          <span class="crumb cur">{{ currentGraphTitle }}</span>
         </div>
         <div class="mid-canvas">
           <GraphCanvas
@@ -547,7 +637,65 @@ const statusText = computed(() => {
       </button>
       <button :disabled="!contextMenu.node.file" @click="ctxAction('copy')">复制路径</button>
       <button @click="ctxAction('focus')">在图中聚焦</button>
+      <button
+        :disabled="!contextMenu.node.file"
+        title="以该文件为中心查看反向依赖图（M4/D4）"
+        @click="ctxAction('reverse')"
+      >
+        哪些软件引用它
+      </button>
       <button :disabled="!contextMenu.node.file" @click="ctxAction('hide')">隐藏此类节点</button>
+    </div>
+
+    <!-- 依赖 Diff 面板（M4/D3） -->
+    <div v-if="diffPanel" class="modal-mask" @click.self="diffPanel = null">
+      <div class="diff-p">
+        <div class="cd-head">
+          <span class="cd-title">依赖变化对比</span>
+          <span class="dim" style="margin-left: auto; font-size: 11px">
+            {{ new Date(diffPanel.fromAt).toLocaleString() }} → {{ new Date(diffPanel.toAt).toLocaleString() }}
+          </span>
+        </div>
+        <div class="cd-body">
+          <div class="df-sec">
+            <div class="df-t risk-low">新增依赖（{{ diffPanel.added.length }}）</div>
+            <ul class="cd-list">
+              <li v-for="a in diffPanel.added.slice(0, 50)" :key="a.path">
+                <span class="mono cd-p">{{ a.name }}</span>
+                <span class="dim cd-r">置信度 {{ a.confidence.toFixed(2) }}</span>
+              </li>
+            </ul>
+            <div v-if="diffPanel.added.length === 0" class="dim cd-more">无</div>
+          </div>
+          <div class="df-sec">
+            <div class="df-t risk-medium">消失依赖（{{ diffPanel.removed.length }}）</div>
+            <ul class="cd-list">
+              <li v-for="r in diffPanel.removed.slice(0, 50)" :key="r.path">
+                <span class="mono cd-p">{{ r.name }}</span>
+                <span class="dim cd-r">置信度 {{ r.confidence.toFixed(2) }}</span>
+              </li>
+            </ul>
+            <div v-if="diffPanel.removed.length === 0" class="dim cd-more">无</div>
+          </div>
+          <div class="df-sec">
+            <div class="df-t">置信度变化（{{ diffPanel.changed.length }}）</div>
+            <ul class="cd-list">
+              <li v-for="c in diffPanel.changed.slice(0, 50)" :key="c.path">
+                <span class="mono cd-p">{{ c.name }}</span>
+                <span class="dim cd-r">{{ c.from.toFixed(2) }} → {{ c.to.toFixed(2) }}</span>
+              </li>
+            </ul>
+            <div v-if="diffPanel.changed.length === 0" class="dim cd-more">无</div>
+          </div>
+          <div class="sd-hint" style="margin-top: 10px">
+            对比基于每次构建图谱时自动保存的文件依赖快照（按路径归一化）。软件更新后重扫即可看到新引入的组件。
+          </div>
+        </div>
+        <div class="cd-foot">
+          <span class="cd-sp" />
+          <button class="primary" @click="diffPanel = null">关闭</button>
+        </div>
+      </div>
     </div>
 
     <ConfirmDelete
@@ -685,6 +833,90 @@ const statusText = computed(() => {
   flex: 1;
   min-height: 0;
   position: relative;
+}
+.mid-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11.5px;
+  flex: none;
+  overflow-x: auto;
+}
+.mid-breadcrumb .crumb {
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.mid-breadcrumb .crumb.cur {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.crumb-sep {
+  color: var(--text-3);
+}
+/* 依赖 Diff 面板（D3） */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 14, 0.55);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.diff-p {
+  width: 620px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.diff-p .cd-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+}
+.diff-p .cd-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.diff-p .cd-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+.df-sec {
+  margin-bottom: 14px;
+}
+.df-t {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.df-sec .cd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.df-sec .cd-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
 .sb {
   display: flex;

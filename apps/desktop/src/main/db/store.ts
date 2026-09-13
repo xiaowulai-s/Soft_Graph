@@ -306,6 +306,90 @@ export class Store {
     else this.db.run('DELETE FROM graph_cache')
   }
 
+  // ── 反向查询 / 下钻（v2.0.0 M4/D2+D4）──
+
+  private rowToFile(r: Record<string, unknown>): FileNode {
+    return {
+      id: String(r.id),
+      fullPath: String(r.full_path ?? ''),
+      name: String(r.name ?? ''),
+      sizeBytes: Number(r.size ?? 0),
+      mtime: Number(r.mtime ?? 0),
+      kind: (r.kind as FileNode['kind']) ?? 'dll',
+      ext: String(r.ext ?? ''),
+      arch: (r.arch as FileNode['arch']) ?? undefined,
+      version: r.version ? String(r.version) : undefined,
+      signStatus: (r.sign_status as FileNode['signStatus']) ?? undefined,
+      missing: Number(r.missing ?? 0) === 1,
+      refCount: Number(r.ref_count ?? 0)
+    }
+  }
+
+  /** 按主键取文件节点 */
+  fileById(id: string): FileNode | null {
+    const r = this.db.get<Record<string, unknown>>('SELECT * FROM file_index WHERE id = ?', [id])
+    return r ? this.rowToFile(r) : null
+  }
+
+  /**
+   * 反查：哪些软件引用了「该路径」的文件（去重后的最新一条边）。
+   *
+   * 按 full_path 而非 file_id 匹配 —— 不同软件扫描时对同一系统文件
+   * （如 KERNEL32.dll）会产生不同的 file_index 行，但 full_path 相同；
+   * refCount 也按路径聚合，两者必须语义一致（M4/D4 真机验证发现的不一致）。
+   */
+  referencingSoftware(fullPath: string): { swId: string; confidence: number; type: string; evidence: string[] }[] {
+    const rows = this.db.all<{
+      software_id: string
+      confidence: number
+      type: string
+      evidence: string
+    }>(
+      `SELECT d.software_id AS software_id, d.confidence AS confidence, d.type AS type, d.evidence AS evidence
+       FROM dependency d JOIN file_index f ON f.id = d.file_id
+       WHERE lower(f.full_path) = lower(?) ORDER BY d.created_at DESC`,
+      [fullPath]
+    )
+    const best = new Map<string, { swId: string; confidence: number; type: string; evidence: string[] }>()
+    for (const r of rows) {
+      const swId = String(r.software_id)
+      if (best.has(swId)) continue // 首条即最新
+      let evidence: string[] = []
+      try {
+        evidence = JSON.parse(String(r.evidence ?? '[]'))
+      } catch {
+        /* ignore */
+      }
+      best.set(swId, { swId, confidence: Number(r.confidence), type: String(r.type), evidence })
+    }
+    return [...best.values()].sort((a, b) => b.confidence - a.confidence)
+  }
+
+  /** 某软件的直接依赖（供下钻子图的 T2 层），按置信度降序取前 limit 条 */
+  directDeps(
+    softwareId: string,
+    limit = 30
+  ): { file: FileNode; confidence: number; type: string; evidence: string[] }[] {
+    const rows = this.db.all<Record<string, unknown>>(
+      `SELECT f.*, d.confidence AS dep_conf, d.type AS dep_type, d.evidence AS dep_evidence
+       FROM dependency d JOIN file_index f ON f.id = d.file_id
+       WHERE d.software_id = ? ORDER BY d.confidence DESC LIMIT ?`,
+      [softwareId, limit]
+    )
+    return rows.map((r) => ({
+      file: this.rowToFile(r),
+      confidence: Number(r.dep_conf ?? 0),
+      type: String(r.dep_type ?? 'imports'),
+      evidence: (() => {
+        try {
+          return JSON.parse(String(r.dep_evidence ?? '[]'))
+        } catch {
+          return []
+        }
+      })()
+    }))
+  }
+
   // ── PE 缓存（key = 路径 + 大小 + 修改时间，见 10.2 缓存三层） ──
 
   getPeCache(path: string, size: number, mtime: number): { imports: string[]; parseStatus: string } | null {
