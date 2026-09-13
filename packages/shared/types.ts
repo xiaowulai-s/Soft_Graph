@@ -410,6 +410,8 @@ export interface AppSettings {
   advancedMode: boolean
   /** 允许 Shift 跳过隔离区直接删除 */
   allowDirectDelete: boolean
+  /** 规则库在线更新源（HTTPS，需签名匹配才生效；空 = 禁用在线更新） */
+  rulesUpdateUrl: string
   float: FloatSettings
 }
 

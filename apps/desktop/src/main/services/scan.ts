@@ -32,6 +32,7 @@ import { buildGraph } from '@graph-core/build'
 import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
 import type { CacheFile } from '@junk/incremental'
+import { log } from './logger'
 import { buildPlan, execute, listQuarantine, purge, restore } from '@junk/cleaner'
 import { buildElevatedTask } from '@junk/elevated'
 import { runElevated } from './elevate'
@@ -718,6 +719,44 @@ export class ScanService {
     }
 
     return { ...outcome, rejected }
+  }
+
+  /**
+   * 检查并应用规则库在线更新（E2）。
+   *
+   * 校验链（任一失败都不触碰现有规则文件）：
+   *   HTTPS 源 → Ed25519 签名（公钥内置）→ SHA-256 内容一致 →
+   *   版本单调（防降级/重放）→ 结构安全（防毒丸规则）→ 原子写入。
+   *
+   * 公钥来源：编译期常量（RULES_SIGNING_PUBKEY，当前为空 → 在线更新禁用）
+   * 或环境变量 SG_RULES_PUBKEY（发布正式密钥前供测试）。
+   */
+  async checkRulesUpdate(): Promise<{
+    ok: boolean
+    version?: number
+    reason?: string
+    ruleCount?: number
+  }> {
+    const url = this.settings.get().rulesUpdateUrl
+    if (!url) return { ok: false, reason: '未配置规则更新源（设置 → 清理与安全）' }
+    const { applyRulesUpdate, parseStoredVersion, RULES_SIGNING_PUBKEY } = await import('@junk/rules-update')
+    const current = parseStoredVersion(this.store.getKv('rules:version'))
+    const r = await applyRulesUpdate({
+      currentVersion: current,
+      publicKeyHex: RULES_SIGNING_PUBKEY || process.env.SG_RULES_PUBKEY || '',
+      rulesFile: this.paths.rulesFile,
+      baseUrl: url
+    })
+    if (r.ok && r.version) {
+      this.store.setKv('rules:version', JSON.stringify(r.version))
+      this.invalidateRules()
+      await this.rules() // 立即重载进内存
+      log.info('rules', '规则库已更新', { from: current, to: r.version, count: r.ruleCount })
+      await import('./logger').then((m) => m.logger().flushNow())
+    } else {
+      log.warn('rules', '规则库更新未应用', { reason: r.reason })
+    }
+    return r
   }
 
   /** 删除后重算侧边栏统计，避免 UI 显示已删除的空间 */

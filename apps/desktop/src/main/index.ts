@@ -239,6 +239,9 @@ function registerIpc(): void {
     }))
   })
 
+  // v2.0.0 M3/E2：规则库在线更新（签名 + 哈希 + 版本单调 + 结构校验）
+  h(CH.RULES_UPDATE, () => scan.checkRulesUpdate())
+
   // ── 清理 ──
   h(CH.CLEAN_PLAN, (payload: { itemIds: string[]; useQuarantine: boolean; oneClick?: boolean }) =>
     (async () => {

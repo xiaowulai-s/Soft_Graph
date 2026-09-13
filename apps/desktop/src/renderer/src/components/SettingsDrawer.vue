@@ -193,6 +193,32 @@ async function purgeExpired(): Promise<void> {
 
 const qTotal = computed(() => quarantine.value.reduce((s, r) => s + r.sizeBytes, 0))
 
+/** 规则库在线更新（E2） */
+const rulesBusy = ref(false)
+const rulesText = ref('')
+const rulesOk = ref(false)
+
+async function checkRulesUpdate(): Promise<void> {
+  rulesBusy.value = true
+  rulesText.value = ''
+  try {
+    const r = await window.api.rulesUpdate()
+    rulesOk.value = r.ok
+    if (r.ok) {
+      rulesText.value = `✅ 规则库已更新到 v${r.version}（${r.ruleCount ?? '?'} 类）。重新扫描即生效。`
+      emit('toast', `规则库已更新到 v${r.version}`)
+      rules.value = await window.api.junkRules()
+    } else {
+      rulesText.value = `未更新：${r.reason ?? '未知原因'}`
+    }
+  } catch (e) {
+    rulesOk.value = false
+    rulesText.value = `检查失败：${(e as Error).message}`
+  } finally {
+    rulesBusy.value = false
+  }
+}
+
 /** 诊断包导出（C5） */
 const diagBusy = ref(false)
 const diagText = ref('')
@@ -205,7 +231,7 @@ async function exportDiag(): Promise<void> {
     const r = await window.api.diagExport()
     diagOk.value = r.ok
     if (r.ok && r.file) {
-      diagText.value = `已生成：${r.file}（${formatBytes(r.bytes ?? 0)}，含 ${r.entries?.length ?? 0} 个文件），已在资源管理器中定位`
+      diagText.value = `已生成：${r.file}（${formatBytes(r.bytes ?? 0)}，含 ${r.entries ?? 0} 个文件），已在资源管理器中定位`
     } else {
       diagText.value = `导出失败：${r.error ?? '未知原因'}`
     }
@@ -351,6 +377,27 @@ function daysLeft(r: QuarantineRecord): string {
             <div class="sd-hint warn">
               无论如何设置，系统关键路径（System32 / SysWOW64 / WinSxS / Program Files 等）的白名单硬拦截始终生效，
               该规则以纯函数固化在代码中，不读取配置文件。
+            </div>
+            <!-- 规则库在线更新（E2）：签名 + 哈希 + 版本单调 + 结构校验 -->
+            <div class="sd-row col">
+              <label>规则库更新源（HTTPS，留空禁用在线更新）</label>
+              <input
+                class="mono"
+                type="url"
+                placeholder="https://example.com/softgraph-rules/"
+                :value="settings.rulesUpdateUrl"
+                @change="patch({ rulesUpdateUrl: ($event.target as HTMLInputElement).value.trim() })"
+              />
+              <div class="sd-actions">
+                <button class="ghost" :disabled="rulesBusy" @click="checkRulesUpdate">
+                  {{ rulesBusy ? '检查中…' : '检查规则更新' }}
+                </button>
+                <span class="sd-hint sd-inline">
+                  更新包必须通过 Ed25519 签名（公钥内置）、SHA-256 校验、版本单调与安全结构检查，
+                  任何一步失败都不会改动本机规则。
+                </span>
+              </div>
+              <div v-if="rulesText" class="sd-hint" :class="rulesOk ? '' : 'warn'">{{ rulesText }}</div>
             </div>
           </section>
         </template>
@@ -723,6 +770,12 @@ function daysLeft(r: QuarantineRecord): string {
   margin: 0;
   flex: 1;
   min-width: 220px;
+}
+.sd-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .risk-medium {
   color: var(--risk-medium);

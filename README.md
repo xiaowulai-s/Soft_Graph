@@ -106,6 +106,7 @@ npm run pack:win            # 产出 release/1.0.0/ 下的安装包 + 便携版
 | [`docs/04-验证报告.md`](docs/04-验证报告.md) | 内核冒烟 + 真机端到端数据、缺陷修复记录 |
 | [`docs/05-推送与发布.md`](docs/05-推送与发布.md) | 推送远端、Release 资产发布、离线 bundle 搬运 |
 | [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md) | v2.0.0 规划：遗留问题清单、7 条工作主线、里程碑与验收标准、M0 交付明细 |
+| [`docs/07-代码签名.md`](docs/07-代码签名.md) | 证书选择、electron-builder 接线、手动签名、杀软白名单申报 |
 | [`docs/benchmarks/`](docs/benchmarks/) | 性能基准报告（每次 `npm run bench` 生成，含达标对照） |
 | [`Update.md`](Update.md) | 版本变更记录与排期 |
 

@@ -81,6 +81,7 @@ export function defaultSettings(): AppSettings {
     enabledJunkCategories: [],
     advancedMode: false,
     allowDirectDelete: false,
+    rulesUpdateUrl: '',
     float: defaultFloatSettings()
   }
 }

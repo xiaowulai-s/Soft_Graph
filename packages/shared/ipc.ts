@@ -46,6 +46,8 @@ export const CH = {
   JUNK_SUMMARY: 'junk:summary',
   JUNK_ITEMS: 'junk:items',
   JUNK_RULES: 'junk:rules',
+  /** v2.0.0 M3/E2：检查并应用规则库在线更新（签名+哈希+版本单调+结构校验） */
+  RULES_UPDATE: 'rules:update',
 
   // 清理
   CLEAN_PLAN: 'clean:plan',
@@ -125,6 +127,8 @@ export interface SoftGraphApi {
     sort?: 'size' | 'mtime' | 'path'
   }): Promise<{ items: JunkItem[]; total: number }>
   junkRules(): Promise<{ id: string; name: string; risk: string; defaultSelected: boolean; description?: string }[]>
+  /** 检查并应用规则库在线更新（E2） */
+  rulesUpdate(): Promise<{ ok: boolean; version?: number; reason?: string; ruleCount?: number }>
 
   cleanPlan(payload: { itemIds: string[]; useQuarantine: boolean }): Promise<DeletePlan>
   cleanExecute(payload: { itemIds: string[]; useQuarantine: boolean }): Promise<CleanResult>
@@ -149,7 +153,7 @@ export interface SoftGraphApi {
   appInfo(): Promise<AppInfo>
   exportReport(payload: { kind: 'graph' | 'junk'; format: 'json' | 'csv' | 'html'; softwareId?: string }): Promise<string | null>
   /** 导出脱敏诊断包（C5）；返回 zip 绝对路径，失败返回 null */
-  diagExport(): Promise<{ ok: boolean; file?: string; bytes?: number; error?: string }>
+  diagExport(): Promise<{ ok: boolean; file?: string; bytes?: number; entries?: number; error?: string }>
 
   // 浮窗
   floatGetSettings(): Promise<FloatSettings>

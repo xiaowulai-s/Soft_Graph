@@ -37,6 +37,7 @@ const api: SoftGraphApi = {
   junkSummary: () => ipcRenderer.invoke(CH.JUNK_SUMMARY),
   junkItems: (payload) => ipcRenderer.invoke(CH.JUNK_ITEMS, payload),
   junkRules: () => ipcRenderer.invoke(CH.JUNK_RULES),
+  rulesUpdate: () => ipcRenderer.invoke(CH.RULES_UPDATE),
 
   // 清理
   cleanPlan: (payload) => ipcRenderer.invoke(CH.CLEAN_PLAN, payload),

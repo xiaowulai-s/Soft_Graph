@@ -254,8 +254,10 @@ v1.0.0 实测遗留的 14 项问题（I-01 ~ I-14）、7 条工作主线（A 性
 | 实现差异 | ZIP 未引入压缩库（archiver / jszip）—— 诊断包都是文本，store 模式足够，保住「零原生依赖、单 exe 分发」原则 |
 
 | **C3 路径健壮性** | 构造含中文/空格/特殊字符/emoji、507 字符长路径（30 层）、UNC、多用户目录的测试树，端到端探测「创建 → 安全判定 → 扫描 → 隔离 → 提权判定」全链路；`guardPath` 新增 Windows 子树收紧判定 | ✅ 真机 16/16 通过，详见下表；发现并修复 **BUG-21**（普通通道版白名单缺口） |
-
 | **C4 压力测试** | 合成图谱（buildGraph 12000 依赖 / layoutGraph 1350~13500 节点）+ 5 万真实文件树三轮扫描，采样 RSS/堆/句柄曲线，验证无泄漏 | ✅ 全部达标，报告 `docs/benchmarks/stress-2026-09-13.md`，详见下表 |
+| **E1 签名流水线** | 真机验证签名链路：自签名代码签名证书 → `Set-AuthenticodeSignature` 签名 portable exe → `Get-AuthenticodeSignature` 独立验证；electron-builder 接线（CSC_LINK/CSC_KEY_PASSWORD）与杀软白名单申报流程成文 | ✅ 签名写入成功（NotSigned → Signer 正确）；「不受信任根」为自签名预期行为；正式 OV/EV 证书到位后按 `docs/07-代码签名.md` 切换 |
+| **E2 规则库在线更新** | `packages/junk/rules-update.ts`：HTTPS 源 + Ed25519 签名（公钥内置，私钥走 CI Secret）→ SHA-256 内容一致 → 版本单调（防降级/重放）→ 签名时效 180 天 → **结构安全校验**（拒绝盘根/Windows 本体根、过宽模式、非法风险级）→ 原子写入；维护者签名发布工具 `scripts/publish-rules.mjs` | ✅ 21 个用例全链路验证（本地包源端到端：合法更新写入成功；篡改哈希/坏签名/版本回退/过期签名/毒丸规则全部拒绝且**不触碰现有规则文件**）；UI 接线「设置 → 清理与安全 → 检查规则更新」 |
+
 
 **C4 验证细节（真机）**
 
