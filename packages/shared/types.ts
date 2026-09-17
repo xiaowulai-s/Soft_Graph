@@ -219,6 +219,10 @@ export type AuditAction =
   | 'reboot-delete'
   | 'restore'
   | 'purge'
+  /** 注册表残留清理（v3.0.0 · M4） */
+  | 'registry-clean'
+  /** 注册表备份还原 */
+  | 'registry-restore'
 
 export interface AuditFileResult {
   path: string
@@ -430,9 +434,35 @@ export interface FloatPluginPayload {
   error?: string
 }
 
+/**
+ * 单个浮窗实例的设置（F4）。
+ *
+ * 为什么把「每实例」的字段单独抽出来而不是复用一个大的 FloatSettings：
+ * 多实例的本质是「同一个应用在不同位置显示不同的东西」，因此插件组合、
+ * 位置、尺寸、主题、穿透这些**随实例而异**；而 enabled / peekSize /
+ * alwaysOnTop 是应用级行为，多实例共享才有意义（总不能一个实例置顶另一个不置顶）。
+ */
+export interface FloatInstanceSettings {
+  /** 稳定标识：窗口映射、IPC 归属都靠它 */
+  id: string
+  /** 该实例显示的插件 id，顺序即显示顺序 */
+  plugins: string[]
+  x: number
+  y: number
+  width: number
+  opacity: number
+  theme: FloatTheme
+  clickThrough: boolean
+  compact: boolean
+  lockPosition: boolean
+  autoHide: boolean
+}
+
+export type FloatTheme = 'dark' | 'light' | 'glass'
+
 export interface FloatSettings {
   enabled: boolean
-  /** 启用的插件 id，顺序即显示顺序 */
+  /** 启用的插件 id，顺序即显示顺序（主实例；多实例见 instances） */
   plugins: string[]
   x: number
   y: number
@@ -442,12 +472,17 @@ export interface FloatSettings {
   autoHide: boolean
   /** 隐藏后露出的触发条宽度 */
   peekSize: number
-  theme: 'dark' | 'light' | 'glass'
+  theme: FloatTheme
   /** 鼠标穿透（点击穿到桌面） */
   clickThrough: boolean
   alwaysOnTop: boolean
   compact: boolean
   lockPosition: boolean
+  /**
+   * 多实例（F4）。为空 / 未设置时表示「单实例」—— 由上面的顶层字段
+   * 合成一个默认实例，因此老配置无需迁移即照常工作。
+   */
+  instances?: FloatInstanceSettings[]
 }
 
 // ───────────────────────── 设置 ─────────────────────────

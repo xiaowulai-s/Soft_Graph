@@ -88,5 +88,34 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # v2.0.0 M0 未覆盖：CDP 端到端（需 GUI 会话与 --remote-debugging-port）。
-  # 计划在 G1 阶段以 self-hosted Windows runner 或 xvfb 等价方案补齐。
+  e2e:
+    name: CDP 端到端（真实交互）
+    runs-on: windows-latest
+    timeout-minutes: 30
+    needs: verify
+    # windows-latest runner 提供桌面会话，但 GUI 启动仍受 runner 环境影响，
+    # 因此与 smoke 一样先作为「信号」而非门禁；稳定后去掉这行即可变成门禁。
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: 构建应用
+        run: npm run build
+
+      - name: 端到端（启动应用 → 等 CDP → 驱动交互 → 关闭）
+        run: npm run e2e:ci -- --port 9222 --wait 90000
+
+      - name: 上传端到端截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ github.sha }}
+          path: .tmp/*.png
+          retention-days: 7
+          if-no-files-found: warn

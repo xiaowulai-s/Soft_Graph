@@ -7,6 +7,7 @@
  *
  *   npm test          跑全部单元测试
  *   npm test -- pe    只跑文件名含 pe 的测试
+ *   npm run test:cov  跑测试并输出还原到 TS 源文件的覆盖率（v3.0.0 · G2）
  */
 import { execFileSync } from 'node:child_process'
 import { spawnSync } from 'node:child_process'
@@ -23,11 +24,34 @@ if (!existsSync(srcDir)) {
   process.exit(1)
 }
 
-// 清空输出目录，避免残留旧版本用例造成误判
-rmSync(outDir, { recursive: true, force: true })
+// 清空输出目录，避免残留旧版本用例造成误判。
+// 注意：某些受管控环境（沙箱 / 安全软件）会拒绝整目录删除，直接 rmSync 会把
+// 整个测试链路打断在第一步。这里做降级：整目录删不掉就逐个清旧产物。
+try {
+  rmSync(outDir, { recursive: true, force: true })
+} catch {
+  try {
+    if (existsSync(outDir)) {
+      for (const f of readdirSync(outDir)) {
+        if (f.endsWith('.cjs') || f.endsWith('.cjs.map')) {
+          try {
+            rmSync(join(outDir, f), { force: true })
+          } catch {
+            /* 单个文件删不掉也不该中断测试 */
+          }
+        }
+      }
+    }
+  } catch {
+    /* 目录不可读时跳过清理 */
+  }
+}
 mkdirSync(outDir, { recursive: true })
 
-const filter = process.argv[2]
+// --coverage 与过滤参数可以共存：只有不以 -- 开头的参数才算过滤词
+const wantCoverage = process.argv.includes('--coverage')
+const covDir = join(root, '.tmp', 'coverage', 'v8')
+const filter = process.argv.slice(2).find((a) => !a.startsWith('--'))
 const files = readdirSync(srcDir)
   .filter((f) => f.endsWith('.test.ts'))
   .filter((f) => !filter || f.includes(filter))
@@ -64,6 +88,8 @@ for (const f of files) {
       '--format=cjs',
       `--outfile=${out}`,
       '--external:electron',
+      // 覆盖率需要 sourcemap 才能把产物行还原回 TS 源文件
+      ...(wantCoverage ? ['--sourcemap'] : []),
       '--log-level=warning',
       ...aliases
     ],
@@ -72,7 +98,25 @@ for (const f of files) {
   outputs.push(out)
 }
 
+if (wantCoverage) {
+  rmSync(covDir, { recursive: true, force: true })
+  mkdirSync(covDir, { recursive: true })
+}
+
 console.log('运行 node:test …\n')
 // 显式传入文件列表：node --test 直接给目录在部分版本上会被当成模块解析而报错
-const r = spawnSync(process.execPath, ['--test', ...outputs], { cwd: root, stdio: 'inherit' })
-process.exit(r.status ?? 1)
+const r = spawnSync(process.execPath, ['--test', ...outputs], {
+  cwd: root,
+  stdio: 'inherit',
+  env: wantCoverage ? { ...process.env, NODE_V8_COVERAGE: covDir } : process.env
+})
+
+let status = r.status ?? 1
+if (wantCoverage && status === 0) {
+  const c = spawnSync(process.execPath, [join(root, 'scripts', 'coverage.mjs'), covDir, outDir, '--md'], {
+    cwd: root,
+    stdio: 'inherit'
+  })
+  if (c.status !== 0) status = c.status ?? 1
+}
+process.exit(status)

@@ -41,6 +41,43 @@ export interface PsOptions {
   env?: Record<string, string>
 }
 
+/**
+ * 传给 PowerShell 子进程的最小环境变量集。
+ *
+ * v3.0.0 修复（环境块膨胀）：Windows 创建进程时环境块上限 65535 字节，
+ * 宿主进程若被注入了巨大的环境变量（实测某环境达 513KB），PowerShell 内所有
+ * 需要再起子进程的操作都会失败 —— 首当其冲是 `Add-Type`（编译 C# 走 csc.exe），
+ * 于是 API Set 动态映射、Restart Manager 占用检测这类 P/Invoke 能力**静默全灭**：
+ * 不报错、只是结果为空，极难排查。
+ *
+ * 对策：只把 PowerShell 真正需要的变量传下去（顺带避免在命令行里泄漏
+ * 宿主进程的敏感环境变量）。单个变量超过 32KB 一律丢弃 —— 正常环境变量
+ * 不会有这么大，出现即说明是被注入的异常值。
+ */
+const ENV_WHITELIST = [
+  'SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'PATH',
+  'TEMP', 'TMP', 'TMPDIR',
+  'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA',
+  'ALLUSERSPROFILE', 'PUBLIC', 'ProgramData',
+  'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
+  'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432',
+  'USERNAME', 'USERDOMAIN', 'USERDNSDOMAIN', 'COMPUTERNAME', 'LOGONSERVER',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'OS',
+  'PSModulePath', 'SESSIONNAME', 'SystemRoot'
+]
+
+const MAX_ENV_VALUE = 32 * 1024
+
+export function minimalPsEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const out: Record<string, string> = {}
+  for (const k of ENV_WHITELIST) {
+    const v = process.env[k]
+    if (typeof v === 'string' && v.length > 0 && v.length <= MAX_ENV_VALUE) out[k] = v
+  }
+  if (extra) for (const [k, v] of Object.entries(extra)) out[k] = v
+  return out
+}
+
 /** PowerShell 的 ConvertTo-Json 对单元素数组会退化为对象，统一成数组 */
 export function asArray<T>(v: T | T[] | null | undefined): T[] {
   if (v == null) return []
@@ -78,7 +115,7 @@ function Write-SgJson($obj) {
           timeout: opts.timeoutMs ?? 120_000,
           windowsHide: true,
           maxBuffer: 4 * 1024 * 1024,
-          env: { ...process.env, SG_OUT: outPath, ...(opts.env || {}) }
+          env: minimalPsEnv({ SG_OUT: outPath, ...(opts.env || {}) })
         },
         (err) => {
           // 即便退出码非 0，只要产出了 JSON 就认为可用（局部权限失败很常见）
@@ -144,7 +181,8 @@ class PsSession {
       const proc = spawn(
         PS,
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '-'],
-        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }
+        // 传裁剪后的最小环境：宿主环境块过大时 Add-Type 会静默失败（见 minimalPsEnv 注释）
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: minimalPsEnv() }
       )
       // 关键：空闲会话不钉住 Node 事件循环。
       // 子进程的 stdio 管道默认是 ref'd 的 —— 若不 unref，应用/基准/冒烟脚本在

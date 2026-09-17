@@ -296,6 +296,234 @@ Write-SgJson @($out)
   }
 }
 
+// ───────────────── 8. 温度与风扇（F3） ─────────────────
+
+/**
+ * 温度没有统一的 Windows API：不同厂商走不同 WMI 类，且多数消费级主板
+ * 根本不暴露。因此这里对三个常见来源依次尝试，任何一个命中即可；
+ * 全都取不到时明确显示「本机未暴露」—— 不假装成 0°C。
+ */
+const tempPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sys.temp',
+    name: '温度与风扇',
+    description: 'CPU/主板温度与风扇转速（依赖主板是否暴露传感器）',
+    interval: 20_000,
+    view: 'metric',
+    icon: 'temp',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  async collect(ctx: PluginContext): Promise<FloatPluginDatum[]> {
+    let data: { temp: number | null; fan: number | null } | null = null
+    try {
+      data = await ctx.psJson<{ temp: number | null; fan: number | null }>(
+        `
+$temp = $null
+$fan = $null
+try {
+  $z = Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop
+  if ($z) { $temp = [math]::Round((([double]$z[0].CurrentTemperature) / 10) - 273.15, 1) }
+} catch { }
+if ($null -eq $temp) {
+  try {
+    $p = Get-CimInstance -ClassName Win32_TemperatureProbe -ErrorAction Stop
+    if ($p -and $p[0].CurrentReading) { $temp = [math]::Round((([double]$p[0].CurrentReading) / 10) - 273.15, 1) }
+  } catch { }
+}
+try {
+  $f = Get-CimInstance -ClassName Win32_Fan -ErrorAction Stop
+  if ($f -and $f[0].DesiredSpeed) { $fan = [double]$f[0].DesiredSpeed }
+} catch { }
+Write-SgJson ([pscustomobject]@{ temp = $temp; fan = $fan })
+`,
+        15_000
+      )
+    } catch {
+      data = null
+    }
+    const temp = data?.temp
+    if (temp === null || temp === undefined || !Number.isFinite(Number(temp))) {
+      return [{ label: '温度', value: '本机未暴露', tone: 'warn', hint: '多数消费级主板不提供传感器读数' }]
+    }
+    const t = Number(temp)
+    const fan = Number(data?.fan)
+    const out: FloatPluginDatum[] = [
+      {
+        label: '温度',
+        value: `${t.toFixed(0)}°C`,
+        ratio: Math.max(0, Math.min(100, ((t - 30) / 70) * 100)),
+        tone: t > 90 ? 'danger' : t > 75 ? 'warn' : 'normal'
+      }
+    ]
+    if (Number.isFinite(fan) && fan > 0) out.push({ label: '风扇', value: `${Math.round(fan)} RPM` })
+    return out
+  }
+}
+
+// ───────────────── 9. 电池与电源（F3） ─────────────────
+
+/** Win32_Battery.BatteryStatus：1 放电 / 2 交流供电 / 3 已充满 / 4 低电 / 5 临界 / 6 充电中 */
+const BATTERY_STATUS: Record<number, string> = {
+  1: '放电中',
+  2: '已充满 · 接电源',
+  3: '已充满',
+  4: '电量低',
+  5: '电量临界',
+  6: '充电中',
+  7: '充电中 · 电量低',
+  8: '充电中 · 电量临界',
+  9: '充电中 · 电量高',
+  10: '部分充电',
+  11: '未知'
+}
+
+const batteryPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sys.battery',
+    name: '电池与电源',
+    description: '电池剩余电量与充放电状态；台式机显示「无电池」',
+    interval: 30_000,
+    view: 'gauge',
+    icon: 'battery',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  async collect(ctx: PluginContext): Promise<FloatPluginDatum[]> {
+    let data: { percent: number | null; status: number | null } | null = null
+    try {
+      data = await ctx.psJson<{ percent: number | null; status: number | null }>(
+        `
+$percent = $null
+$status = $null
+try {
+  $b = Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop
+  if ($b) { $percent = [double]$b[0].EstimatedChargeRemaining; $status = [double]$b[0].BatteryStatus }
+} catch { }
+Write-SgJson ([pscustomobject]@{ percent = $percent; status = $status })
+`,
+        15_000
+      )
+    } catch {
+      data = null
+    }
+    // 注意：不能写成 Number(data?.percent) >= 0 —— Number(null) 得 0，
+    // 会把「没有电池」显示成「电量 0%」，两者对用户含义完全不同
+    const raw = data?.percent
+    if (raw === null || raw === undefined) {
+      return [{ label: '电池', value: '无电池', hint: '台式机或未安装电池' }]
+    }
+    const p = Number(raw)
+    if (!Number.isFinite(p) || p < 0) {
+      return [{ label: '电池', value: '无电池', hint: '台式机或未安装电池' }]
+    }
+    const st = Number(data?.status)
+    const text = Number.isFinite(st) ? (BATTERY_STATUS[st] ?? '未知') : ''
+    return [
+      {
+        label: '电量',
+        value: `${Math.round(p)}%`,
+        ratio: p,
+        hint: text,
+        tone: p <= 10 ? 'danger' : p <= 25 ? 'warn' : 'normal'
+      }
+    ]
+  }
+}
+
+// ───────────────── 10. 网络连接（F3） ─────────────────
+
+const netConnPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sys.netconn',
+    name: '网络连接',
+    description: '已建立的 TCP 连接数与对外连接最多的进程',
+    interval: 15_000,
+    view: 'list',
+    icon: 'network',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  async collect(ctx: PluginContext): Promise<FloatPluginDatum[]> {
+    let rows: { name: string; count: number }[] | null = null
+    try {
+      const r = await ctx.psJson<{ total: number; tops: { name: string; count: number }[] }>(
+        `
+$total = 0
+$tops = @()
+try {
+  $conns = Get-NetTCPConnection -State Established -ErrorAction Stop
+  $total = @($conns).Count
+  $proc = @{}
+  foreach ($c in $conns) {
+    if (-not $c.OwningProcess) { continue }
+    if (-not $proc.ContainsKey($c.OwningProcess)) { $proc[$c.OwningProcess] = 0 }
+    $proc[$c.OwningProcess] = $proc[$c.OwningProcess] + 1
+  }
+  $tops = @($proc.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 3 | ForEach-Object {
+    $p = Get-Process -Id $_.Key -ErrorAction SilentlyContinue
+    [pscustomobject]@{ name = if ($p) { $p.ProcessName } else { 'PID ' + $_.Key }; count = [double]$_.Value }
+  })
+} catch { }
+Write-SgJson ([pscustomobject]@{ total = [double]$total; tops = @($tops) })
+`,
+        15_000
+      )
+      rows = r?.tops ?? []
+      const total = Number(r?.total)
+      if (!Number.isFinite(total)) return [{ label: '连接', value: '不可用', tone: 'warn' }]
+      const out: FloatPluginDatum[] = [{ label: '已建立连接', value: String(total) }]
+      for (const t of rows.slice(0, 3)) {
+        if (!t?.name) continue
+        out.push({ label: t.name, value: `${Number(t.count) || 0} 条` })
+      }
+      return out
+    } catch {
+      return [{ label: '连接', value: '读取失败', tone: 'warn' }]
+    }
+  }
+}
+
+// ───────────────── 11. 专注计时（F3） ─────────────────
+
+/**
+ * 专注计时是唯一「不采集、只记账」的插件：它把浮窗在屏时长累加成专注时长。
+ * 状态存在 ctx.state（跨轮次保留，进程重启即清零），不做持久化 ——
+ * 一次专注不该跨越应用重启。
+ */
+const focusPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sg.focus',
+    name: '专注计时',
+    description: '累计专注时长（浮窗在屏期间累加，重启清零）',
+    interval: 60_000,
+    view: 'text',
+    icon: 'focus',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  collect(ctx: PluginContext): FloatPluginDatum[] {
+    const KEY = 'focus'
+    const prev = ctx.state.get(KEY) as { ms: number; last: number } | undefined
+    const now = Date.now()
+    // 首轮只立起点，不计时长（否则一启用就显示 1 分钟）
+    if (!prev) {
+      ctx.state.set(KEY, { ms: 0, last: now })
+      return [{ label: '专注', value: '0 分钟', hint: '开始计时' }]
+    }
+    const delta = Math.max(0, now - prev.last)
+    const ms = prev.ms + delta
+    ctx.state.set(KEY, { ms, last: now })
+    const mins = Math.floor(ms / 60000)
+    const text = mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分钟` : `${mins} 分钟`
+    return [{ label: '专注', value: text, hint: mins >= 25 ? '已达一个番茄钟' : '持续中' }]
+  }
+}
+
 export const BUILTIN_PLUGINS: FloatPlugin[] = [
   cpuMemPlugin,
   diskPlugin,
@@ -303,7 +531,11 @@ export const BUILTIN_PLUGINS: FloatPlugin[] = [
   clockPlugin,
   netPlugin,
   overviewPlugin,
-  topProcPlugin
+  topProcPlugin,
+  tempPlugin,
+  batteryPlugin,
+  netConnPlugin,
+  focusPlugin
 ]
 
 /** 默认启用的插件顺序 */

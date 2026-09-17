@@ -7,7 +7,7 @@ import { promises as fs } from 'node:fs'
 import { join, basename } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { SoftwareItem, SoftwareSource } from '../shared/types'
-import { normPath, normKey, isSubPath, extName, baseName, dirName } from '../shared/util'
+import { normPath, normKey, isSubPath, extName, baseName, dirName, mapPool } from '../shared/util'
 import { enumerateWindows, type EnumResult, type RawUninstall } from './winenum'
 import { readPeMeta } from './pe'
 
@@ -718,31 +718,8 @@ function mergePick(a: SoftwareItem, b: SoftwareItem): SoftwareItem {
   }
 }
 
-/**
- * 定并发映射池（v2.0.0 M1）：文件系统调用是 IO 等待，串行逐项 await 会把
- * 延迟完全串联（280 项 findMainExe 串行 1.45s）。结果按输入顺序返回。
- */
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let next = 0
-  const raw = Number(concurrency)
-  const conc = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 8
-  const workers = Array.from({ length: Math.min(conc, items.length) }, async () => {
-    while (true) {
-      const i = next++
-      if (i >= items.length) return
-      results[i] = await fn(items[i], i)
-    }
-  })
-  await Promise.all(workers)
-  return results
-}
-
-/** 完整软件发现流程 */export async function discoverSoftware(opts: ScanSoftwareOptions = {}): Promise<SoftwareItem[]> {
+/** 完整软件发现流程 */
+export async function discoverSoftware(opts: ScanSoftwareOptions = {}): Promise<SoftwareItem[]> {
   const { onProgress, onBatch, signal } = opts
   onProgress?.('枚举注册表与系统来源', 4, '正在读取注册表卸载项…', 0)
   const raw = await enumerateWindows()

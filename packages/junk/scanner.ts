@@ -8,7 +8,7 @@ import { open } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { JunkCategorySummary, JunkItem, JunkSummary, RiskLevel } from '../shared/types'
-import { baseName, normKey, normPath, uid } from '../shared/util'
+import { baseName, normKey, normPath, uid, mapPool } from '../shared/util'
 import { isOneClickEligible } from '../shared/safety'
 import { walkRule, quickDirSize, looksOrphan, type CompiledRule, type RuleSet, type WalkStats } from './engine'
 import {
@@ -18,6 +18,7 @@ import {
   isCacheUsable,
   refreshItems,
   signaturesEqual,
+  collectUsnChangeCounts,
   CACHE_VERSION,
   type CacheFile,
   type RuleCache
@@ -57,8 +58,12 @@ export interface JunkScanResult {
   cache: CacheFile
   /** 本次复用了缓存的规则 id */
   reusedRules: string[]
-  /** 复用来源：volume = 卷哨兵未变（连签名都跳过）；signature = 目录签名未变 */
-  reuseSource: Record<string, 'volume' | 'signature'>
+  /**
+   * 复用来源：volume = 卷哨兵未变（连签名都跳过）；
+   * usn = 卷有写入但 USN 变更记录为 0 条（第 2 级，需提权）；
+   * signature = 目录签名未变
+   */
+  reuseSource: Record<string, 'volume' | 'usn' | 'signature'>
 }
 
 function itemId(path: string, categoryId: string): string {
@@ -69,19 +74,37 @@ function itemId(path: string, categoryId: string): string {
 
 const SAMPLE = 64 * 1024
 
-/** 读取头部 / 中部 / 尾部各 64KB，返回三段采样哈希 */
-async function sampleHash(path: string, size: number): Promise<string | null> {
+/**
+ * 分段采样哈希：把文件均分成 segments 段，每段取头部 64KB 参与哈希。
+ * segments=3 即 v2.0.0 的头/中/尾三采样。
+ *
+ * A4（v3.0.0）：第三级「全文件 SHA-256」是重复文件分类的绝对开销大头 ——
+ * 候选里绝大多数只是「大小相同 + 三段采样相同」的巧合或同版本文件，
+ * 却要各自把整个文件读一遍。因此在两者之间插入一级扩展采样（默认 16 段），
+ * 用 1MB 的读取量把全文件哈希的候选压下去；只有扩展采样也相同才读全文件。
+ *
+ * 采样位置固定而非随机：同一对文件在两轮扫描里必须得到相同结果，
+ * 否则增量缓存会出现「上一轮判重复、这一轮不判」的抖动。
+ */
+async function sampleHash(path: string, size: number, segments = 3): Promise<string | null> {
   let fh: Awaited<ReturnType<typeof open>> | null = null
   try {
     fh = await open(path, 'r')
     const h = createHash('sha1')
     h.update(String(size))
-    const offsets = size <= SAMPLE * 3 ? [0] : [0, Math.floor(size / 2) - SAMPLE / 2, size - SAMPLE]
+    const n = Math.max(1, Math.floor(segments))
+    const offsets: number[] = []
+    if (size <= SAMPLE * n) {
+      offsets.push(0)
+    } else {
+      for (let i = 0; i < n; i++) offsets.push(Math.floor((size / n) * i))
+      offsets.push(size - SAMPLE) // 尾部必采：相当多文件只在末尾有差异
+    }
     const buf = Buffer.allocUnsafe(SAMPLE)
     for (const off of offsets) {
       const len = Math.min(SAMPLE, size - off)
       if (len <= 0) continue
-      const { bytesRead } = await fh.read(buf, 0, len, off)
+      const { bytesRead } = await fh.read(buf, 0, len, Math.max(0, off))
       h.update(buf.subarray(0, bytesRead))
     }
     return h.digest('hex')
@@ -111,13 +134,17 @@ interface DupCandidate {
 }
 
 /**
- * 三级过滤：
+ * 四级过滤（v3.0.0 A4：在采样与全文件哈希之间插入扩展采样）：
  *   1. 按文件大小分组，只保留文件数 ≥ 2 的分组；
- *   2. 三段采样哈希全同才进入下一轮；
- *   3. 全文件 SHA-256 完全一致才判定为重复。
+ *   2. 三段采样哈希（头/中/尾）全同才进入下一轮；
+ *   3. **扩展采样**（默认 16 段）全同才进入下一轮 —— 用 1MB 读取换掉整文件读取；
+ *   4. 全文件 SHA-256 完全一致才判定为重复。
  * 分组内默认保留「修改时间最早 + 路径层级最浅」的一份。
+ *
+ * 第 2、3 级的逐文件哈希走 mapPool 并发（默认 8）：这是纯 IO + CPU 混合负载，
+ * 串行执行时磁盘与 CPU 轮流空闲。
  */
-async function findDuplicates(
+export async function findDuplicates(
   rule: CompiledRule,
   signal?: { cancelled: boolean },
   onTick?: (phase: string, cur: string, n: number) => void
@@ -150,53 +177,80 @@ async function findDuplicates(
   const out: JunkItem[] = []
   let processed = 0
 
+  const rawConc = Number(process.env.SG_DUP_CONCURRENCY ?? 8)
+  const CONC = Number.isFinite(rawConc) && rawConc >= 1 ? Math.floor(rawConc) : 8
+  const EXT_SEGMENTS = Number(process.env.SG_DUP_SAMPLE_SEGMENTS ?? 16)
+
   for (const group of groups) {
     if (signal?.cancelled) break
     processed++
     if (processed % 20 === 0) onTick?.('重复文件：采样哈希', group[0]?.path ?? '', out.length)
 
-    // 第二级：三段采样哈希
+    // 第二级：三段采样哈希（并发）
     const bySample = new Map<string, DupCandidate[]>()
-    for (const c of group) {
-      const sh = await sampleHash(c.path, c.size)
-      if (!sh) continue
+    const sampleResults = await mapPool(group, CONC, (c) => sampleHash(c.path, c.size, 3))
+    group.forEach((c, i) => {
+      const sh = sampleResults[i]
+      if (!sh) return
       const arr = bySample.get(sh) || []
       arr.push(c)
       bySample.set(sh, arr)
-    }
+    })
 
     for (const sameSample of bySample.values()) {
       if (sameSample.length < 2) continue
       if (signal?.cancelled) break
 
-      // 第三级：全文件 SHA-256 复核
-      const byFull = new Map<string, DupCandidate[]>()
-      for (const c of sameSample) {
-        const fh = await fullHash(c.path)
-        if (!fh) continue
-        const arr = byFull.get(fh) || []
+      // 第三级（A4 新增）：扩展采样 —— 先用 1MB 级采样把候选压到最小，
+      // 避免为「只是碰巧三段相同」的文件各读一遍全文件
+      const byExt = new Map<string, DupCandidate[]>()
+      const extResults = await mapPool(
+        sameSample,
+        CONC,
+        (c) => sampleHash(c.path, c.size, Number.isFinite(EXT_SEGMENTS) && EXT_SEGMENTS >= 1 ? EXT_SEGMENTS : 16)
+      )
+      sameSample.forEach((c, i) => {
+        const eh = extResults[i]
+        if (!eh) return
+        const arr = byExt.get(eh) || []
         arr.push(c)
-        byFull.set(fh, arr)
-      }
+        byExt.set(eh, arr)
+      })
 
-      for (const [digest, dups] of byFull) {
-        if (dups.length < 2) continue
-        // 保留：修改时间最早 + 路径层级最浅
-        const sorted = [...dups].sort((a, b) => a.mtime - b.mtime || a.depth - b.depth)
-        const groupId = 'dup_' + digest.slice(0, 12)
-        sorted.forEach((c, i) => {
-          out.push({
-            id: itemId(c.path, rule.id),
-            categoryId: rule.id,
-            fullPath: c.path,
-            name: baseName(c.path),
-            sizeBytes: c.size,
-            mtime: c.mtime,
-            risk: rule.risk,
-            groupId,
-            keep: i === 0
-          })
+      for (const sameExt of byExt.values()) {
+        if (sameExt.length < 2) continue
+        if (signal?.cancelled) break
+
+        // 第四级：全文件 SHA-256 复核（并发）
+        const byFull = new Map<string, DupCandidate[]>()
+        const fullResults = await mapPool(sameExt, CONC, (c) => fullHash(c.path))
+        sameExt.forEach((c, i) => {
+          const fh = fullResults[i]
+          if (!fh) return
+          const arr = byFull.get(fh) || []
+          arr.push(c)
+          byFull.set(fh, arr)
         })
+
+        for (const [digest, dups] of byFull) {
+          if (dups.length < 2) continue
+          // 保留：修改时间最早 + 路径层级最浅
+          const sorted = [...dups].sort((a, b) => a.mtime - b.mtime || a.depth - b.depth)
+          const groupId = 'dup_' + digest.slice(0, 12)
+          sorted.forEach((c, i) => {
+            out.push({
+              id: itemId(c.path, rule.id),
+              categoryId: rule.id,
+              fullPath: c.path,
+              name: baseName(c.path),
+              sizeBytes: c.size,
+              mtime: c.mtime,
+              risk: rule.risk,
+              groupId,
+              keep: i === 0
+            })
+          })
+        }
       }
     }
   }
@@ -402,7 +456,7 @@ export async function scanJunk(
   const cache: CacheFile = opts.cache ?? emptyCache()
   const cacheUsable = !opts.force && isCacheUsable(cache)
   const reusedRules: string[] = []
-  const reuseSource: Record<string, 'volume' | 'signature'> = {}
+  const reuseSource: Record<string, 'volume' | 'usn' | 'signature'> = {}
 
   const active = ruleSet.rules.filter((r) => !categoryIds || categoryIds.length === 0 || categoryIds.includes(r.id))
   const allItems: JunkItem[] = []
@@ -425,6 +479,13 @@ export async function scanJunk(
   }
   const currentUsns = await collectVolumeUsns(allVolumes)
   const prevUsns = cache.volumes ?? {}
+
+  // ── USN 变更记录（B1 第 2 级，需管理员权限）──
+  // 只对「哨兵已变化」的卷查询：未变化的卷在快路径 1 就复用了，不必再付 fsutil 代价。
+  // 未提权时 readJournal 返回 needsElevation，这里得到 available=false，
+  // 上层不会据此复用 —— 行为与 v2.0.0 完全一致。
+  const changedVolumes = [...allVolumes].filter((v) => currentUsns[v] && prevUsns[v] && currentUsns[v] !== prevUsns[v])
+  const usnChanges = process.env.SG_USN_LEVEL2 === '0' ? null : await collectUsnChangeCounts(changedVolumes, prevUsns)
   const volumeUnchanged = (rule: CompiledRule): boolean => {
     const vs = new Set<string>()
     for (const root of rule.roots) {
@@ -467,13 +528,38 @@ export async function scanJunk(
       cache.rules[rule.id].disabled = false
       onProgress?.(`${rule.name} · 卷无变更，复用`, base + span * 0.9, '', allItems.length + items.length)
     }
+    const entry = cache.rules[rule.id]
+
+    // ── 增量快路径 1.5：USN 变更记录级（M2/B1 第 2 级，需提权）──
+    // 卷哨兵变了只说明「有写入」，写入可能是文件内容覆写、日志滚动等不产生
+    // 文件增删的动作。此时若 readJournal 报告该卷 0 条变更记录，则缓存完全有效，
+    // 连目录签名遍历都可以省掉（签名遍历是二次扫描的主要开销）。
+    // 未提权时 readJournal 不可用，这里会静默跳过 —— 行为与 v2.0.0 一致。
+    if (!cachedHit && cacheUsable && entry && usnChanges) {
+      const vols = rule.roots.map(volumeOf).filter(Boolean)
+      const allQuiet =
+        vols.length > 0 &&
+        vols.every((v) => {
+          const c = usnChanges[v]
+          return c && c.available && c.count === 0
+        })
+      if (allQuiet) {
+        items = await refreshItems(entry.items, signal)
+        cachedHit = true
+        reusedRules.push(rule.id)
+        reuseSource[rule.id] = 'usn'
+        entry.missStreak = 0
+        entry.disabled = false
+        onProgress?.(`${rule.name} · USN 无变更，复用`, base + span * 0.9, '', allItems.length + items.length)
+      }
+    }
+
     // ── 增量快路径 2：目录签名未变（M2/A5）──
     // 签名采集本身只做 readdir + 目录 stat（实测约为完整遍历的 15% 成本）
     //
     // 熔断：若该规则连续 2 次签名不匹配（目录抖动，如 Temp / 着色器缓存），
     // 则不再尝试签名复用 —— 否则每轮都要白付一次签名遍历（GC-12 实测约 10s，
     // 比直接全量扫还慢）。
-    const entry = cache.rules[rule.id]
     const sigCheckAllowed = !entry?.disabled
     let sig = null as Awaited<ReturnType<typeof collectSignatures>> | null
     if (!cachedHit && cacheUsable && entry && sigCheckAllowed) {

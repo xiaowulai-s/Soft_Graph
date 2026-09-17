@@ -30,3 +30,10 @@ tests/samples/files/
 
 # 临时提交信息文件
 .gitmsg.txt
+
+# electron-vite / vite 构建期生成的带时间戳临时配置
+electron.vite.config.*.mjs
+vite.config.*.mjs
+
+# 助手工作记忆（非项目交付物）
+.workbuddy/

@@ -43,6 +43,14 @@ export interface UsnChangeRecord {
   usn?: string
   /** 变更原因（尽力解析，中英文均可能出现） */
   reasons: string[]
+  /** 原因标志位（fsutil 在原因前带的 0x... 前缀，如 0x80000002） */
+  reasonFlags?: string
+  /** 文件 ID（MFT 引用号，需反查才能得路径） */
+  fileId?: string
+  /** 父目录的文件 ID —— 理论上可反查目录路径，但需额外系统调用 */
+  parentFileId?: string
+  /** 变更时间戳（fsutil 本地化字符串，如 2026/9/18 0:05:41） */
+  timestamp?: string
 }
 
 export interface ReadJournalResult {
@@ -125,6 +133,12 @@ export async function isUsnAvailable(volume: string): Promise<boolean> {
 /**
  * 读取自 startUsn 之后的变更记录。
  * **需要管理员权限**；非提权时返回 needsElevation，调用方必须优雅降级。
+ *
+ * 验证状态（v3.0.0 · 2026-09-17）：在未提权的普通用户环境下实测，
+ * `fsutil usn readjournal` 稳定返回错误（needsElevation=true），与 v2.0.0 记录一致。
+ * 因此**默认关闭**，增量继续走「卷哨兵（queryJournal，无需提权）+ 目录签名」降级方案。
+ * 解析器本身已由 `tests/unit/usn-parse.test.ts` 用中英文双套输出覆盖（17 个用例），
+ * 拿到管理员权限后可直接跑 `node scripts/run-ts.mjs tests/diag-usn-elevated.ts` 复测。
  */
 export async function readJournal(volume: string, startUsn?: string): Promise<ReadJournalResult> {
   const vol = volume.replace(/\\+$/, '').slice(0, 2).toUpperCase()
@@ -167,31 +181,85 @@ export async function readJournal(volume: string, startUsn?: string): Promise<Re
 
 /**
  * 尽力解析 fsutil readjournal 输出。
- * 注意：输出结构随 Windows 版本与语言变化，且本机无权限真机验证，
- * 因此这里只做「能解析出多少算多少」，解析不到时返回空数组而不是报错。
+ *
+ * 真实输出（2026-09-18 提权实测）的单条记录形态 —— **USN 在文件名之前**：
+ *
+ * ```
+ * Usn               : 22712337088
+ * 文件名            : LeAppOM.txt.logdat
+ * 文件名长度        : 36
+ * 原因              : 0x00000002: 数据扩展
+ * 时间戳            : 2026/9/18 0:05:41
+ * 文件属性          : 0x00002020: 存档 | 没有内容已编入索引
+ * 文件 ID           : 0000000000000000002e0000000006d6
+ * 父文件 ID         : 00000000000000000005000000009160
+ * 源信息            : 0x00000000: *无*
+ * ```
+ *
+ * 修正前的实现假设「文件名行开启一条新记录」，于是 Usn 行会被赋给**上一条**
+ * 已入账的记录 —— USN 整体错位一格。现在改为 **Usn 行开启新记录**，
+ * 同时兼容「文件名在前」的老格式（遇到第二个文件名行也会开新记录）。
+ *
+ * 注意：输出只有文件名 + 文件 ID / 父文件 ID，**没有路径**。要做目录级失效
+ * 必须把 ID 反查成路径（需额外系统调用，成本随记录数线性增长），因此上层
+ * 目前只按「文件名」做失效判定，不做 ID 反查。
  */
 export function parseReadJournal(stdout: string): ReadJournalResult {
   const records: UsnChangeRecord[] = []
   let cur: UsnChangeRecord | null = null
+  const flush = (): void => {
+    if (cur && cur.name) records.push(cur)
+    cur = null
+  }
   for (const raw of stdout.split(/\r?\n/)) {
     const line = raw.trim()
     if (!line) continue
+    const usnM = line.match(/^(?:Usn|USN)\s*[:：]\s*(.+)$/i)
     const nameM = line.match(/^(?:文件名|File\s*Name)\s*[:：]\s*(.+)$/i)
-    const usnM = line.match(/^USN\s*[:：]\s*(.+)$/i)
     const reasonM = line.match(/^(?:原因|Reason)\s*[:：]\s*(.+)$/i)
-    if (nameM) {
-      if (cur) records.push(cur)
-      cur = { name: nameM[1].trim(), reasons: [] }
-    } else if (usnM && cur) {
-      cur.usn = usnM[1].trim()
+    const fileIdM = line.match(/^(?:文件\s*ID|File\s*ID)\s*[:：]\s*(.+)$/i)
+    const parentM = line.match(/^(?:父文件\s*ID|Parent\s*File\s*ID)\s*[:：]\s*(.+)$/i)
+    const timeM = line.match(/^(?:时间戳|Time\s*Stamp)\s*[:：]\s*(.+)$/i)
+
+    if (usnM) {
+      // 真实格式（实测）：Usn 是记录第一行 → 它开启新记录。
+      // 但若当前记录已经有 name，说明遇到的是「文件名在前」的老格式，
+      // 此时 USN 应归属当前记录，不能另起一条（否则 USN 会整体错位一格）。
+      // 判定依据不能只看「有没有 name」—— 真实格式里第二条记录的 Usn 出现时，
+      // 上一条也已经有 name 了。真正的区别是：**老格式的 USN 紧跟文件名行，
+      // 此时还没解析到原因**；而真实格式下再遇到 Usn 时上一条的原因早已填好。
+      if (cur && cur.name && cur.reasons.length === 0) {
+        cur.usn = usnM[1].trim()
+      } else {
+        flush()
+        cur = { name: '', usn: usnM[1].trim(), reasons: [] }
+      }
+    } else if (nameM) {
+      // 已有 name 说明这是下一条记录（兼容「文件名在前」的输出形态）
+      if (cur && cur.name) flush()
+      if (!cur) cur = { name: nameM[1].trim(), reasons: [] }
+      else cur.name = nameM[1].trim()
     } else if (reasonM && cur) {
-      cur.reasons = reasonM[1]
-        .split(/[ ,;]+/)
+      // 真实输出形如「原因 : 0x80000002: 数据扩展 | 关闭」（英文为 Reason : 0x...: Data Extend | Close）
+      // —— 原因文本前面带一个十六进制标志位，直接切分会把 "0x80000002:" 混进原因列表里。
+      // 这里先把标志位剥离出来单独存，剩下的再按 | 、 , 、 ; 切分。
+      const raw = reasonM[1].trim()
+      const flagM = raw.match(/^(0x[0-9a-fA-F]+)\s*[:：]?\s*(.*)$/)
+      const rest = flagM ? flagM[2] : raw
+      if (flagM) cur.reasonFlags = flagM[1].toLowerCase()
+      cur.reasons = rest
+        .split(/[|、，,;；\s]+/)
         .map((s) => s.trim())
-        .filter(Boolean)
+        .filter((s) => s && s !== '|')
+    } else if (fileIdM && cur) {
+      cur.fileId = fileIdM[1].trim().toLowerCase()
+    } else if (parentM && cur) {
+      cur.parentFileId = parentM[1].trim().toLowerCase()
+    } else if (timeM && cur) {
+      cur.timestamp = timeM[1].trim()
     }
   }
-  if (cur) records.push(cur)
+  flush()
   return { records, needsElevation: false }
 }
 

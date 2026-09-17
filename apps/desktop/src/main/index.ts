@@ -15,7 +15,7 @@ import { openDb } from './db/driver'
 import { Store } from './db/store'
 import { ScanService } from './services/scan'
 import { ensurePaths, ensureRules, isElevated, resolvePaths, SettingsStore, type AppPaths } from './services/env'
-import { FloatWindowManager, floatRendererTarget } from './float/window'
+import { FloatWindows, floatRendererTarget, normalizeInstances, DEFAULT_INSTANCE_ID } from './float/window'
 import { PluginRegistry } from './float/registry'
 import { initLogger, log, makeRedactor } from './services/logger'
 import { describeCapabilities, loadNativeCapabilities } from '@native/capabilities'
@@ -30,7 +30,7 @@ let store: Store
 let scan: ScanService
 let settings: SettingsStore
 let paths: AppPaths
-let float: FloatWindowManager
+let float: FloatWindows
 let registry: PluginRegistry
 let floatTimer: NodeJS.Timeout | null = null
 let quitting = false
@@ -119,24 +119,36 @@ function emitToAll(channel: string, payload: unknown): void {
 
 // ───────────────── 浮窗调度 ─────────────────
 
+/** 所有实例启用的插件并集 —— 定时器间隔取其中最急的那个 */
+function allFloatPlugins(): string[] {
+  const s = settings.get().float
+  return [...new Set(normalizeInstances(s).flatMap((i) => i.plugins))]
+}
+
 function restartFloatTimer(): void {
   if (floatTimer) clearInterval(floatTimer)
   floatTimer = null
-  const s = settings.get().float
-  if (!float.isOpen || s.plugins.length === 0) return
-  const interval = registry.minInterval(s.plugins)
+  const plugins = allFloatPlugins()
+  if (!float.isOpen || plugins.length === 0) return
+  const interval = registry.minInterval(plugins)
   floatTimer = setInterval(() => void pushFloatTick(false), interval)
   void pushFloatTick(true)
 }
 
 async function pushFloatTick(force: boolean): Promise<void> {
   if (!float.isOpen) return
-  try {
-    const s = settings.get().float
-    const payloads = await registry.tick(s.plugins, force)
-    float.pushTick(payloads)
-  } catch {
-    /* 单轮采集失败不影响后续 */
+  const s = settings.get().float
+  // 按实例分别采集与推送：不同实例的插件组合可以完全不同
+  for (const inst of normalizeInstances(s)) {
+    if (inst.plugins.length === 0) continue
+    const mgr = float.managerById(inst.id)
+    if (!mgr?.isOpen) continue
+    try {
+      const payloads = await registry.tick(inst.plugins, force)
+      float.pushTick(inst.id, payloads)
+    } catch {
+      /* 单个实例采集失败不影响其它实例 */
+    }
   }
 }
 
@@ -145,6 +157,11 @@ async function pushFloatTick(force: boolean): Promise<void> {
 function registerIpc(): void {
   const h = <T extends unknown[], R>(ch: string, fn: (...args: T) => R | Promise<R>): void => {
     ipcMain.handle(ch, async (_e, ...args) => fn(...(args as T)))
+  }
+  // 需要知道「哪个窗口发来的」的通道用它：多实例下拖拽 / 悬停必须按来源实例分发，
+  // 否则拖 A 窗口会把 B 窗口拖走
+  const he = <T extends unknown[], R>(ch: string, fn: (wcId: number, ...args: T) => R | Promise<R>): void => {
+    ipcMain.handle(ch, async (e, ...args) => fn(e.sender.id, ...(args as T)))
   }
 
   // ── 软件扫描 ──
@@ -412,7 +429,13 @@ function registerIpc(): void {
   })
 
   // ── 浮窗（模块二） ──
-  h(CH.FLOAT_GET_SETTINGS, () => settings.get().float)
+  // 浮窗渲染层取设置：要带上「它自己实例」的覆盖字段（主题 / 紧凑 / 插件）
+  he(CH.FLOAT_GET_SETTINGS, (wc) => {
+    const s = settings.get().float
+    const id = float.managerOf(wc)?.instanceId ?? DEFAULT_INSTANCE_ID
+    const inst = normalizeInstances(s).find((i) => i.id === id)
+    return inst ? ({ ...s, ...inst } as FloatSettings) : s
+  })
   h(CH.FLOAT_SET_SETTINGS, (patch: Partial<FloatSettings>) => {
     const next = settings.patchFloat(patch)
     applyFloat(next)
@@ -453,25 +476,30 @@ function registerIpc(): void {
     void shell.openPath(registry.externalDir)
     return null
   })
-  h(CH.FLOAT_REQUEST_TICK, async () => registry.tick(settings.get().float.plugins, true))
-  h(CH.FLOAT_DRAG, (payload: { dx: number; dy: number }) => {
-    float.dragBy(payload.dx, payload.dy)
+  // 请求单次刷新：按实例各自的插件组合重采一遍
+  h(CH.FLOAT_REQUEST_TICK, async () => {
+    await pushFloatTick(true)
     return null
   })
-  h(CH.FLOAT_DRAG_END, () => {
-    float.endDrag()
+  // 以下五个通道必须知道来源窗口 —— 多实例下「拖哪个窗口」只有 sender 能回答
+  he(CH.FLOAT_DRAG, (wc, payload: { dx: number; dy: number }) => {
+    float.dragBy(wc, payload.dx, payload.dy)
     return null
   })
-  h(CH.FLOAT_PEEK_ENTER, () => {
-    float.setHovering(true)
+  he(CH.FLOAT_DRAG_END, (wc) => {
+    float.endDrag(wc)
     return null
   })
-  h(CH.FLOAT_PEEK_LEAVE, () => {
-    float.setHovering(false)
+  he(CH.FLOAT_PEEK_ENTER, (wc) => {
+    float.setHovering(wc, true)
     return null
   })
-  h(CH.FLOAT_RESIZE, (payload: { height: number }) => {
-    float.setContentHeight(payload.height)
+  he(CH.FLOAT_PEEK_LEAVE, (wc) => {
+    float.setHovering(wc, false)
+    return null
+  })
+  he(CH.FLOAT_RESIZE, (wc, payload: { height: number }) => {
+    float.setContentHeight(wc, payload.height)
     return null
   })
   h(CH.FLOAT_OPEN_MAIN, () => {
@@ -536,7 +564,7 @@ async function bootstrap(): Promise<void> {
 
   // 浮窗与插件
   const target = floatRendererTarget(DEV_URL, RENDERER_OUT)
-  float = new FloatWindowManager(
+  float = new FloatWindows(
     {
       getSettings: () => settings.get().float,
       patchSettings: (patch) => settings.patchFloat(patch),

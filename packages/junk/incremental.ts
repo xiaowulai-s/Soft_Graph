@@ -213,6 +213,82 @@ export function signaturesEqual(a: RuleSignature, b: RuleSignature): boolean {
   return true
 }
 
+// ───────────────── USN 变更记录级增量（M2/B1 第 2 级）─────────────────
+
+/**
+ * USN 变更记录的使用策略。
+ *
+ * 实测（2026-09-18 提权）`fsutil usn readjournal` 的单条记录**只有文件名 +
+ * 文件 ID / 父文件 ID，没有路径**。这带来一个硬约束：
+ *
+ *   - `reuse-all`：记录 0 条 ⇒ 两次扫描之间该卷没有任何文件变更 ⇒ 缓存完全有效。✅ 可用
+ *   - `partial`：只重新处理「名字命中的项」—— 但**新增文件**也在记录里，
+ *     没有路径就无法判断它是否落在规则根目录内，会漏检。❌ 不用
+ *   - `fallback`：变更记录太多（抖动剧烈的机器），反查/比对的代价超过签名遍历。
+ *
+ * 因此第 2 级目前只启用 `reuse-all`。要做真正的目录级定向失效，必须把
+ * 父文件 ID 反查成路径（逐条系统调用），收益随变更条数线性下降 —— 列为后续评估项。
+ */
+export type UsnInvalidationMode = 'reuse-all' | 'partial' | 'fallback'
+
+export interface UsnInvalidationPlan {
+  mode: UsnInvalidationMode
+  /** 变更文件名（小写），仅在 partial 时有意义 */
+  names: Set<string>
+  /** 记录条数 */
+  count: number
+}
+
+export function planUsnInvalidation(opts: {
+  /** readJournal 是否可用（需提权；未提权恒为 false） */
+  available: boolean
+  records: { name: string }[]
+  /** 变更条数上限：超过则退回签名比对 */
+  maxRecords?: number
+}): UsnInvalidationPlan {
+  const maxRecords = Number(opts.maxRecords ?? 20_000)
+  const count = opts.records.length
+  if (!opts.available) return { mode: 'fallback', names: new Set(), count }
+  if (count === 0) return { mode: 'reuse-all', names: new Set(), count }
+  if (count > maxRecords) return { mode: 'fallback', names: new Set(), count }
+  const names = new Set<string>()
+  for (const r of opts.records) if (r.name) names.add(r.name.toLowerCase())
+  return { mode: 'partial', names, count }
+}
+
+/**
+ * 查询各卷自上次扫描以来的变更条数。
+ *
+ * 只对「卷哨兵已变化」的卷调用 —— 未变化的卷在快路径 1 就复用了，
+ * 没必要再付一次 fsutil 的代价（实测带 startusn 约 26ms，未提权失败路径约 135ms）。
+ */
+export async function collectUsnChangeCounts(
+  volumes: string[],
+  startUsns: Record<string, string>
+): Promise<Record<string, { available: boolean; count: number }>> {
+  const out: Record<string, { available: boolean; count: number }> = {}
+  const list = [...new Set(volumes.filter(Boolean))]
+  if (list.length === 0) return out
+  try {
+    const { readJournal } = await import('./usn')
+    const res = await Promise.all(
+      list.map(async (v) => {
+        try {
+          const r = await readJournal(v, startUsns[v])
+          // needsElevation 为真时记录必然为空，不能当作「无变更」
+          return [v, { available: !r.needsElevation && !r.error, count: r.records.length }] as const
+        } catch {
+          return [v, { available: false, count: 0 }] as const
+        }
+      })
+    )
+    for (const [v, r] of res) out[v] = r
+  } catch {
+    /* USN 不可用：上层按 fallback 处理 */
+  }
+  return out
+}
+
 // ───────────────── 命中项刷新 ─────────────────
 
 /**

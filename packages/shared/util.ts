@@ -178,3 +178,34 @@ export function isSharedRuntime(name: string): boolean {
 export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
+
+/**
+ * 固定并发度的异步映射（保持输入顺序）。
+ *
+ * 为什么需要它：扫描链路里大量「对每个文件做一次 IO」的场景（统计体积、算哈希、
+ * 找主程序），串行等 IO 会把 CPU 空出来，全并发又会把句柄与内存打满。
+ * 统一在这里控制并发度，避免各处各写一份、调参口径不一致。
+ *
+ * 并发度必须做有限性校验 —— `process.env.X = undefined` 在 Node 里会写入字符串
+ * "undefined"，`Number()` 得 NaN，会让并发判定恒假从而死锁（历史 BUG-13）。
+ */
+export async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  if (items.length === 0) return results
+  let next = 0
+  const raw = Number(concurrency)
+  const conc = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 8
+  const workers = Array.from({ length: Math.min(conc, items.length) }, async () => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}

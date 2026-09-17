@@ -14,7 +14,7 @@
 
 import { BrowserWindow, screen, shell } from 'electron'
 import { join } from 'node:path'
-import type { FloatEdge, FloatSettings } from '@shared/types'
+import type { FloatEdge, FloatInstanceSettings, FloatSettings } from '@shared/types'
 import { CH } from '@shared/ipc'
 
 const ANIM_MS = 190
@@ -24,10 +24,77 @@ const DOCK_THRESHOLD = 28
 /** 鼠标离开后延迟隐藏，避免指针擦边就立刻缩回 */
 const LEAVE_DELAY = 450
 
+/** 主实例 id：老配置（没有 instances 字段）被折叠成这一个实例 */
+export const DEFAULT_INSTANCE_ID = 'default'
+
 export interface FloatWindowHost {
   getSettings(): FloatSettings
   patchSettings(patch: Partial<FloatSettings>): FloatSettings
   onOpenMain(): void
+}
+
+// ───────────────── 多实例：设置规范化（纯函数，便于测试）─────────────────
+
+/**
+ * 把顶层字段折叠成一个实例设置 —— 老配置（v2.0.0 及以前）的兼容路径。
+ */
+export function instanceFromLegacy(s: FloatSettings, id = DEFAULT_INSTANCE_ID): FloatInstanceSettings {
+  return {
+    id,
+    plugins: [...(s.plugins ?? [])],
+    x: s.x,
+    y: s.y,
+    width: s.width,
+    opacity: s.opacity,
+    theme: s.theme,
+    clickThrough: s.clickThrough,
+    compact: s.compact,
+    lockPosition: s.lockPosition,
+    autoHide: s.autoHide
+  }
+}
+
+/**
+ * 规范化实例列表：
+ *   - 未配置 instances → 由顶层字段合成一个默认实例（单实例行为完全不变）
+ *   - 配置了但为空数组 → 同上（用户删光了实例，当作回到单实例，而不是「一个都不显示」）
+ *   - 过滤掉 id 缺失/重复的项，并补齐缺失字段（用默认实例的值兜底）
+ *
+ * 后两条是防呆：instances 是从磁盘读进来的用户数据，可能被手工编辑坏，
+ * 规范化必须发生在它影响窗口创建之前。
+ */
+export function normalizeInstances(s: FloatSettings): FloatInstanceSettings[] {
+  const list = Array.isArray(s.instances) ? s.instances : []
+  const base = instanceFromLegacy(s)
+  if (list.length === 0) return [base]
+
+  const seen = new Set<string>()
+  const out: FloatInstanceSettings[] = []
+  for (const raw of list) {
+    const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push({
+      id,
+      plugins: Array.isArray(raw.plugins) ? [...raw.plugins] : [...base.plugins],
+      x: Number.isFinite(raw.x) ? raw.x : base.x,
+      y: Number.isFinite(raw.y) ? raw.y : base.y,
+      width: Number.isFinite(raw.width) ? raw.width : base.width,
+      opacity: Number.isFinite(raw.opacity) ? raw.opacity : base.opacity,
+      theme: raw.theme === 'dark' || raw.theme === 'light' || raw.theme === 'glass' ? raw.theme : base.theme,
+      clickThrough: typeof raw.clickThrough === 'boolean' ? raw.clickThrough : base.clickThrough,
+      compact: typeof raw.compact === 'boolean' ? raw.compact : base.compact,
+      lockPosition: typeof raw.lockPosition === 'boolean' ? raw.lockPosition : base.lockPosition,
+      autoHide: typeof raw.autoHide === 'boolean' ? raw.autoHide : base.autoHide
+    })
+  }
+  return out.length > 0 ? out : [base]
+}
+
+/** 多实例下窗口需要区分「自己是谁」，用 URL query 传递比 IPC 握手更简单可靠 */
+export function floatInstanceTarget(base: string, instanceId: string): string {
+  const sep = base.includes('?') ? '&' : '?'
+  return `${base}${sep}instance=${encodeURIComponent(instanceId)}`
 }
 
 function easeOutCubic(t: number): number {
@@ -48,8 +115,28 @@ export class FloatWindowManager {
     private host: FloatWindowHost,
     private preloadPath: string,
     private rendererUrl: string | null,
-    private rendererFile: string
+    private rendererFile: string,
+    /** 本管理器负责的实例 id（F4）；不传即主实例，行为与单实例完全一致 */
+    readonly instanceId: string = DEFAULT_INSTANCE_ID
   ) {}
+
+  /**
+   * 本实例的有效设置 = 全局设置（enabled / peekSize / alwaysOnTop）
+   * 叠加该实例的覆盖字段（plugins / 位置 / 尺寸 / 主题 / 穿透…）。
+   * 实例不存在时退回全局设置 —— 极端情况下也不会因为找不到配置而崩。
+   */
+  private settings(): FloatSettings {
+    const g = this.host.getSettings()
+    const inst = normalizeInstances(g).find((i) => i.id === this.instanceId)
+    return inst ? ({ ...g, ...inst } as FloatSettings) : g
+  }
+
+  /** 位置等易变字段写回「实例」而非全局，避免多实例互相覆盖 */
+  private persistPosition(x: number, y: number): void {
+    const g = this.host.getSettings()
+    const instances = normalizeInstances(g).map((i) => (i.id === this.instanceId ? { ...i, x, y } : i))
+    this.host.patchSettings({ instances } as Partial<FloatSettings>)
+  }
 
   get window(): BrowserWindow | null {
     return this.win
@@ -66,7 +153,7 @@ export class FloatWindowManager {
       this.win!.showInactive()
       return this.win!
     }
-    const s = this.host.getSettings()
+    const s = this.settings()
     const display = screen.getDisplayNearestPoint({ x: s.x, y: s.y })
     const wa = display.workArea
 
@@ -110,8 +197,9 @@ export class FloatWindowManager {
     this.win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     this.win.setIgnoreMouseEvents(s.clickThrough, { forward: true })
 
-    if (this.rendererUrl) void this.win.loadURL(this.rendererUrl)
-    else void this.win.loadFile(this.rendererFile)
+    // 把实例 id 交给渲染层（多实例下每个窗口必须知道「我是谁」才能取自己的主题与插件）
+    if (this.rendererUrl) void this.win.loadURL(floatInstanceTarget(this.rendererUrl, this.instanceId))
+    else void this.win.loadFile(this.rendererFile, { query: { instance: this.instanceId } })
 
     this.win.once('ready-to-show', () => {
       this.win?.showInactive()
@@ -139,7 +227,7 @@ export class FloatWindowManager {
       // 关闭前把当前位置写回配置
       const b = this.win!.getBounds()
       const target = this.hidden ? this.shownBounds(b) : b
-      this.host.patchSettings({ x: target.x, y: target.y })
+      this.persistPosition(target.x, target.y)
       this.win!.destroy()
     }
     this.win = null
@@ -205,7 +293,7 @@ export class FloatWindowManager {
 
   dragBy(dx: number, dy: number): void {
     if (!this.isOpen) return
-    const s = this.host.getSettings()
+    const s = this.settings()
     if (s.lockPosition) return
     this.dragging = true
     const b = this.win!.getBounds()
@@ -216,9 +304,9 @@ export class FloatWindowManager {
     if (!this.isOpen) return
     this.dragging = false
     const b = this.win!.getBounds()
-    this.host.patchSettings({ x: b.x, y: b.y })
+    this.persistPosition(b.x, b.y)
     this.recomputeDock()
-    const s = this.host.getSettings()
+    const s = this.settings()
     if (s.autoHide && this.docked !== 'none' && !this.hovering) this.scheduleHide()
     this.emitState()
   }
@@ -257,7 +345,7 @@ export class FloatWindowManager {
 
   /** 由隐藏态的 bounds 反推完整显示时的 bounds */
   private shownBounds(b: Electron.Rectangle): Electron.Rectangle {
-    const s = this.host.getSettings()
+    const s = this.settings()
     const wa = screen.getDisplayNearestPoint({ x: b.x + 2, y: b.y + 2 }).workArea
     switch (this.docked) {
       case 'left':
@@ -274,7 +362,7 @@ export class FloatWindowManager {
 
   /** 计算隐藏态目标 bounds：只保留 peekSize 像素在屏幕内 */
   private hiddenBounds(b: Electron.Rectangle): Electron.Rectangle {
-    const s = this.host.getSettings()
+    const s = this.settings()
     const peek = Math.max(2, Math.min(s.peekSize, 24))
     const wa = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + 10 }).workArea
     switch (this.docked) {
@@ -337,7 +425,7 @@ export class FloatWindowManager {
 
   slideOut(): void {
     if (!this.isOpen || this.dragging) return
-    const s = this.host.getSettings()
+    const s = this.settings()
     if (!s.autoHide) return
     this.recomputeDock()
     if (this.docked === 'none') return
@@ -367,7 +455,7 @@ export class FloatWindowManager {
       this.slideIn()
       return
     }
-    const s = this.host.getSettings()
+    const s = this.settings()
     if (s.autoHide && this.docked !== 'none') this.scheduleHide()
   }
 
@@ -388,6 +476,150 @@ export class FloatWindowManager {
 
   openMain(): void {
     this.host.onOpenMain()
+  }
+}
+
+// ───────────────── 多实例控制器（F4）─────────────────
+
+/**
+ * 管理多个浮窗实例：每个实例一个独立窗口、独立插件组合、独立位置与主题。
+ *
+ * 为什么不让 index.ts 直接持有 Map：
+ *   主进程里浮窗的调用点有十几处（拖拽、悬停、内容高度、设置变更…），
+ *   让每处自己去找窗口会把「谁在操作哪个实例」的逻辑散落到全局。
+ *   这里统一收口：**窗口来源明确的方法按来源分发，语义上全局的方法广播**。
+ *
+ * 对外方法与 FloatWindowManager 保持同名，因此单实例场景可直接替换。
+ */
+export class FloatWindows {
+  private managers = new Map<string, FloatWindowManager>()
+  /** webContents.id → 实例 id：IPC 回调里只有 sender，靠这张表定位窗口 */
+  private byWebContents = new Map<number, string>()
+
+  constructor(
+    private host: FloatWindowHost,
+    private preloadPath: string,
+    private rendererUrl: string | null,
+    private rendererFile: string
+  ) {}
+
+  /** 按当前设置同步实例集合：新增的创建、移除的关闭、已有的保留（不重建窗口） */
+  sync(): void {
+    const instances = normalizeInstances(this.host.getSettings())
+    const wanted = new Set(instances.map((i) => i.id))
+
+    for (const [id, mgr] of this.managers) {
+      if (!wanted.has(id)) {
+        mgr.close()
+        this.forget(mgr)
+        this.managers.delete(id)
+      }
+    }
+
+    for (const inst of instances) {
+      if (!this.managers.has(inst.id)) {
+        this.managers.set(
+          inst.id,
+          new FloatWindowManager(this.host, this.preloadPath, this.rendererUrl, this.rendererFile, inst.id)
+        )
+      }
+    }
+  }
+
+  private forget(mgr: FloatWindowManager): void {
+    for (const [wcId, id] of this.byWebContents) {
+      if (id === mgr.instanceId) this.byWebContents.delete(wcId)
+    }
+  }
+
+  private track(mgr: FloatWindowManager): void {
+    const wc = mgr.window?.webContents
+    if (wc && !wc.isDestroyed()) this.byWebContents.set(wc.id, mgr.instanceId)
+  }
+
+  /** 所有实例的窗口都关闭 */
+  get isOpen(): boolean {
+    for (const m of this.managers.values()) if (m.isOpen) return true
+    return false
+  }
+
+  get instanceIds(): string[] {
+    return [...this.managers.keys()]
+  }
+
+  managerOf(webContentsId: number): FloatWindowManager | null {
+    const id = this.byWebContents.get(webContentsId)
+    return id ? (this.managers.get(id) ?? null) : null
+  }
+
+  managerById(instanceId: string): FloatWindowManager | null {
+    return this.managers.get(instanceId) ?? null
+  }
+
+  /**
+   * 把采集结果推给指定实例。
+   * 多实例下每个窗口的插件组合可能不同 —— 广播会把 A 实例的插件数据塞给 B 实例。
+   */
+  pushTick(instanceId: string, payloads: unknown): void {
+    const mgr = this.managers.get(instanceId)
+    if (mgr) {
+      this.track(mgr)
+      mgr.pushTick(payloads)
+    }
+  }
+
+  open(): void {
+    this.sync()
+    for (const m of this.managers.values()) {
+      m.open()
+      this.track(m)
+    }
+  }
+
+  close(): void {
+    for (const m of this.managers.values()) {
+      m.close()
+      this.forget(m)
+    }
+  }
+
+  toggle(on?: boolean): boolean {
+    const want = on ?? !this.isOpen
+    if (want) this.open()
+    else this.close()
+    return this.isOpen
+  }
+
+  applySettings(s: FloatSettings): void {
+    this.sync()
+    for (const m of this.managers.values()) m.applySettings(s)
+  }
+
+  /** 设置变更广播：每个实例收到的是「全局设置 + 自己的覆盖」（由 manager 内部合成） */
+  pushSettings(s: FloatSettings): void {
+    for (const m of this.managers.values()) m.pushSettings(s)
+  }
+
+  // ── 以下为「窗口来源明确」的定向操作：多实例下必须按来源分发 ──
+
+  dragBy(webContentsId: number, dx: number, dy: number): void {
+    this.managerOf(webContentsId)?.dragBy(dx, dy)
+  }
+
+  endDrag(webContentsId: number): void {
+    this.managerOf(webContentsId)?.endDrag()
+  }
+
+  beginDrag(webContentsId: number): void {
+    this.managerOf(webContentsId)?.beginDrag()
+  }
+
+  setHovering(webContentsId: number, on: boolean): void {
+    this.managerOf(webContentsId)?.setHovering(on)
+  }
+
+  setContentHeight(webContentsId: number, h: number): void {
+    this.managerOf(webContentsId)?.setContentHeight(h)
   }
 }
 
