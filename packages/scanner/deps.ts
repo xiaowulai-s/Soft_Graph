@@ -329,11 +329,19 @@ Write-SgJson @($out)
 export function resetIndexes(): void {
   comIndex = null
   lnkIndex = null
+  // A7：E4 程序集索引也一起清（它是进程内缓存，测试与「重扫」都要能重置）
+  dotnetIndexPromise = null
+  dotnetDirsCache = null
 }
 
 // ───────────────── 安装目录文件枚举（证据 E1） ─────────────────
 
-const DATA_EXT_INTEREST = new Set([
+/**
+ * 「值得纳入快照」的扩展名集合。
+ * 导出是为了让等价性用例（tests/unit/snapshot-dir.test.ts）复用同一份常量 ——
+ * 用例里再抄一遍必然漂移，届时金标准会与实现悄悄不一致。
+ */
+export const DATA_EXT_INTEREST = new Set([
   'exe', 'dll', 'ocx', 'ax', 'cpl', 'sys', 'drv', 'node', 'pyd', 'so',
   'ini', 'cfg', 'conf', 'json', 'xml', 'yml', 'yaml', 'toml', 'db', 'sqlite',
   'dat', 'bin', 'pak', 'asar', 'jar', 'lib', 'so', 'nls', 'mui'
@@ -345,12 +353,47 @@ export interface DirScanResult {
   totalBytes: number
 }
 
-/** 安装目录递归枚举（对应扫描流水线阶段二：目录快照） */
+/** 并发闸门：限制同时在飞的 IO 数量，避免大目录一次性发起上千个 stat */
+function makeGate(max: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0
+  const waiters: Array<() => void> = []
+  return async function run<T>(fn: () => Promise<T>): Promise<T> {
+    if (active < max) active++
+    else await new Promise<void>((r) => waiters.push(() => { active++; r() }))
+    try {
+      return await fn()
+    } finally {
+      active--
+      const w = waiters.shift()
+      if (w) w()
+    }
+  }
+}
+
+/**
+ * 安装目录递归枚举（对应扫描流水线阶段二：目录快照）
+ *
+ * v3.0.0 · A7 —— 逐文件 `await fs.stat` 是**完全串行**的，实测占依赖解析总耗时的
+ * **40.8%**（5 个取样软件累加 12497ms；Quartus / Questa 上更是各自占 96%）。
+ *
+ * 并行化方式刻意选了「**先按目录批量发起 stat，再按目录内原顺序消费**」：
+ *   - 遍历顺序、`totalBytes` 的累计顺序、`files` 的排布、`maxFiles` 截断点
+ *     全部与串行版**逐字段一致** —— 这是可证等价的，不是「应该一样」
+ *   - 只把同一目录内的 stat IO 重叠起来（这是真正省时间的部分）
+ *   - 子目录仍然按条目顺序递归，因此深层结果不会提前挤进父层的判定
+ *
+ * 为什么不直接把整棵树丢进并发池：`maxFiles` 截断语义与 `files` 顺序会随完成顺序漂移，
+ * 图谱输出就不再等价 —— 那等于用「结果可能不同」换速度。
+ */
 export async function snapshotInstallDir(
   root: string,
   opts: { maxDepth?: number; maxFiles?: number; onlyInteresting?: boolean } = {}
 ): Promise<DirScanResult> {
   const { maxDepth = 6, maxFiles = 6000, onlyInteresting = true } = opts
+  const rawConc = Number(process.env.SG_SNAP_CONCURRENCY ?? 16)
+  const CONCURRENCY = Number.isFinite(rawConc) && rawConc >= 1 ? Math.floor(rawConc) : 16
+  const gate = makeGate(CONCURRENCY)
+
   const files: DirScanResult['files'] = []
   let truncated = false
   let totalBytes = 0
@@ -367,11 +410,26 @@ export async function snapshotInstallDir(
     } catch {
       return
     }
-    for (const e of entries) {
+
+    // 先为本层所有文件并行发起 stat（IO 重叠），结果按条目下标存放
+    const statTasks = new Map<number, Promise<import('node:fs').Stats | null>>()
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]
+      if (!e.isFile()) continue
+      const full = join(dir, e.name)
+      statTasks.set(
+        i,
+        gate(() => fs.stat(full).catch(() => null))
+      )
+    }
+
+    // 再按原顺序消费：顺序不变 ⇒ 输出与串行版逐字段一致
+    for (let i = 0; i < entries.length; i++) {
       if (files.length >= maxFiles) {
         truncated = true
         return
       }
+      const e = entries[i]
       const full = join(dir, e.name)
       if (e.isSymbolicLink()) continue // 防链接逃逸（9.1）
       if (e.isDirectory()) {
@@ -379,13 +437,9 @@ export async function snapshotInstallDir(
         continue
       }
       if (!e.isFile()) continue
+      const st = await statTasks.get(i)
+      if (!st) continue
       const ext = extName(e.name)
-      let st: import('node:fs').Stats
-      try {
-        st = await fs.stat(full)
-      } catch {
-        continue
-      }
       totalBytes += st.size
       if (onlyInteresting && !DATA_EXT_INTEREST.has(ext) && st.size < 512 * 1024) continue
       files.push({ path: normPath(full), size: st.size, mtime: st.mtimeMs })
@@ -420,7 +474,27 @@ export interface ResolveOptions {
   /** 是否启用 E6 / E7（需要额外注册表与 lnk 扫描，首次较慢） */
   enableComEvidence?: boolean
   enableShortcutEvidence?: boolean
+  /**
+   * 分段计时回调（v3.0.0 · A7 诊断用）。
+   * 加它是为了回答一个具体问题：**12.8s 到底花在哪一段**。
+   * 没有这个数字就去写「PE 解析 worker 池」属于凭印象优化。
+   */
+  onStage?: (stage: ResolveStage, ms: number) => void
 }
+
+/** A7 分段计时的段名 */
+export type ResolveStage =
+  | 'prepare' // loadKnownDlls + buildPathDirs + API Set 预热
+  | 'parse-main' // 主程序 PE
+  | 'snapshot' // 安装目录快照
+  | 'bfs-parse' // BFS 内逐文件 parsePe
+  | 'bfs-imports' // BFS 内导入表处理（resolveDll + 收集）
+  | 'bfs-dotnet' // BFS 内 E4 .NET 程序集定位
+  | 'bfs-sxs' // BFS 内 E5 SxS 程序集定位（走 WinSxS 扫描）
+  | 'bfs-walk' // BFS 内其余开销（本轮循环的剩余部分）
+  | 'com' // E6
+  | 'shortcut' // E7
+  | 'merge' // 证据融合与打分
 
 export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions = {}): Promise<ResolveResult> {
   const {
@@ -437,15 +511,27 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
   let parsedOk = 0
   let parseFailed = 0
 
+  // A7 分段计时（只有传了 onStage 才有额外开销：几个 Date.now()）
+  const mark = (name: ResolveStage, t0: number): void => opts.onStage?.(name, Date.now() - t0)
+  let bfsParseMs = 0
+  let bfsImportsMs = 0
+  let bfsDotnetMs = 0
+  let bfsSxsMs = 0
+  let bfsWalkMs = 0
+
   onProgress?.('解析主程序', 5, sw.mainExe)
 
   // ── 阶段一：主程序 PE 解析 ──
+  const tPrepare = Date.now()
   const known = await loadKnownDlls()
   const pathDirs = buildPathDirs()
   // API Set 动态映射（M2/B5）：解析前确保映射就绪。
   // 首次约 1s（加载器探测 700+ 名字），之后走内存/磁盘缓存近乎零成本；
   // 失败静默退回静态前缀表，绝不影响解析可用性。
   await ensureApiSetsWarm()
+  mark('prepare', tPrepare)
+
+  const tMain = Date.now()
   let mainPe: PeResult | null = null
   if (sw.mainExe) {
     mainPe = await parsePe(sw.mainExe)
@@ -453,11 +539,14 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
     if (mainPe.parseStatus === 'ok') parsedOk++
     else parseFailed++
   }
+  mark('parse-main', tMain)
   const arch: PeArch = mainPe?.arch && mainPe.arch !== 'unknown' ? mainPe.arch : sw.arch || 'x64'
 
   // ── 阶段二：目录快照（证据 E1） ──
   onProgress?.('枚举安装目录', 18, sw.installPath)
+  const tSnap = Date.now()
   const snap = sw.installPath ? await snapshotInstallDir(sw.installPath) : { files: [], truncated: false, totalBytes: 0 }
+  mark('snapshot', tSnap)
   const dirFileByName = new Map<string, string>()
   for (const f of snap.files) {
     const bn = baseName(f.path).toLowerCase()
@@ -496,6 +585,7 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
 
     const nextLevel: string[] = []
 
+    const tWalk = Date.now()
     const handle = (dll: string, evidence: EvidenceCode, type: DependencyType): void => {
       const r: ResolvedDll = resolveDll(dll, ctx)
       if (r.kind === 'apiset') {
@@ -521,12 +611,17 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
       if (depth < maxDepth) nextLevel.push(r.fullPath)
     }
 
+    const tImports = Date.now()
     for (const d of pe.imports) handle(d, 'E2', 'imports')
     for (const d of pe.delayImports) handle(d, 'E3', 'delay_loads')
+    const importMs = Date.now() - tImports
+    bfsImportsMs += importMs
 
-    // E4：.NET 程序集引用 —— 候选字符串按「磁盘上是否存在同名程序集」过滤
+    // E4：.NET 程序集引用 —— 用一次性的「名字 → 路径」索引替代逐条穷举探测（A7）
+    let dotnetMs = 0
     if (pe.isDotNet && pe.assemblyRefs.length) {
-      const runtimeDirs = dotnetRuntimeDirs()
+      const tDotnet = Date.now()
+      const asmIndex = await dotnetAssemblyIndex()
       let hits = 0
       for (const nm of pe.assemblyRefs) {
         if (hits > 120) break
@@ -538,25 +633,20 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
           if (depth < maxDepth) nextLevel.push(local)
           continue
         }
-        let found = ''
-        for (const rd of runtimeDirs) {
-          const p = join(rd, dllName)
-          try {
-            await fs.access(p)
-            found = p
-            break
-          } catch {
-            /* 继续 */
-          }
-        }
+        const found = asmIndex.get(dllName.toLowerCase()) ?? ''
         if (found) {
           collector.add(found, baseName(found), 'E4', 'dotnet_ref', { requestedAs: nm })
           hits++
         }
       }
+      dotnetMs = Date.now() - tDotnet
+      bfsDotnetMs += dotnetMs
     }
 
     // E5：SxS 并行程序集清单 → WinSxS 重定向
+    // 单独计时：这一段是 `await resolveSxsAssembly(...)`，走 WinSxS 目录扫描，
+    // 实测在 Docker Desktop 这类带大量 SxS 依赖的软件上是 bfs-walk 的主要构成
+    const tSxs = Date.now()
     for (const asmName of pe.sxsDependencies) {
       const hit = await resolveSxsAssembly(asmName, arch)
       if (hit) {
@@ -570,6 +660,10 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
         })
       }
     }
+    const sxsMs = Date.now() - tSxs
+    bfsSxsMs += sxsMs
+    // walk 上报时扣掉已单独计时的子段：各子段相加 = 本轮完整处理时间，不重复计入
+    bfsWalkMs += Math.max(0, Date.now() - tWalk - sxsMs - importMs - dotnetMs)
 
     // 递归解析下一层（限量，避免图谱爆炸）
     if (depth < maxDepth) {
@@ -581,7 +675,9 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
         // 只递归软件自身目录内的模块；系统 DLL 的依赖归入系统聚合组，不再展开
         if (sw.installPath && !isSubPath(p, sw.installPath)) continue
         parsedPaths.add(k)
+        const tSub = Date.now()
         const sub = await parsePe(p, { resources: false, dotnet: true })
+        bfsParseMs += Date.now() - tSub
         peResults.push(sub)
         if (sub.parseStatus === 'ok') parsedOk++
         else parseFailed++
@@ -590,10 +686,17 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
       }
     }
   }
+  // 这几段是多次迭代累加的时长，直接上报（mark 语义是「从 t0 到现在」）
+  opts.onStage?.('bfs-parse', bfsParseMs)
+  opts.onStage?.('bfs-imports', bfsImportsMs)
+  opts.onStage?.('bfs-dotnet', bfsDotnetMs)
+  opts.onStage?.('bfs-sxs', bfsSxsMs)
+  opts.onStage?.('bfs-walk', bfsWalkMs)
 
   // ── E6：COM 与服务注册反查 ──
   if (enableComEvidence && !signal?.cancelled) {
     onProgress?.('COM 注册反查', 84, '')
+    const t6 = Date.now()
     try {
       const idx = await loadComIndex()
       for (const f of snap.files) {
@@ -604,11 +707,13 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
     } catch {
       /* 忽略 */
     }
+    mark('com', t6)
   }
 
   // ── E7：快捷方式关联 ──
   if (enableShortcutEvidence && !signal?.cancelled) {
     onProgress?.('快捷方式关联', 90, '')
+    const t7 = Date.now()
     try {
       const idx = await loadLnkIndex()
       for (const [target, lnks] of idx) {
@@ -618,10 +723,12 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
     } catch {
       /* 忽略 */
     }
+    mark('shortcut', t7)
   }
 
   // ── 阶段四：证据融合 → 置信度打分 ──
   onProgress?.('证据融合与打分', 94, '')
+  const tMerge = Date.now()
   const files = new Map<string, FileNode>()
   const edges: DependencyEdge[] = []
   let missingCount = 0
@@ -684,6 +791,8 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
     })
   }
 
+  mark('merge', tMerge)
+
   return {
     files,
     edges,
@@ -700,7 +809,6 @@ export async function resolveDependencies(sw: SoftwareItem, opts: ResolveOptions
 
 /** .NET 运行时目录（用于 E4 程序集定位） */
 let dotnetDirsCache: string[] | null = null
-
 function dotnetRuntimeDirs(): string[] {
   if (dotnetDirsCache) return dotnetDirsCache
   const out: string[] = []
@@ -734,6 +842,46 @@ function dotnetRuntimeDirs(): string[] {
   if (existsSync(gac)) out.push(gac)
   dotnetDirsCache = out
   return out
+}
+
+/**
+ * E4 程序集「名字 → 完整路径」索引（v3.0.0 · A7）。
+ *
+ * 修的是一个真实缺陷：原实现是
+ *   `for (nm of assemblyRefs) for (rd of runtimeDirs) await fs.access(join(rd, nm + '.dll'))`
+ * 外层的 `if (hits > 120) break` 统计的是**命中数**而不是**处理数** —— 于是「未命中」
+ * 的引用会把全部 ~10 个运行时目录穷举一遍，每个条目 10 次注定失败的 `fs.access`。
+ * 真机实测（Docker Desktop，一个大型 .NET 应用）：**12.9s 全部耗在这一段**，
+ * 占该软件解析总耗时的 99.6%，而它最终只产出 192 条边。
+ *
+ * 改成「每个运行时目录 readdir 一次」建索引（进程内缓存），把 N×10 次失败探测
+ * 压成 10 次目录枚举。**语义完全等价**：原实现取「按 runtimeDirs 顺序第一个存在该文件的目录」，
+ * 索引同样按该顺序填充且只保留首次出现的条目。
+ */
+let dotnetIndexPromise: Promise<Map<string, string>> | null = null
+
+function dotnetAssemblyIndex(): Promise<Map<string, string>> {
+  if (!dotnetIndexPromise) {
+    dotnetIndexPromise = (async (): Promise<Map<string, string>> => {
+      const idx = new Map<string, string>()
+      for (const rd of dotnetRuntimeDirs()) {
+        let entries: import('node:fs').Dirent[]
+        try {
+          entries = await fs.readdir(rd, { withFileTypes: true })
+        } catch {
+          continue // 目录不存在 / 无权限 —— 与原来「access 全部失败」等价
+        }
+        for (const e of entries) {
+          if (!e.isFile()) continue
+          const lower = e.name.toLowerCase()
+          if (!lower.endsWith('.dll')) continue
+          if (!idx.has(lower)) idx.set(lower, join(rd, e.name)) // 先到先得 = 原实现的搜索顺序
+        }
+      }
+      return idx
+    })()
+  }
+  return dotnetIndexPromise
 }
 
 /**

@@ -200,9 +200,13 @@ export async function readJournal(volume: string, startUsn?: string): Promise<Re
  * 已入账的记录 —— USN 整体错位一格。现在改为 **Usn 行开启新记录**，
  * 同时兼容「文件名在前」的老格式（遇到第二个文件名行也会开新记录）。
  *
- * 注意：输出只有文件名 + 文件 ID / 父文件 ID，**没有路径**。要做目录级失效
- * 必须把 ID 反查成路径（需额外系统调用，成本随记录数线性增长），因此上层
- * 目前只按「文件名」做失效判定，不做 ID 反查。
+ * 注意：输出只有文件名 + 文件 ID / 父文件 ID，**没有路径**。
+ *
+ * 关于 ID 反查（v3.0.0 实测定稿）：`fsutil file queryFileNameById <卷> <fileid>`
+ * 无需提权即可用（3/3 命中、返回完整路径），但**单次 158ms 且无批量入口**，
+ * 按每轮 200 条变更外推 31.6s，是签名遍历基线（约 10s）的 3 倍以上。
+ * 因此上层**不做 ID 反查**，第 2 级只用 `reuse-all`（0 条记录 ⇒ 缓存完全有效），
+ * 详见 incremental.ts 的 planUsnInvalidation 注释与 tests/diag-usn-idlookup.ts。
  */
 export function parseReadJournal(stdout: string): ReadJournalResult {
   const records: UsnChangeRecord[] = []

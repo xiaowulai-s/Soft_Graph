@@ -8,6 +8,8 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type {
   CleanResult,
   DeletePlan,
+  FileSearchHit,
+  FileSearchStrategy,
   GraphEdge,
   GraphModel,
   GraphNode,
@@ -52,7 +54,7 @@ const cleanResult = ref<CleanResult | null>(null)
 const pendingOneClick = ref(false)
 
 const drawerOpen = ref(false)
-const drawerTab = ref<'settings' | 'float' | 'quarantine' | 'rules' | 'about'>('settings')
+const drawerTab = ref<'settings' | 'float' | 'quarantine' | 'registry' | 'rules' | 'about'>('settings')
 const toast = ref<string | null>(null)
 const theme = ref<'dark' | 'light'>('dark')
 const allowDirectDelete = ref(false)
@@ -181,6 +183,13 @@ onMounted(async () => {
       software.value = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
       void loadIcons(batch)
     }),
+    window.api.onSoftwareIcons((batch) => {
+      // 按需提取完成后推送（A2）：合并即可，未到的项继续显示首字母色块
+      if (!batch?.length) return
+      const next = { ...icons.value }
+      for (const ic of batch) next[ic.hash] = ic.data
+      icons.value = next
+    }),
     window.api.onScanDone((d) => {
       swScanning.value = false
       swProgress.value = null
@@ -221,7 +230,10 @@ onMounted(async () => {
   )
 
   window.addEventListener('keydown', onKey)
-  window.addEventListener('click', () => (contextMenu.value = null))
+  window.addEventListener('click', () => {
+    contextMenu.value = null
+    fileDropOpen.value = false
+  })
 })
 
 onBeforeUnmount(() => {
@@ -247,12 +259,34 @@ function applyTheme(t: 'dark' | 'light'): void {
 
 watch(theme, applyTheme)
 
+/** 已经请求过图标的 hash —— 避免列表每次变化都重复往返（A2） */
+const iconRequested = new Set<string>()
+
+/**
+ * 批量取图标（v3.0.0 · A2）。
+ *
+ * 改前是 `for (const it of items) { await window.api.getIcon() }`：250 个软件
+ * 就是 250 次串行 IPC，而且每次都整体替换 icons 对象 → 触发 250 次全量重渲染。
+ *
+ * 现在：一次批量调用只带「尚未请求过」的 hash，结果单次赋值合并；
+ * 磁盘上还没有的图标由主进程聚批提取，完成后经 onSoftwareIcons 推回来。
+ * 未取到的 hash 保持 undefined（渲染层回落到首字母色块），不做无限重试。
+ */
 async function loadIcons(items: SoftwareItem[]): Promise<void> {
+  const want: string[] = []
   for (const it of items) {
-    if (!it.iconHash || it.iconHash in icons.value) continue
-    icons.value[it.iconHash] = null
-    const d = await window.api.getIcon(it.iconHash)
-    icons.value = { ...icons.value, [it.iconHash]: d }
+    const h = it.iconHash
+    if (!h || iconRequested.has(h) || h in icons.value) continue
+    iconRequested.add(h)
+    want.push(h)
+  }
+  if (want.length === 0) return
+  try {
+    const got = await window.api.getIcons(want)
+    if (Object.keys(got).length > 0) icons.value = { ...icons.value, ...got }
+  } catch {
+    // 整批失败时把 hash 退回去，下次列表刷新可重试
+    for (const h of want) iconRequested.delete(h)
   }
 }
 
@@ -397,6 +431,80 @@ function toggleKind(kind: string): void {
   const i = hiddenKinds.value.indexOf(kind)
   if (i >= 0) hiddenKinds.value = hiddenKinds.value.filter((k) => k !== kind)
   else hiddenKinds.value = [...hiddenKinds.value, kind]
+}
+
+// ───────────────── 全库文件检索（I-11）─────────────────
+
+const fileQuery = ref('')
+const fileHits = ref<FileSearchHit[]>([])
+const fileStrategy = ref<FileSearchStrategy | null>(null)
+const fileSearching = ref(false)
+const fileDropOpen = ref(false)
+const fileSubstring = ref(false)
+let fileSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+const FILE_STRATEGY_LABEL: Record<FileSearchStrategy, string> = {
+  'prefix-index': '前缀 · 走索引',
+  'unindexed-scan': '前缀 · 索引未就绪（退化为扫描）',
+  'substring-scan': '子串 · 全表扫描',
+  fts5: '子串 · FTS5'
+}
+
+/** 输入防抖 300ms 后检索；≥2 字才查（单字符会把整库捞回来） */
+function onFileQueryInput(): void {
+  fileDropOpen.value = true
+  if (fileSearchTimer) clearTimeout(fileSearchTimer)
+  if (fileQuery.value.trim().length < 2) {
+    fileHits.value = []
+    fileStrategy.value = null
+    return
+  }
+  fileSearchTimer = setTimeout(() => void runFileSearch(), 300)
+}
+
+async function runFileSearch(): Promise<void> {
+  const q = fileQuery.value.trim()
+  if (q.length < 2) return
+  fileSearching.value = true
+  try {
+    const r = await window.api.searchFiles({
+      query: q,
+      limit: 30,
+      mode: fileSubstring.value ? 'substring' : 'prefix'
+    })
+    fileHits.value = r.hits
+    fileStrategy.value = r.strategy
+  } catch (e) {
+    showToast(`检索失败：${(e as Error).message}`)
+    fileHits.value = []
+  } finally {
+    fileSearching.value = false
+  }
+}
+
+function toggleFileMode(): void {
+  fileSubstring.value = !fileSubstring.value
+  if (fileQuery.value.trim().length >= 2) void runFileSearch()
+}
+
+/**
+ * 命中项 → 打开该文件的反向依赖子图。
+ * **复用 D2 的下钻链路**（graphDrilldown），不新建数据通路；
+ * 这样「全库检索」能覆盖到「当前软件的图谱里没有加载」的文件。
+ */
+async function openFileHit(hit: FileSearchHit): Promise<void> {
+  fileDropOpen.value = false
+  graphLoading.value = true
+  graphLoadingText.value = `正在构建「${hit.name}」的反向依赖图…`
+  try {
+    if (graph.value) drillStack.value.push({ title: currentGraphTitle.value, model: graph.value })
+    graph.value = await window.api.graphDrilldown(hit.id)
+    showToast(`反向子图：${graph.value.stats.nodeCount} 节点 / ${graph.value.stats.edgeCount} 条引用边`)
+  } catch (e) {
+    showToast(`打开失败：${(e as Error).message}`)
+  } finally {
+    graphLoading.value = false
+  }
 }
 
 async function exportGraphPng(): Promise<void> {
@@ -564,6 +672,58 @@ const statusText = computed(() => {
       <button :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
 
       <input v-model="searchTerm" class="tb-search" type="search" placeholder="在图谱中搜索文件名或路径…" />
+
+      <!-- 全库文件检索（I-11）：覆盖整个 file_index，不限于当前图谱已加载的节点 -->
+      <div class="tb-fsearch" @click.stop>
+        <input
+          v-model="fileQuery"
+          class="tb-fsearch-input"
+          type="search"
+          placeholder="检索全库文件…"
+          @input="onFileQueryInput"
+          @focus="fileDropOpen = fileQuery.trim().length >= 2"
+          @keydown.escape="fileDropOpen = false"
+          @keydown.enter="runFileSearch"
+        />
+        <button
+          class="ghost tb-fsearch-mode"
+          :class="{ on: fileSubstring }"
+          :title="
+            fileSubstring
+              ? '当前：子串匹配（全表扫描，代价随库大小线性增长）—— 点击切回前缀'
+              : '当前：前缀匹配（走索引）—— 点击切换为子串匹配'
+          "
+          @click="toggleFileMode"
+        >
+          {{ fileSubstring ? '子串' : '前缀' }}
+        </button>
+
+        <div v-if="fileDropOpen && (fileHits.length > 0 || fileSearching || fileStrategy)" class="tb-fdrop">
+          <div class="tb-fdrop-head">
+            <span class="dim">
+              {{ fileSearching ? '检索中…' : `${fileHits.length} 条结果` }}
+              <template v-if="fileStrategy"> · {{ FILE_STRATEGY_LABEL[fileStrategy] }}</template>
+            </span>
+            <span v-if="fileStrategy === 'substring-scan'" class="risk-medium">全表扫描</span>
+          </div>
+          <ul v-if="fileHits.length" class="tb-fdrop-list">
+            <li v-for="h in fileHits" :key="h.id" @click="openFileHit(h)">
+              <span class="tb-fname">
+                {{ h.name }}
+                <span v-if="h.missing" class="risk-high">缺失</span>
+              </span>
+              <span class="dim tb-fpath mono">{{ h.fullPath }}</span>
+              <span class="dim tb-fmeta">
+                {{ formatBytes(h.sizeBytes) }}
+                <template v-if="h.refCount > 0"> · 被 {{ h.refCount }} 个软件引用</template>
+              </span>
+            </li>
+          </ul>
+          <div v-else-if="!fileSearching" class="dim tb-fdrop-empty">
+            未命中。试试切换「子串」模式（前缀模式只匹配路径或文件名开头）。
+          </div>
+        </div>
+      </div>
 
       <div class="tb-group">
         <span class="dim">置信度 ≥</span>
@@ -853,6 +1013,85 @@ const statusText = computed(() => {
 }
 .tb-sp {
   flex: 1;
+}
+/* 全库文件检索（I-11） */
+.tb-fsearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.tb-fsearch-input {
+  width: 190px;
+}
+.tb-fsearch-mode {
+  font-size: 10.5px;
+  padding: 2px 7px;
+}
+.tb-fsearch-mode.on {
+  color: var(--risk-medium);
+  border-color: color-mix(in srgb, var(--risk-medium) 50%, transparent);
+}
+.tb-fdrop {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  width: 460px;
+  max-width: 76vw;
+  max-height: 380px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  z-index: 130;
+}
+.tb-fdrop-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  font-size: 10.5px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tb-fdrop-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tb-fdrop-list li {
+  padding: 5px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tb-fdrop-list li:last-child {
+  border-bottom: none;
+}
+.tb-fdrop-list li:hover {
+  background: var(--hover);
+}
+.tb-fname {
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tb-fpath {
+  font-size: 10px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.tb-fmeta {
+  font-size: 10px;
+}
+.tb-fdrop-empty {
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 .body {
   flex: 1;

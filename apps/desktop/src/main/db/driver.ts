@@ -21,6 +21,19 @@ export type Row = Record<string, SqlValue>
 
 export interface Db {
   readonly driverName: string
+  /**
+   * 该驱动是否支持 FTS5 全文索引（v3.0.0 · I-11）。
+   *
+   * 实测结论（2026-09-18）：
+   *   - `node:sqlite`（Node ≥ 22.5）→ **支持**（FTS5 编译在内）
+   *   - `sql.js`（WASM）→ **不支持**，`CREATE VIRTUAL TABLE … USING fts5` 报
+   *     `no such module: fts5`
+   *   - **打包应用恒走 sql.js**：Electron 33.4.11 内置 Node 20.18.3，没有 `node:sqlite`
+   *
+   * 因此 FTS5 是「有则用、无则退」的**可选**路径，检索主路径必须能在 sql.js 上工作
+   * （见 store.searchFiles 的前缀范围查询）。
+   */
+  readonly supportsFts5: boolean
   exec(sql: string): void
   run(sql: string, params?: SqlValue[]): void
   all<T = Row>(sql: string, params?: SqlValue[]): T[]
@@ -32,10 +45,25 @@ export interface Db {
   close(): Promise<void>
 }
 
+/**
+ * 探测一个连接是否支持 FTS5。
+ * 建一张临时虚表再立刻删掉；任何失败都只是「不支持」，绝不影响启动。
+ */
+export function probeFts5(exec: (sql: string) => void): boolean {
+  try {
+    exec('CREATE VIRTUAL TABLE IF NOT EXISTS __sg_fts_probe USING fts5(x)')
+    exec('DROP TABLE IF EXISTS __sg_fts_probe')
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ───────────────── node:sqlite 驱动 ─────────────────
 
 class NodeSqliteDriver implements Db {
   readonly driverName = 'node:sqlite'
+  readonly supportsFts5: boolean
   private db: any
   /** 事务重入深度：transaction() 内再调 runMany() 时不再嵌套 BEGIN */
   private txDepth = 0
@@ -45,6 +73,7 @@ class NodeSqliteDriver implements Db {
     this.db = new DatabaseSync(file)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec('PRAGMA synchronous = NORMAL')
+    this.supportsFts5 = probeFts5((sql) => this.db.exec(sql))
   }
 
   exec(sql: string): void {
@@ -110,6 +139,7 @@ class NodeSqliteDriver implements Db {
 
 class SqlJsDriver implements Db {
   readonly driverName = 'sql.js (WASM)'
+  readonly supportsFts5: boolean
   private db: any
   private file: string
   private dirty = false
@@ -121,6 +151,7 @@ class SqlJsDriver implements Db {
     this.db = db
     this.file = file
     this.db.run('PRAGMA foreign_keys = ON')
+    this.supportsFts5 = probeFts5((sql) => this.db.run(sql))
   }
 
   private markDirty(): void {
@@ -237,16 +268,26 @@ export interface OpenDbOptions {
   file: string
   /** sql.js 的 wasm 文件所在目录 */
   wasmDir?: string
+  /**
+   * 强制指定驱动（v3.0.0 · I-11）。默认 'auto' 即原有行为。
+   * 加这个口子是为了让测试能同时覆盖「有 FTS5」与「无 FTS5」两条检索分支 ——
+   * 否则 sql.js 那条（**打包应用实际走的就是它**）永远测不到。
+   */
+  prefer?: 'auto' | 'node-sqlite' | 'sqljs'
 }
 
 export async function openDb(opts: OpenDbOptions): Promise<Db> {
+  const prefer = opts.prefer ?? 'auto'
+
   // 1) 优先 node:sqlite（与文档选型行为一致，含 WAL）
-  try {
-    const mod = await import('node:sqlite')
-    const DatabaseSync = (mod as any).DatabaseSync
-    if (DatabaseSync) return new NodeSqliteDriver(opts.file, DatabaseSync)
-  } catch {
-    /* 当前运行时不提供 node:sqlite，回退 */
+  if (prefer !== 'sqljs') {
+    try {
+      const mod = await import('node:sqlite')
+      const DatabaseSync = (mod as any).DatabaseSync
+      if (DatabaseSync) return new NodeSqliteDriver(opts.file, DatabaseSync)
+    } catch {
+      /* 当前运行时不提供 node:sqlite，回退 */
+    }
   }
 
   // 2) 回退 sql.js

@@ -16,6 +16,7 @@ import {
   floatInstanceTarget,
   DEFAULT_INSTANCE_ID
 } from '../../apps/desktop/src/main/float/window'
+import { nextInstanceId } from '@shared/float'
 import type { FloatSettings } from '@shared/types'
 
 function legacy(over: Partial<FloatSettings> = {}): FloatSettings {
@@ -183,5 +184,38 @@ describe('实例 id 交给渲染层', () => {
 
   it('id 会被转义（避免 query 注入）', () => {
     assert.ok(floatInstanceTarget('http://x/f', 'a&b=c').includes('instance=a%26b%3Dc'))
+  })
+})
+
+// ───────────────── F4-UI：新增实例 ─────────────────
+
+describe('新增实例的 id 生成', () => {
+  it('与现有 id 不冲突', () => {
+    assert.equal(nextInstanceId([{ id: DEFAULT_INSTANCE_ID }]), 'inst-2')
+    // 'inst-2' 已被占用时必须继续往后找，否则新实例会被 normalizeInstances 当重复项丢掉
+    assert.equal(nextInstanceId([{ id: 'default' }, { id: 'inst-2' }]), 'inst-3')
+    assert.equal(nextInstanceId([{ id: 'default' }, { id: 'inst-3' }]), 'inst-4')
+  })
+
+  it('生成的 id 通过 normalizeInstances 后会成为独立实例（不会与已有项合并）', () => {
+    const g = legacy({ instances: [{ id: 'default', plugins: ['sys.clock'] } as never] })
+    const list = normalizeInstances(g)
+    const id = nextInstanceId(list)
+    const merged = normalizeInstances(
+      legacy({ instances: [...list, { ...list[0], id, plugins: ['sys.disk'] } as never] })
+    )
+    assert.equal(merged.length, 2)
+    assert.deepEqual(merged.map((i) => i.id), ['default', id])
+    assert.deepEqual(merged[1].plugins, ['sys.disk'])
+  })
+})
+
+describe('共享规范化实现（@shared/float）与主进程一致', () => {
+  it('主进程 float/window 重新导出的就是共享实现', async () => {
+    const shared = await import('@shared/float')
+    assert.equal(shared.normalizeInstances, normalizeInstances)
+    assert.equal(shared.instanceFromLegacy, instanceFromLegacy)
+    assert.equal(shared.floatInstanceTarget, floatInstanceTarget)
+    assert.equal(shared.DEFAULT_INSTANCE_ID, DEFAULT_INSTANCE_ID)
   })
 })

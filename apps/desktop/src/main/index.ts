@@ -17,6 +17,8 @@ import { ScanService } from './services/scan'
 import { ensurePaths, ensureRules, isElevated, resolvePaths, SettingsStore, type AppPaths } from './services/env'
 import { FloatWindows, floatRendererTarget, normalizeInstances, DEFAULT_INSTANCE_ID } from './float/window'
 import { PluginRegistry } from './float/registry'
+import { IconQueue } from './services/icon-queue'
+import { extractIcons } from '@scanner/winenum'
 import { initLogger, log, makeRedactor } from './services/logger'
 import { describeCapabilities, loadNativeCapabilities } from '@native/capabilities'
 import builtinRules from '@rules/junk-rules.json'
@@ -32,6 +34,7 @@ let settings: SettingsStore
 let paths: AppPaths
 let float: FloatWindows
 let registry: PluginRegistry
+let iconQueue: IconQueue
 let floatTimer: NodeJS.Timeout | null = null
 let quitting = false
 
@@ -117,6 +120,29 @@ function emitToAll(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
 }
 
+// ───────────────── 图标（A2）─────────────────
+
+/** 读已落盘的图标 PNG → dataURL；未落盘返回 null */
+async function readIconData(hash: string): Promise<string | null> {
+  if (!hash) return null
+  try {
+    const buf = await fs.readFile(join(paths.iconDir, `${hash}.png`))
+    return `data:image/png;base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+/** 一批按需提取完成 → 读回 dataURL 并推给渲染层 */
+async function emitIconsReady(hashes: string[]): Promise<void> {
+  const icons: { hash: string; data: string }[] = []
+  for (const h of hashes) {
+    const data = await readIconData(h)
+    if (data) icons.push({ hash: h, data })
+  }
+  if (icons.length > 0) emitToAll(CH.SOFTWARE_ICONS_READY, icons)
+}
+
 // ───────────────── 浮窗调度 ─────────────────
 
 /** 所有实例启用的插件并集 —— 定时器间隔取其中最急的那个 */
@@ -171,13 +197,29 @@ function registerIpc(): void {
 
   h(CH.SOFTWARE_ICON, async (iconHash: string) => {
     if (!iconHash) return null
-    const p = join(paths.iconDir, `${iconHash}.png`)
-    try {
-      const buf = await fs.readFile(p)
-      return `data:image/png;base64,${buf.toString('base64')}`
-    } catch {
-      return null
+    const data = await readIconData(iconHash)
+    if (data) return data
+    // 未命中磁盘缓存 → 入按需提取队列；本次先返回 null，
+    // 提取完成后由 SOFTWARE_ICONS_READY 推送（前端有首字母色块兜底，不会空窗）
+    iconQueue.request(iconHash)
+    return null
+  })
+
+  // A2：批量取图标 —— 把「250 个软件 = 250 次串行 IPC」折成 1 次
+  h(CH.SOFTWARE_ICONS, async (iconHashes: string[]) => {
+    const out: Record<string, string> = {}
+    const missing: string[] = []
+    for (const hash of iconHashes ?? []) {
+      if (!hash || out[hash]) continue
+      const data = await readIconData(hash)
+      if (data) out[hash] = data
+      else missing.push(hash)
     }
+    if (missing.length > 0) {
+      const r = iconQueue.requestMany(missing)
+      log.debug('icon', '图标未命中，已入队', r)
+    }
+    return out
   })
 
   h(CH.SOFTWARE_MARK_PORTABLE, async (payload: { path: string; isPortable: boolean }) => {
@@ -200,8 +242,12 @@ function registerIpc(): void {
   // v2.0.0 M5/E4：审计日志查看
   h(CH.AUDIT_LIST, () => scan.auditRecent(50))
 
-  h(CH.FILE_DETAIL, async (payload: { path: string }) => {
-    const p = payload.path
+  // v3.0.0 I-11：全库文件检索（前缀走索引；子串仅在显式要求时启用）
+  h(CH.FILE_SEARCH, (payload: { query: string; limit?: number; mode?: 'prefix' | 'substring' }) => {
+    return store.searchFiles(payload?.query ?? '', { limit: payload?.limit, mode: payload?.mode })
+  })
+
+  h(CH.FILE_DETAIL, async (payload: { path: string }) => {    const p = payload.path
     try {
       const st = await fs.stat(p)
       return {
@@ -353,6 +399,34 @@ function registerIpc(): void {
   })
   h(CH.QUARANTINE_RESTORE, (payload: { ids: string[] }) => scan.quarantineRestore(payload.ids))
   h(CH.QUARANTINE_PURGE, (payload: { ids?: string[]; expiredOnly?: boolean }) => scan.quarantinePurge(payload))
+
+  // ── 注册表残留清理（v3.0.0 · M4-UI / M4-RESTORE）──
+  h(CH.REGISTRY_SCAN, async () => {
+    log.info('registry', '残留扫描开始')
+    const r = await scan.scanRegistry()
+    log.info('registry', '残留扫描结束', {
+      scanned: r.scanned,
+      residues: r.residues.length,
+      needsElevation: r.needsElevation,
+      ms: r.scanMs
+    })
+    return r
+  })
+  h(CH.REGISTRY_CLEAN, async (payload: { keyPaths: string[] }) => {
+    const keys = payload?.keyPaths ?? []
+    log.info('registry', '清理请求', { count: keys.length })
+    const r = await scan.cleanRegistry(keys)
+    log.info('registry', '清理结果', {
+      removed: r.removed,
+      failed: r.failed,
+      needsElevation: r.needsElevation,
+      backupFailed: !!r.backupFailed,
+      rejected: r.rejected.length
+    })
+    return r
+  })
+  h(CH.REGISTRY_BACKUPS, () => scan.listRegistryBackups())
+  h(CH.REGISTRY_RESTORE, (payload: { file: string }) => scan.restoreRegistryBackup(payload.file))
 
   // ── 系统 ──
   h(CH.FS_REVEAL, async (payload: { path: string }) => {
@@ -512,6 +586,8 @@ function registerIpc(): void {
 function applyFloat(s: FloatSettings): void {
   if (s.enabled && !float.isOpen) float.open()
   else if (!s.enabled && float.isOpen) float.close()
+  // 浮窗已开启时新增实例：sync() 只创建管理器，窗口要显式打开才会出现（F4-UI）
+  if (s.enabled) float.openMissing()
   float.applySettings(s)
   float.pushSettings(s)
   restartFloatTimer()
@@ -546,6 +622,18 @@ async function bootstrap(): Promise<void> {
   store.init()
 
   scan = new ScanService(store, paths, settings, emitToAll)
+
+  // A2：图标按需提取队列 —— 渲染层请求未命中的图标 → 聚批（250ms）→ 一次 PowerShell
+  //     → 落盘 → 读回 dataURL 推送。替代原先「扫描后无条件提取全部」的做法。
+  iconQueue = new IconQueue(
+    {
+      resolveSources: (hash) => scan.iconSourcesOf(hash),
+      extract: (reqs) => extractIcons(reqs, paths.iconDir),
+      onReady: (hashes) => void emitIconsReady(hashes),
+      log: (msg, meta) => log.debug('icon', msg, meta)
+    },
+    { debounceMs: 250 }
+  )
   void scan.purgeExpired()
   // 后台预热 COM 反查索引（M2/B4），让用户点开图谱时 E6 证据已就绪
   void scan.warmupComIndex()
@@ -642,6 +730,7 @@ if (!gotLock) {
     quitting = true
     log.info('app', '退出', { uptimeMs: Math.round(process.uptime() * 1000) })
     if (floatTimer) clearInterval(floatTimer)
+    iconQueue?.dispose()
     registry?.dispose()
     scan?.disposeWorker()
     await scan?.flushAudit().catch(() => {})

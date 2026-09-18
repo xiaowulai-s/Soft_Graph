@@ -14,8 +14,13 @@
 
 import { BrowserWindow, screen, shell } from 'electron'
 import { join } from 'node:path'
-import type { FloatEdge, FloatInstanceSettings, FloatSettings } from '@shared/types'
+import type { FloatEdge, FloatSettings } from '@shared/types'
+import { DEFAULT_INSTANCE_ID, floatInstanceTarget, instanceFromLegacy, normalizeInstances } from '@shared/float'
 import { CH } from '@shared/ipc'
+
+// 实例规范化与 URL 构造已提取到 @shared/float（渲染层设置页要用同一口径），
+// 这里重新导出，保持既有导入路径与测试可用。
+export { DEFAULT_INSTANCE_ID, floatInstanceTarget, instanceFromLegacy, normalizeInstances }
 
 const ANIM_MS = 190
 const ANIM_STEP = 12
@@ -24,77 +29,10 @@ const DOCK_THRESHOLD = 28
 /** 鼠标离开后延迟隐藏，避免指针擦边就立刻缩回 */
 const LEAVE_DELAY = 450
 
-/** 主实例 id：老配置（没有 instances 字段）被折叠成这一个实例 */
-export const DEFAULT_INSTANCE_ID = 'default'
-
 export interface FloatWindowHost {
   getSettings(): FloatSettings
   patchSettings(patch: Partial<FloatSettings>): FloatSettings
   onOpenMain(): void
-}
-
-// ───────────────── 多实例：设置规范化（纯函数，便于测试）─────────────────
-
-/**
- * 把顶层字段折叠成一个实例设置 —— 老配置（v2.0.0 及以前）的兼容路径。
- */
-export function instanceFromLegacy(s: FloatSettings, id = DEFAULT_INSTANCE_ID): FloatInstanceSettings {
-  return {
-    id,
-    plugins: [...(s.plugins ?? [])],
-    x: s.x,
-    y: s.y,
-    width: s.width,
-    opacity: s.opacity,
-    theme: s.theme,
-    clickThrough: s.clickThrough,
-    compact: s.compact,
-    lockPosition: s.lockPosition,
-    autoHide: s.autoHide
-  }
-}
-
-/**
- * 规范化实例列表：
- *   - 未配置 instances → 由顶层字段合成一个默认实例（单实例行为完全不变）
- *   - 配置了但为空数组 → 同上（用户删光了实例，当作回到单实例，而不是「一个都不显示」）
- *   - 过滤掉 id 缺失/重复的项，并补齐缺失字段（用默认实例的值兜底）
- *
- * 后两条是防呆：instances 是从磁盘读进来的用户数据，可能被手工编辑坏，
- * 规范化必须发生在它影响窗口创建之前。
- */
-export function normalizeInstances(s: FloatSettings): FloatInstanceSettings[] {
-  const list = Array.isArray(s.instances) ? s.instances : []
-  const base = instanceFromLegacy(s)
-  if (list.length === 0) return [base]
-
-  const seen = new Set<string>()
-  const out: FloatInstanceSettings[] = []
-  for (const raw of list) {
-    const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    out.push({
-      id,
-      plugins: Array.isArray(raw.plugins) ? [...raw.plugins] : [...base.plugins],
-      x: Number.isFinite(raw.x) ? raw.x : base.x,
-      y: Number.isFinite(raw.y) ? raw.y : base.y,
-      width: Number.isFinite(raw.width) ? raw.width : base.width,
-      opacity: Number.isFinite(raw.opacity) ? raw.opacity : base.opacity,
-      theme: raw.theme === 'dark' || raw.theme === 'light' || raw.theme === 'glass' ? raw.theme : base.theme,
-      clickThrough: typeof raw.clickThrough === 'boolean' ? raw.clickThrough : base.clickThrough,
-      compact: typeof raw.compact === 'boolean' ? raw.compact : base.compact,
-      lockPosition: typeof raw.lockPosition === 'boolean' ? raw.lockPosition : base.lockPosition,
-      autoHide: typeof raw.autoHide === 'boolean' ? raw.autoHide : base.autoHide
-    })
-  }
-  return out.length > 0 ? out : [base]
-}
-
-/** 多实例下窗口需要区分「自己是谁」，用 URL query 传递比 IPC 握手更简单可靠 */
-export function floatInstanceTarget(base: string, instanceId: string): string {
-  const sep = base.includes('?') ? '&' : '?'
-  return `${base}${sep}instance=${encodeURIComponent(instanceId)}`
 }
 
 function easeOutCubic(t: number): number {
@@ -571,6 +509,23 @@ export class FloatWindows {
   open(): void {
     this.sync()
     for (const m of this.managers.values()) {
+      m.open()
+      this.track(m)
+    }
+  }
+
+  /**
+   * 打开「已配置但窗口还没开」的实例（F4-UI 新增实例时用）。
+   *
+   * 为什么不能只靠 applySettings()：sync() 只会为新增实例**创建管理器**，
+   * 窗口要显式 open 才会出现。浮窗已开启时新增一个实例，
+   * 若不补这一步，用户会看到「列表里多了一个实例，桌面上什么都没有」。
+   * 总开关关闭时不要调用本方法 —— 那会把浮窗整体点亮。
+   */
+  openMissing(): void {
+    this.sync()
+    for (const m of this.managers.values()) {
+      if (m.isOpen) continue
       m.open()
       this.track(m)
     }

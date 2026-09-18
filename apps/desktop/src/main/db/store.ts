@@ -2,14 +2,28 @@
  * 数据访问层
  * 对应技术设计方案 6.2 数据库表结构（SQLite）
  *
- * 与文档差异：file_index.full_path 的 FTS5 虚拟表在 sql.js 默认构建中不含 FTS5 模块，
- * 因此路径检索退化为 LIKE + 前缀索引；若运行时命中 node:sqlite 驱动则可无损启用（预留 ensureFts）。
+ * 路径检索（v3.0.0 · I-11）—— 与文档的关系要如实说清：
+ *   文档只写了「FTS5 不可用时退化为 LIKE + 前缀索引」，但**此前这两样都不存在**
+ *   （全仓零处 LIKE / fts5 实现，也没有任何检索入口）。本版把它真正落地。
+ *
+ *   实测（2026-09-18）：
+ *     · `node:sqlite`（Node ≥ 22.5）支持 FTS5；`sql.js` **不支持**（`no such module: fts5`）
+ *     · **打包应用恒走 sql.js**（Electron 33.4.11 = Node 20.18.3），因此 FTS5 只是可选路径
+ *     · `LIKE 'prefix%'` 的查询计划是 `SCAN`（索引用不上）；
+ *       `col >= ? AND col < ?` 才是 `SEARCH … USING INDEX`
+ *     · `lower(full_path)` 这类写法会直接废掉索引 —— 因此这里落一对**小写派生列**
+ *       （`full_path_lc` / `name_lc`）供范围查询使用，而不是在查询里套 lower()
+ *
+ *   检索策略：前缀（默认，走索引）→ 子串（显式启用；有 FTS5 时用 MATCH，否则全表）
  */
 
 import type { Db, SqlValue } from './driver'
 import type {
   DependencyEdge,
   FileNode,
+  FileSearchHit,
+  FileSearchOptions,
+  FileSearchResult,
   JunkItem,
   JunkSummary,
   SoftwareItem,
@@ -51,10 +65,19 @@ CREATE TABLE IF NOT EXISTS file_index (
   sign_status TEXT,
   missing INTEGER DEFAULT 0,
   parse_status TEXT,
-  ref_count INTEGER DEFAULT 0
+  ref_count INTEGER DEFAULT 0,
+  -- I-11：小写派生列 —— 范围查询走索引做「大小写不敏感的前缀检索」
+  -- （不能在查询里套 lower()，那会让索引失效）
+  full_path_lc TEXT,
+  name_lc TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_file_name ON file_index(name);
 CREATE INDEX IF NOT EXISTS idx_file_path ON file_index(full_path);
+-- 注意：idx_file_path_lc / idx_file_name_lc **不能**写在这里。
+-- 老库的 file_index 没有派生列，对 full_path_lc 建索引会直接报「no such column」
+-- 把整个 init() 打断（应用起不来）；而 CREATE TABLE IF NOT EXISTS 对已存在的表是
+-- 空操作、补不了列。因此这两条索引只在 migrateLc() 里建 —— 那里已确保列存在。
+-- 新建库也能覆盖到（migrateLc 在 init 里紧跟 SCHEMA 执行）。
 
 CREATE TABLE IF NOT EXISTS dependency (
   id TEXT PRIMARY KEY,
@@ -135,12 +158,58 @@ CREATE TABLE IF NOT EXISTS portable_mark (
 export class Store {
   constructor(private db: Db) {}
 
+  /** 小写派生列是否可用（迁移成功）—— 决定前缀检索能否走索引 */
+  private lcReady = false
+  /** FTS5 表是否需要重建（仅有 FTS5 的驱动会用到） */
+  private ftsDirty = true
+
+  /** 驱动是否支持 FTS5（只读暴露，供 UI / 诊断展示检索策略） */
+  get supportsFts5(): boolean {
+    return this.db.supportsFts5
+  }
+
+  /** 诊断用：FTS5 是否已建好 */
+  private ftsReady = false
+
   get driverName(): string {
     return this.db.driverName
   }
 
   init(): void {
     this.db.exec(SCHEMA)
+    this.migrateLc()
+  }
+
+  /**
+   * 老库迁移（I-11）：给已存在的 file_index 补上两个小写派生列。
+   *
+   * `CREATE TABLE IF NOT EXISTS` 对已存在的表不生效，因此老数据库不会自动获得新列 ——
+   * 必须显式 ALTER + 回填。迁移失败不阻塞启动：检索会退回「无索引全表」模式
+   * （见 searchFiles 的 strategy 字段），功能可用、只是慢。
+   */
+  private migrateLc(): void {
+    try {
+      const cols = this.db.all<{ name: string }>('PRAGMA table_info(file_index)')
+      const names = new Set(cols.map((c) => String(c.name)))
+      if (!names.has('full_path_lc')) {
+        this.db.exec('ALTER TABLE file_index ADD COLUMN full_path_lc TEXT')
+      }
+      if (!names.has('name_lc')) {
+        this.db.exec('ALTER TABLE file_index ADD COLUMN name_lc TEXT')
+      }
+      // 回填只在确实有缺值时执行（避免每次启动都全表 UPDATE）
+      const missing = this.db.get<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM file_index WHERE full_path_lc IS NULL OR name_lc IS NULL'
+      )
+      if (Number(missing?.c ?? 0) > 0) {
+        this.db.exec('UPDATE file_index SET full_path_lc = lower(full_path), name_lc = lower(name)')
+      }
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_file_path_lc ON file_index(full_path_lc)')
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_file_name_lc ON file_index(name_lc)')
+      this.lcReady = true
+    } catch {
+      this.lcReady = false
+    }
   }
 
   // ── 软件 ──
@@ -211,8 +280,8 @@ export class Store {
       if (files.length) {
         this.db.runMany(
           `INSERT OR REPLACE INTO file_index
-           (id,full_path,name,size,mtime,kind,ext,arch,version,sign_status,missing,parse_status,ref_count)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           (id,full_path,name,size,mtime,kind,ext,arch,version,sign_status,missing,parse_status,ref_count,full_path_lc,name_lc)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           files.map((f) => [
             f.id,
             f.fullPath,
@@ -226,9 +295,14 @@ export class Store {
             f.signStatus || null,
             f.missing ? 1 : 0,
             f.parseStatus || null,
-            f.refCount ?? 0
+            f.refCount ?? 0,
+            // I-11：小写派生列在**写入侧**算好，查询侧才能用纯范围比较命中索引
+            normKey(f.fullPath),
+            normKey(f.name || '')
           ])
         )
+        // FTS5 表的内容随 file_index 变化 → 标记需重建（下次检索时惰性重建）
+        this.ftsDirty = true
       }
       if (deps.length) {
         const swId = deps[0].sourceId
@@ -248,6 +322,112 @@ export class Store {
         )
       }
     })
+  }
+
+  // ── 路径检索（I-11）──
+
+  /**
+   * 全库文件检索。
+   *
+   * 两条路径，默认走能命中索引的那条：
+   *   · `prefix`（默认）：`col >= ? AND col < ?` 范围比较 —— 查询计划是
+   *     `SEARCH … USING INDEX idx_file_path_lc / idx_file_name_lc`，
+   *     且因为比较的是**小写派生列**，大小写不敏感又不牺牲索引。
+   *     **不能用 `LIKE 'q%'`** —— 实测其查询计划是 `SCAN`，索引完全用不上。
+   *   · `substring`：必然是全表扫描（`%q%` 无法用 B+Tree 索引）。
+   *     有 FTS5 的驱动会改用 `MATCH`（分词匹配），否则退回全表 LIKE，
+   *     并在 `strategy` 里如实标出，供 UI 提示代价。
+   *
+   * 返回的 `strategy` 不是装饰：UI 要据此告诉用户「当前这次检索是走索引还是全表」。
+   */
+  searchFiles(query: string, opts: FileSearchOptions = {}): FileSearchResult {
+    const limit = Math.max(1, Math.min(Math.round(opts.limit ?? 50), 500))
+    const mode = opts.mode ?? 'prefix'
+    const q = normKey(String(query ?? '').trim())
+    // 单字符前缀会把几乎整库捞回来，没有检索价值
+    if (q.length < 2) return { hits: [], strategy: mode === 'substring' ? 'substring-scan' : 'prefix-index', total: 0 }
+
+    if (mode === 'substring') {
+      const viaFts = this.searchViaFts(q, limit)
+      if (viaFts) return viaFts
+      const rows = this.db.all<Record<string, any>>(
+        `${FILE_SEARCH_COLUMNS}
+         WHERE full_path_lc LIKE ? OR name_lc LIKE ?
+         ORDER BY ref_count DESC, size DESC
+         LIMIT ?`,
+        [`%${q}%`, `%${q}%`, limit]
+      )
+      return { hits: rows.map(rowToSearchHit), strategy: 'substring-scan', total: rows.length }
+    }
+
+    // 前缀：两个独立索引各扫一段范围，再在内存里合并去重。
+    // 不用 `OR` 把两个条件写进一条 SQL —— SQLite 对 OR + 双索引常退化为全表扫描。
+    const lo = q
+    const hi = q + '\uffff' // 前缀上界：比任何以 q 开头的字符串都大
+    const byPath = this.db.all<Record<string, any>>(
+      `${FILE_SEARCH_COLUMNS} WHERE full_path_lc >= ? AND full_path_lc < ? ORDER BY ref_count DESC, size DESC LIMIT ?`,
+      [lo, hi, limit * 2]
+    )
+    const byName = this.db.all<Record<string, any>>(
+      `${FILE_SEARCH_COLUMNS} WHERE name_lc >= ? AND name_lc < ? ORDER BY ref_count DESC, size DESC LIMIT ?`,
+      [lo, hi, limit * 2]
+    )
+
+    const merged = new Map<string, FileSearchHit>()
+    for (const r of [...byPath, ...byName]) {
+      const hit = rowToSearchHit(r)
+      if (!merged.has(hit.id)) merged.set(hit.id, hit)
+    }
+    const hits = [...merged.values()]
+      .sort((a, b) => b.refCount - a.refCount || b.sizeBytes - a.sizeBytes)
+      .slice(0, limit)
+    // 迁移失败时范围比较仍能出结果，但走的是扫描 —— 如实标注，不假装走了索引
+    return { hits, strategy: this.lcReady ? 'prefix-index' : 'unindexed-scan', total: merged.size }
+  }
+
+  /**
+   * FTS5 检索（仅当驱动支持时可用）。
+   *
+   * 设计取舍：**不在写入路径上同步维护 FTS 表** —— 因为生产环境（sql.js）根本到不了这里，
+   * 为一条永不执行的路径去改主写入链路的复杂度与风险都不划算。
+   * 改为「脏标记 + 首次检索时惰性重建」，重建是一条 INSERT…SELECT，代价 O(n) 且只发生一次。
+   */
+  private searchViaFts(q: string, limit: number): FileSearchResult | null {
+    if (!this.db.supportsFts5) return null
+    try {
+      if (this.ftsDirty || !this.ftsReady) {
+        this.db.exec('DROP TABLE IF EXISTS file_fts')
+        this.db.exec("CREATE VIRTUAL TABLE file_fts USING fts5(full_path, name, tokenize='unicode61')")
+        this.db.exec('INSERT INTO file_fts(rowid, full_path, name) SELECT rowid, full_path, name FROM file_index')
+        this.ftsDirty = false
+        this.ftsReady = true
+      }
+      // FTS5 的 MATCH 语法：`q*` 表示「以 q 开头的词」；裸 q 表示整词匹配
+      const rows = this.db.all<Record<string, any>>(
+        `SELECT f.id AS id, f.full_path AS full_path, f.name AS name, f.size AS size, f.ext AS ext,
+                f.kind AS kind, f.ref_count AS ref_count, f.missing AS missing
+         FROM file_fts JOIN file_index f ON f.rowid = file_fts.rowid
+         WHERE file_fts MATCH ?
+         ORDER BY f.ref_count DESC, f.size DESC
+         LIMIT ?`,
+        [`${q}*`, limit]
+      )
+      return { hits: rows.map(rowToSearchHit), strategy: 'fts5', total: rows.length }
+    } catch {
+      // FTS5 建表/查询失败（例如被限制的构建）→ 退回调用方的全表路径
+      return null
+    }
+  }
+
+  /** 诊断用：检索策略与索引可用性快照 */
+  searchDiagnostics(): { driver: string; supportsFts5: boolean; lcReady: boolean; fileRows: number } {
+    const c = this.db.get<{ c: number }>('SELECT COUNT(*) AS c FROM file_index')
+    return {
+      driver: this.db.driverName,
+      supportsFts5: this.db.supportsFts5,
+      lcReady: this.lcReady,
+      fileRows: Number(c?.c ?? 0)
+    }
   }
 
   /**
@@ -528,7 +708,6 @@ export class Store {
   setKv(k: string, v: string): void {
     this.db.run('INSERT OR REPLACE INTO kv (k,v) VALUES (?,?)', [k, v])
   }
-
   // ── 扫描元数据 ──
 
   recordScan(id: string, type: string, startedAt: number, finishedAt: number, status: string, payload?: unknown): void {
@@ -598,6 +777,25 @@ export class Store {
 
   async close(): Promise<void> {
     await this.db.close()
+  }
+}
+
+// ───────────────── 文件检索的行映射（I-11） ─────────────────
+
+/** 检索查询的列清单 —— 三处查询共用，避免列顺序漂移 */
+const FILE_SEARCH_COLUMNS = `SELECT id, full_path, name, size, ext, kind, ref_count, missing
+  FROM file_index`
+
+function rowToSearchHit(r: Record<string, any>): FileSearchHit {
+  return {
+    id: String(r.id),
+    fullPath: String(r.full_path ?? ''),
+    name: String(r.name ?? ''),
+    sizeBytes: Number(r.size || 0),
+    ext: String(r.ext ?? ''),
+    kind: String(r.kind ?? ''),
+    refCount: Number(r.ref_count || 0),
+    missing: Number(r.missing) === 1
   }
 }
 

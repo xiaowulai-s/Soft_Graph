@@ -4,11 +4,20 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '@shared/ipc'
-import type { AppSettings, FloatPluginManifest, FloatSettings, QuarantineRecord } from '@shared/types'
+import type {
+  AppSettings,
+  FloatInstanceSettings,
+  FloatPluginManifest,
+  FloatSettings,
+  QuarantineRecord,
+  RegistryBackupInfo,
+  RegistryScanResult
+} from '@shared/types'
 import { formatBytes, formatTime } from '@shared/util'
+import { DEFAULT_INSTANCE_ID, nextInstanceId, normalizeInstances } from '@shared/float'
 
 const props = defineProps<{ open: boolean; tab: TabKey }>()
-type TabKey = 'settings' | 'float' | 'quarantine' | 'rules' | 'about'
+type TabKey = 'settings' | 'float' | 'quarantine' | 'registry' | 'rules' | 'about'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -29,6 +38,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'settings', label: '设置' },
   { key: 'float', label: '桌面浮窗' },
   { key: 'quarantine', label: '隔离区' },
+  { key: 'registry', label: '注册表' },
   { key: 'rules', label: '垃圾规则' },
   { key: 'about', label: '关于' }
 ]
@@ -39,6 +49,7 @@ async function loadAll(): Promise<void> {
   plugins.value = await window.api.floatPlugins()
   rules.value = await window.api.junkRules()
   await loadQuarantine()
+  await loadRegistryBackups()
   window.api.auditRecent().then((a) => (audit.value = a)).catch(() => {})
 }
 
@@ -102,29 +113,91 @@ async function toggleFloat(): Promise<void> {
   emit('toast', on ? '桌面浮窗已开启' : '桌面浮窗已关闭')
 }
 
-function pluginEnabled(id: string): boolean {
-  return float.value?.plugins.includes(id) ?? false
+// ── 多实例编辑（F4-UI）──
+//
+// 实例规范化用的是 @shared/float 的同一份实现（主进程建窗口前也用它），
+// 因此「老配置折叠成单实例」在两侧口径一致，不会出现「设置页显示 2 个、
+// 桌面只出来 1 个」这类漂移。
+
+const editorInstances = computed(() => (float.value ? normalizeInstances(float.value) : []))
+const activeId = ref<string>(DEFAULT_INSTANCE_ID)
+const activeInstance = computed<FloatInstanceSettings | null>(
+  () => editorInstances.value.find((i) => i.id === activeId.value) ?? editorInstances.value[0] ?? null
+)
+
+async function writeInstances(next: FloatInstanceSettings[]): Promise<void> {
+  await patchFloat({ instances: next })
 }
 
-async function togglePlugin(id: string): Promise<void> {
-  if (!float.value) return
-  const cur = [...float.value.plugins]
-  const i = cur.indexOf(id)
-  if (i >= 0) cur.splice(i, 1)
-  else cur.push(id)
-  await patchFloat({ plugins: cur })
+async function addInstance(): Promise<void> {
+  const list = editorInstances.value
+  if (list.length === 0) return
+  const base = list[0]
+  const id = nextInstanceId(list)
+  // 位置错开，避免新窗口与已有窗口完全重叠（之后由用户拖拽定位）
+  const next: FloatInstanceSettings = {
+    ...base,
+    id,
+    plugins: [...base.plugins],
+    x: base.x - 32 * list.length,
+    y: base.y + 28 * list.length
+  }
+  await writeInstances([...list, next])
+  activeId.value = id
+  emit('toast', `已新增浮窗实例 ${id}（沿用 ${base.id} 的插件组合，拖动浮窗即可调整位置）`)
 }
 
-async function movePlugin(id: string, dir: -1 | 1): Promise<void> {
-  if (!float.value) return
-  const cur = [...float.value.plugins]
-  const i = cur.indexOf(id)
+async function removeInstance(id: string): Promise<void> {
+  const list = editorInstances.value
+  if (list.length <= 1) {
+    emit('toast', '至少要保留一个浮窗实例')
+    return
+  }
+  const next = list.filter((i) => i.id !== id)
+  await writeInstances(next)
+  if (activeId.value === id) activeId.value = next[0]?.id ?? DEFAULT_INSTANCE_ID
+  emit('toast', `已删除浮窗实例 ${id}`)
+}
+
+async function patchInstance(patch: Partial<FloatInstanceSettings>): Promise<void> {
+  const cur = activeInstance.value
+  if (!cur) return
+  await writeInstances(editorInstances.value.map((i) => (i.id === cur.id ? { ...i, ...patch } : i)))
+}
+
+function instPluginEnabled(id: string): boolean {
+  return activeInstance.value?.plugins.includes(id) ?? false
+}
+
+async function toggleInstPlugin(id: string): Promise<void> {
+  const cur = activeInstance.value
+  if (!cur) return
+  const plugins = [...cur.plugins]
+  const i = plugins.indexOf(id)
+  if (i >= 0) plugins.splice(i, 1)
+  else plugins.push(id)
+  await patchInstance({ plugins })
+}
+
+async function moveInstPlugin(id: string, dir: -1 | 1): Promise<void> {
+  const cur = activeInstance.value
+  if (!cur) return
+  const plugins = [...cur.plugins]
+  const i = plugins.indexOf(id)
   if (i < 0) return
   const j = i + dir
-  if (j < 0 || j >= cur.length) return
-  ;[cur[i], cur[j]] = [cur[j], cur[i]]
-  await patchFloat({ plugins: cur })
+  if (j < 0 || j >= plugins.length) return
+  ;[plugins[i], plugins[j]] = [plugins[j], plugins[i]]
+  await patchInstance({ plugins })
 }
+
+/** 当前实例：启用的插件按用户顺序排前，未启用的排后 */
+const instOrderedPlugins = computed(() => {
+  const order = activeInstance.value?.plugins ?? []
+  const on = order.map((id) => plugins.value.find((p) => p.id === id)).filter(Boolean) as FloatPluginManifest[]
+  const off = plugins.value.filter((p) => !order.includes(p.id))
+  return [...on, ...off]
+})
 
 function openPluginDir(): void {
   void window.api.floatOpenPluginDir()
@@ -228,14 +301,6 @@ async function reloadPlugins(): Promise<void> {
   }
 }
 
-/** 启用的插件按用户顺序排前，未启用的排后 */
-const orderedPlugins = computed(() => {
-  const order = float.value?.plugins ?? []
-  const on = order.map((id) => plugins.value.find((p) => p.id === id)).filter(Boolean) as FloatPluginManifest[]
-  const off = plugins.value.filter((p) => !order.includes(p.id))
-  return [...on, ...off]
-})
-
 // ───────────────── 隔离区 ─────────────────
 
 function toggleQ(id: string): void {
@@ -282,6 +347,150 @@ async function purgeExpired(): Promise<void> {
 
 const qTotal = computed(() => quarantine.value.reduce((s, r) => s + r.sizeBytes, 0))
 
+// ───────────────── 注册表残留清理（M4-UI / M4-RESTORE）─────────────────
+
+const registry = ref<RegistryScanResult | null>(null)
+const regBusy = ref(false)
+const regText = ref('')
+const regOk = ref(false)
+const regChecked = ref<Set<string>>(new Set())
+/** 三级确认：0 = 列表 / 1 = 影响清单 + 知悉勾选 / 2 = 输入确认文本 */
+const regStep = ref<0 | 1 | 2>(0)
+const regAck = ref(false)
+const regTyped = ref('')
+const REG_CONFIRM_TEXT = '清理注册表'
+
+const regBackups = ref<RegistryBackupInfo[]>([])
+const regRestoring = ref('')
+
+const regSelected = computed(() => (registry.value?.residues ?? []).filter((r) => regChecked.value.has(r.keyPath)))
+const regSelectedBytes = computed(() => regSelected.value.reduce((s, r) => s + r.sizeBytes, 0))
+const regSelectedHklm = computed(() => regSelected.value.filter((r) => r.hive === 'HKLM').length)
+
+function toggleReg(key: string): void {
+  const n = new Set(regChecked.value)
+  if (n.has(key)) n.delete(key)
+  else n.add(key)
+  regChecked.value = n
+}
+
+function regAll(on: boolean): void {
+  regChecked.value = on ? new Set((registry.value?.residues ?? []).map((r) => r.keyPath)) : new Set()
+  resetRegConfirm()
+}
+
+function resetRegConfirm(): void {
+  regStep.value = 0
+  regAck.value = false
+  regTyped.value = ''
+}
+
+async function scanRegistry(): Promise<void> {
+  regBusy.value = true
+  regText.value = ''
+  resetRegConfirm()
+  try {
+    const r = await window.api.registryScan()
+    registry.value = r
+    regChecked.value = new Set(r.residues.map((x) => x.keyPath))
+    regOk.value = true
+    emit(
+      'toast',
+      `注册表扫描完成：枚举 ${r.scanned} 个卸载项，疑似残留 ${r.residues.length} 项（${(r.scanMs / 1000).toFixed(1)}s）`
+    )
+  } catch (e) {
+    regOk.value = false
+    regText.value = `扫描失败：${(e as Error).message}`
+  } finally {
+    regBusy.value = false
+  }
+}
+
+/** 推进三级确认；最后一步才真正执行删除 */
+function regNext(): void {
+  if (regSelected.value.length === 0) return
+  if (regStep.value === 0) {
+    regStep.value = 1
+    return
+  }
+  if (regStep.value === 1) {
+    if (!regAck.value) return
+    regStep.value = 2
+    return
+  }
+  void doRegistryClean()
+}
+
+async function doRegistryClean(): Promise<void> {
+  const keys = regSelected.value.map((r) => r.keyPath)
+  if (keys.length === 0) return
+  regBusy.value = true
+  regText.value = ''
+  try {
+    const r = await window.api.registryClean(keys)
+    regOk.value = r.ok
+    if (r.backupFailed) {
+      regText.value = '备份失败，已拒绝删除 —— 注册表没有回收站，本工具不会在拿不到备份时动它。'
+    } else if (r.needsElevation) {
+      regText.value = `需要管理员权限：${keys.length} 个键未删除。以管理员身份重新启动本程序后可重试。`
+    } else {
+      const parts = [`已清理 ${r.removed} 个键`]
+      if (r.failed > 0) parts.push(`${r.failed} 个失败`)
+      if (r.rejected.length > 0) parts.push(`${r.rejected.length} 个被白名单拒绝`)
+      if (r.backupFile) parts.push(`备份：${r.backupFile}`)
+      regText.value = parts.join(' · ')
+    }
+    emit('toast', r.needsElevation ? '注册表清理需要管理员权限' : `注册表清理完成：${r.removed} 个键`)
+    resetRegConfirm()
+    // 清理后重新扫描一次，列表与实际状态对齐（用户不会看到已删掉的键）
+    const again = await window.api.registryScan()
+    registry.value = again
+    regChecked.value = new Set(again.residues.map((x) => x.keyPath))
+    await loadRegistryBackups()
+  } catch (e) {
+    regOk.value = false
+    regText.value = `清理失败：${(e as Error).message}`
+  } finally {
+    regBusy.value = false
+  }
+}
+
+async function loadRegistryBackups(): Promise<void> {
+  try {
+    regBackups.value = await window.api.registryBackups()
+  } catch {
+    regBackups.value = []
+  }
+}
+
+async function restoreRegistry(file: string): Promise<void> {
+  regBusy.value = true
+  regRestoring.value = file
+  regText.value = ''
+  try {
+    const r = await window.api.registryRestore(file)
+    if (r.error) {
+      regOk.value = false
+      regText.value = r.error
+    } else {
+      regOk.value = r.failed === 0
+      regText.value = `已还原 ${r.restored} 个键${r.failed ? `，${r.failed} 个失败` : ''}。重新扫描可确认。`
+    }
+    emit('toast', r.error ? `还原失败：${r.error}` : `已还原 ${r.restored} 个注册表键`)
+    if (registry.value) {
+      const again = await window.api.registryScan()
+      registry.value = again
+      regChecked.value = new Set(again.residues.map((x) => x.keyPath))
+    }
+  } catch (e) {
+    regOk.value = false
+    regText.value = `还原失败：${(e as Error).message}`
+  } finally {
+    regBusy.value = false
+    regRestoring.value = ''
+  }
+}
+
 /** 审计日志（E4） */
 const audit = ref<{ ts: number; action: string; taskId: string; batchId?: string; freedBytes: number; results: { path: string; ok: boolean }[] }[]>([])
 const AUDIT_LABEL: Record<string, string> = {
@@ -290,7 +499,9 @@ const AUDIT_LABEL: Record<string, string> = {
   'clean-elevate': '提权清理',
   'reboot-delete': '登记重启删除',
   restore: '隔离还原',
-  purge: '隔离销毁'
+  purge: '隔离销毁',
+  'registry-clean': '注册表清理',
+  'registry-restore': '注册表还原'
 }
 
 /** 规则库在线更新（E2） */
@@ -518,11 +729,65 @@ function daysLeft(r: QuarantineRecord): string {
           </section>
 
           <section class="sd-sec">
-            <h4>行为</h4>
+            <h4>
+              浮窗实例
+              <span class="dim" style="font-weight: 400; font-size: 11px">
+                — 每个实例一个独立窗口，可放在不同显示器上，各显示不同内容
+              </span>
+            </h4>
+            <ul class="sd-insts">
+              <li v-for="(inst, i) in editorInstances" :key="inst.id" :class="{ on: inst.id === activeInstance?.id }">
+                <button class="sd-inst-pick" @click="activeId = inst.id">
+                  <span class="mono">{{ inst.id }}</span>
+                  <span class="dim">· {{ inst.plugins.length }} 个插件 · {{ inst.theme }} · {{ inst.width }}px</span>
+                  <span class="dim">· 位置 {{ Math.round(inst.x) }}, {{ Math.round(inst.y) }}</span>
+                  <span v-if="i === 0" class="badge">主实例</span>
+                </button>
+                <button class="ghost" :disabled="editorInstances.length <= 1" title="删除该实例" @click="removeInstance(inst.id)">
+                  删除
+                </button>
+              </li>
+            </ul>
+            <div class="sd-row">
+              <button class="ghost" @click="addInstance">+ 新增实例</button>
+              <span class="sd-hint sd-inline" style="margin: 0">
+                新实例沿用主实例的插件组合；窗口位置直接拖动浮窗即可（拖拽结果会写回该实例）。
+              </span>
+            </div>
+          </section>
+
+          <section v-if="activeInstance" class="sd-sec">
+            <h4>
+              实例「<span class="mono">{{ activeInstance.id }}</span>」的行为
+            </h4>
             <label class="sd-check">
-              <input type="checkbox" :checked="float.autoHide" @change="patchFloat({ autoHide: ($event.target as HTMLInputElement).checked })" />
+              <input
+                type="checkbox"
+                :checked="activeInstance.autoHide"
+                @change="patchInstance({ autoHide: ($event.target as HTMLInputElement).checked })"
+              />
               <span>靠边自动隐藏（鼠标移入时再次显示）</span>
             </label>
+            <label class="sd-check">
+              <input
+                type="checkbox"
+                :checked="activeInstance.clickThrough"
+                @change="patchInstance({ clickThrough: ($event.target as HTMLInputElement).checked })"
+              />
+              <span>鼠标穿透（点击直接作用于桌面，此时无法拖动浮窗）</span>
+            </label>
+            <label class="sd-check">
+              <input
+                type="checkbox"
+                :checked="activeInstance.lockPosition"
+                @change="patchInstance({ lockPosition: ($event.target as HTMLInputElement).checked })"
+              />
+              <span>锁定位置（防止误拖）</span>
+            </label>
+          </section>
+
+          <section class="sd-sec">
+            <h4>全局行为（所有实例共享）</h4>
             <div class="sd-row">
               <label>触发条宽度</label>
               <input
@@ -542,29 +807,19 @@ function daysLeft(r: QuarantineRecord): string {
               />
               <span>始终置顶</span>
             </label>
-            <label class="sd-check">
-              <input
-                type="checkbox"
-                :checked="float.clickThrough"
-                @change="patchFloat({ clickThrough: ($event.target as HTMLInputElement).checked })"
-              />
-              <span>鼠标穿透（点击直接作用于桌面，此时无法拖动浮窗）</span>
-            </label>
-            <label class="sd-check">
-              <input
-                type="checkbox"
-                :checked="float.lockPosition"
-                @change="patchFloat({ lockPosition: ($event.target as HTMLInputElement).checked })"
-              />
-              <span>锁定位置（防止误拖）</span>
-            </label>
+            <div class="sd-hint">
+              总开关、触发条宽度与置顶层级是应用级行为：多实例下共用一个值才有意义（总不能一个实例置顶另一个不置顶）。
+            </div>
           </section>
 
-          <section class="sd-sec">
-            <h4>外观</h4>
+          <section v-if="activeInstance" class="sd-sec">
+            <h4>实例「<span class="mono">{{ activeInstance.id }}</span>」的外观</h4>
             <div class="sd-row">
               <label>主题</label>
-              <select :value="float.theme" @change="patchFloat({ theme: ($event.target as HTMLSelectElement).value as FloatSettings['theme'] })">
+              <select
+                :value="activeInstance.theme"
+                @change="patchInstance({ theme: ($event.target as HTMLSelectElement).value as FloatInstanceSettings['theme'] })"
+              >
                 <option value="dark">深色</option>
                 <option value="light">浅色</option>
                 <option value="glass">毛玻璃</option>
@@ -577,10 +832,10 @@ function daysLeft(r: QuarantineRecord): string {
                 min="180"
                 max="420"
                 step="10"
-                :value="float.width"
-                @change="patchFloat({ width: Number(($event.target as HTMLInputElement).value) })"
+                :value="activeInstance.width"
+                @change="patchInstance({ width: Number(($event.target as HTMLInputElement).value) })"
               />
-              <span class="sd-val">{{ float.width }} px</span>
+              <span class="sd-val">{{ activeInstance.width }} px</span>
             </div>
             <div class="sd-row">
               <label>不透明度</label>
@@ -589,27 +844,31 @@ function daysLeft(r: QuarantineRecord): string {
                 min="0.3"
                 max="1"
                 step="0.02"
-                :value="float.opacity"
-                @change="patchFloat({ opacity: Number(($event.target as HTMLInputElement).value) })"
+                :value="activeInstance.opacity"
+                @change="patchInstance({ opacity: Number(($event.target as HTMLInputElement).value) })"
               />
-              <span class="sd-val">{{ Math.round(float.opacity * 100) }}%</span>
+              <span class="sd-val">{{ Math.round(activeInstance.opacity * 100) }}%</span>
             </div>
             <label class="sd-check">
-              <input type="checkbox" :checked="float.compact" @change="patchFloat({ compact: ($event.target as HTMLInputElement).checked })" />
+              <input
+                type="checkbox"
+                :checked="activeInstance.compact"
+                @change="patchInstance({ compact: ($event.target as HTMLInputElement).checked })"
+              />
               <span>紧凑模式（更小的行高与字号）</span>
             </label>
           </section>
 
-          <section class="sd-sec">
+          <section v-if="activeInstance" class="sd-sec">
             <h4>
-              显示内容
+              实例「<span class="mono">{{ activeInstance.id }}</span>」的显示内容
               <span class="dim" style="font-weight: 400; font-size: 11px">
                 — 勾选决定显示哪些卡片，箭头调整顺序
               </span>
             </h4>
             <ul class="sd-plugins">
-              <li v-for="(p, idx) in orderedPlugins" :key="p.id" :class="{ on: pluginEnabled(p.id) }">
-                <input type="checkbox" :checked="pluginEnabled(p.id)" @change="togglePlugin(p.id)" />
+              <li v-for="(p, idx) in instOrderedPlugins" :key="p.id" :class="{ on: instPluginEnabled(p.id) }">
+                <input type="checkbox" :checked="instPluginEnabled(p.id)" @change="toggleInstPlugin(p.id)" />
                 <div class="sd-plugin-body">
                   <div class="sd-plugin-t">
                     {{ p.name }}
@@ -626,9 +885,9 @@ function daysLeft(r: QuarantineRecord): string {
                   </div>
                 </div>
                 <div class="sd-plugin-ord" style="flex-direction: column; gap: 4px">
-                  <template v-if="pluginEnabled(p.id)">
-                    <button class="ghost" :disabled="idx === 0" @click="movePlugin(p.id, -1)">▲</button>
-                    <button class="ghost" @click="movePlugin(p.id, 1)">▼</button>
+                  <template v-if="instPluginEnabled(p.id)">
+                    <button class="ghost" :disabled="idx === 0" @click="moveInstPlugin(p.id, -1)">▲</button>
+                    <button class="ghost" @click="moveInstPlugin(p.id, 1)">▼</button>
                   </template>
                   <button v-if="pendingOf(p).length" class="ghost" :disabled="busy" @click="approvePlugin(p)">授权</button>
                   <button v-if="!p.builtin" class="ghost" :disabled="busy" @click="removePlugin(p)">删除</button>
@@ -649,6 +908,7 @@ function daysLeft(r: QuarantineRecord): string {
               插件目录内已放置示例插件 <code>example-hello.js</code> 与 <code>README.md</code>。
               新增一个 .js 文件即可扩展浮窗内容，点「重载插件」立即生效，无需重启。
               插件在主进程内执行、拥有 Node 能力，请只安装可信插件。
+              插件授权与安装是插件级操作，对所有实例同时生效。
             </div>
           </section>
         </template>
@@ -694,6 +954,128 @@ function daysLeft(r: QuarantineRecord): string {
                 </li>
               </ul>
             </template>
+          </section>
+        </template>
+
+        <!-- ── 注册表残留 ── -->
+        <template v-else-if="tab === 'registry'">
+          <section class="sd-sec">
+            <div class="sd-row">
+              <label>卸载残留</label>
+              <button class="primary" :disabled="regBusy" @click="scanRegistry">
+                {{ regBusy ? '处理中…' : registry ? '重新扫描' : '扫描注册表残留' }}
+              </button>
+              <span v-if="registry" class="dim" style="font-size: 11px">
+                枚举 {{ registry.scanned }} 个卸载项 · 疑似残留 {{ registry.residues.length }} 项 ·
+                用时 {{ (registry.scanMs / 1000).toFixed(1) }}s
+              </span>
+            </div>
+            <div class="sd-hint warn">
+              注册表<b>没有回收站</b>：删除后无法从系统层面找回。本工具因此把「先备份后删除」做成硬约束 ——
+              备份拿不到就拒绝删除。仅枚举三棵 <code>...\CurrentVersion\Uninstall</code> 子树，
+              其余注册表位置一律不在白名单内。
+            </div>
+            <div class="sd-hint">
+              判定会跳过四类「绝对不能碰」的项：<code>SystemComponent=1</code>（Windows 隐藏的内置组件）、
+              MSI 管理的项、无 <code>DisplayName</code> 的键、卸载程序位于 Windows 目录内或发布者为微软的自带应用。
+            </div>
+            <div v-if="registry?.needsElevation" class="cd-note warn">
+              检测结果含 HKLM 项，而当前未以管理员身份运行 —— 删除会返回「需要管理员权限」。仍然可以扫描与备份。
+            </div>
+          </section>
+
+          <section v-if="registry" class="sd-sec">
+            <div class="sd-row">
+              <label>残留清单</label>
+              <span class="dim" style="font-size: 11px">
+                已选 {{ regSelected.length }} / {{ registry.residues.length }}
+                <template v-if="regSelectedBytes > 0">· 目录占用 {{ formatBytes(regSelectedBytes) }}</template>
+                <template v-if="regSelectedHklm > 0">· 其中 HKLM {{ regSelectedHklm }} 项</template>
+              </span>
+              <span class="sd-sp" />
+              <button class="ghost" @click="regAll(true)">全选</button>
+              <button class="ghost" @click="regAll(false)">全不选</button>
+            </div>
+
+            <div v-if="registry.residues.length === 0" class="sd-empty dim">
+              未发现卸载残留（枚举 {{ registry.scanned }} 个卸载项，全部判定为正常安装）
+            </div>
+
+            <ul v-else class="sd-reg">
+              <li v-for="r in registry.residues" :key="r.keyPath">
+                <input type="checkbox" :checked="regChecked.has(r.keyPath)" @change="toggleReg(r.keyPath)" />
+                <div class="sd-reg-body">
+                  <div class="sd-reg-t">
+                    {{ r.displayName }}
+                    <span class="badge">{{ r.hive }}{{ r.view === '32' ? '/32' : '' }}</span>
+                    <span v-if="r.displayVersion" class="badge">{{ r.displayVersion }}</span>
+                    <span v-if="r.sizeBytes > 0" class="badge">{{ formatBytes(r.sizeBytes) }}</span>
+                  </div>
+                  <div class="mono sd-reg-key">{{ r.keyPath }}</div>
+                  <div class="dim sd-reg-why">{{ r.reasons.join('；') }}</div>
+                  <div v-if="r.publisher" class="dim sd-reg-why">发布者：{{ r.publisher }}</div>
+                </div>
+              </li>
+            </ul>
+
+            <!-- 三级确认：列表 → 影响清单（勾选知悉）→ 输入确认文本 -->
+            <div v-if="registry.residues.length > 0" class="sd-actions" style="margin-top: 8px">
+              <button class="danger" :disabled="regBusy || regSelected.length === 0" @click="regNext">
+                {{ regStep === 0 ? `清理选中 ${regSelected.length} 项` : regStep === 1 ? '我已确认，继续' : '执行清理' }}
+              </button>
+              <button v-if="regStep > 0" class="ghost" @click="resetRegConfirm">取消</button>
+            </div>
+
+            <div v-if="regStep === 1" class="cd-typing" style="border-color: var(--risk-medium)">
+              <div class="cd-typing-t risk-medium">
+                将删除以下 {{ regSelected.length }} 个注册表键（前 20 条）：
+              </div>
+              <ul class="cd-list">
+                <li v-for="r in regSelected.slice(0, 20)" :key="r.keyPath">
+                  <span class="mono cd-p">{{ r.keyPath }}</span>
+                </li>
+              </ul>
+              <div v-if="regSelected.length > 20" class="dim cd-more">还有 {{ regSelected.length - 20 }} 项…</div>
+              <label class="sd-check" style="margin-top: 8px">
+                <input v-model="regAck" type="checkbox" />
+                <span>我已确认这些项不是需要保留的软件（删除前会自动生成 JSON 快照备份，可在下方「从备份还原」恢复）</span>
+              </label>
+            </div>
+
+            <div v-if="regStep === 2" class="cd-typing">
+              <div class="cd-typing-t risk-high">
+                ⚠ 注册表删除不可逆，请手动输入「{{ REG_CONFIRM_TEXT }}」以执行
+              </div>
+              <input v-model="regTyped" type="text" :placeholder="REG_CONFIRM_TEXT" />
+            </div>
+
+            <div v-if="regText" class="sd-hint" :class="regOk ? '' : 'risk-medium'">{{ regText }}</div>
+          </section>
+
+          <section class="sd-sec">
+            <h4>从备份还原</h4>
+            <div class="sd-row">
+              <span class="dim" style="font-size: 11px">共 {{ regBackups.length }} 份快照</span>
+              <span class="sd-sp" />
+              <button class="ghost" :disabled="regBusy" @click="loadRegistryBackups">刷新</button>
+            </div>
+            <div v-if="regBackups.length === 0" class="sd-empty dim">暂无备份快照</div>
+            <ul v-else class="sd-q">
+              <li v-for="b in regBackups" :key="b.file">
+                <div class="sd-q-body">
+                  <div class="mono sd-q-path">{{ b.file }}</div>
+                  <div class="dim sd-q-meta">
+                    {{ b.keyCount }} 个键 · {{ b.createdAt ? new Date(b.createdAt).toLocaleString() : '时间未知' }}
+                  </div>
+                </div>
+                <button class="ghost" :disabled="regBusy" @click="restoreRegistry(b.file)">
+                  {{ regRestoring === b.file ? '还原中…' : '还原' }}
+                </button>
+              </li>
+            </ul>
+            <div class="sd-hint">
+              还原会把快照里的键与值重新写回注册表（不覆盖额外的既有值）。还原动作同样记入审计日志。
+            </div>
           </section>
         </template>
 
@@ -1079,5 +1461,88 @@ function daysLeft(r: QuarantineRecord): string {
 .sd-q-meta {
   font-size: 10px;
   margin-top: 2px;
+}
+/* 浮窗实例列表（F4-UI） */
+.sd-insts {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.sd-insts li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+.sd-insts li:last-child {
+  border-bottom: none;
+}
+.sd-insts li.on {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+}
+.sd-inst-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+  font-size: 11.5px;
+  padding: 3px 4px;
+}
+.sd-inst-pick:hover {
+  border-color: transparent;
+  background: transparent;
+}
+/* 注册表残留清单（M4-UI） */
+.sd-reg {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.sd-reg li {
+  display: flex;
+  gap: 8px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+.sd-reg li:last-child {
+  border-bottom: none;
+}
+.sd-reg-body {
+  flex: 1;
+  min-width: 0;
+}
+.sd-reg-t {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.sd-reg-key {
+  font-size: 10px;
+  word-break: break-all;
+  line-height: 1.45;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+.sd-reg-why {
+  font-size: 10px;
+  margin-top: 2px;
+  line-height: 1.45;
 }
 </style>

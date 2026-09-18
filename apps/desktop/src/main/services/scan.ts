@@ -12,7 +12,8 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
 import type {
   CleanResult,
   DeletePlan,
@@ -23,11 +24,15 @@ import type {
   GraphNode,
   JunkItem,
   JunkSummary,
+  RegistryBackupInfo,
+  RegistryCleanOutcome,
+  RegistryResidueItem,
+  RegistryScanResult,
   ScanProgress,
   SoftwareItem
 } from '@shared/types'
 import { normKey, uid } from '@shared/util'
-import { discoverSoftware } from '@scanner/software'
+import { discoverSoftware, iconSourcesFor } from '@scanner/software'
 import { extractIcons, querySignatures } from '@scanner/winenum'
 import { resolveDependencies } from '@scanner/deps'
 import { buildGraph } from '@graph-core/build'
@@ -43,6 +48,7 @@ import { AuditLog } from '@junk/audit'
 import { runElevated } from './elevate'
 import type { Store } from '../db/store'
 import type { AppPaths, SettingsStore } from './env'
+import { isElevated } from './env'
 import builtinRules from '@rules/junk-rules.json'
 
 export interface CancelToken {
@@ -177,6 +183,45 @@ export class ScanService {
     }
   }
 
+  // ───────────────── 图标来源索引（A2）─────────────────
+
+  /** 图标 hash → 候选来源；按需提取队列靠它把 hash 变回可提取的路径 */
+  private iconSourceMap = new Map<string, string[]>()
+
+  private refreshIconSources(items: SoftwareItem[]): void {
+    const next = new Map<string, string[]>()
+    for (const it of items) {
+      const hash = it.iconHash
+      if (!hash || next.has(hash)) continue
+      next.set(hash, iconSourcesFor(it.mainExe, it.installPath))
+    }
+    this.iconSourceMap = next
+  }
+
+  /** 扫描结果里的图标提取请求（预热与按需共用同一口径） */
+  private iconRequests(items: SoftwareItem[]): { hash: string; sources: string[] }[] {
+    return items
+      .filter((i) => i.iconHash)
+      .map((i) => ({ hash: i.iconHash, sources: iconSourcesFor(i.mainExe, i.installPath) }))
+  }
+
+  /**
+   * 查一个图标 hash 的候选来源。
+   * 首次调用时从数据库惰性重建（应用重启后内存索引为空，但软件清单还在库里）。
+   */
+  iconSourcesOf(hash: string): string[] | null {
+    if (!hash) return null
+    const hit = this.iconSourceMap.get(hash)
+    if (hit && hit.length > 0) return hit
+    try {
+      this.refreshIconSources(this.store.listSoftware())
+    } catch {
+      return null
+    }
+    const again = this.iconSourceMap.get(hash)
+    return again && again.length > 0 ? again : null
+  }
+
   // ───────────────── 软件发现 ─────────────────
 
   async scanSoftware(roots?: string[]): Promise<{ scanId: string }> {
@@ -191,11 +236,24 @@ export class ScanService {
       const collected: SoftwareItem[] = []
       try {
         const st = this.settings.get()
+        // A3：便携目录缓存（目录级签名命中即复用，省掉 readPeMeta 与 dirSize）
+        const { loadPortableCache, savePortableCache } = await import('@scanner/portable-cache')
         const items = await discoverSoftware({
           portableRoots: roots?.length ? roots : st.portableRoots,
           portableThreshold: st.portableThreshold,
           manualMarks: this.store.portableMarks(),
           signal: token,
+          portableCache: {
+            load: (fp) => loadPortableCache(this.paths.portableCacheFile, fp),
+            save: (c) => savePortableCache(this.paths.portableCacheFile, c),
+            onStats: (s) => {
+              log.info('sw', '便携目录缓存命中统计', {
+                hit: s.hit,
+                miss: s.miss,
+                hitRate: Number(s.hitRate.toFixed(3))
+              })
+            }
+          },
           onProgress: (phase, percent, current, found) => {
             const p: ScanProgress = { scanId, phase, percent: Math.min(99, Math.round(percent)), current, found }
             this.emit('scan:software:progress', p)
@@ -214,26 +272,28 @@ export class ScanService {
         this.store.replaceSoftware(items)
         // 软件清单变化会影响所有图谱的分组与置信度，缓存整体失效
         this.store.invalidateGraph()
+        // A2：刷新「图标 hash → 候选来源」索引，供按需提取队列反查
+        this.refreshIconSources(items)
 
         // 图标提取（落盘 PNG，按内容哈希命名）
-        this.emit('scan:software:progress', {
-          scanId,
-          phase: '提取软件图标',
-          percent: 99,
-          current: `共 ${items.length} 个`,
-          found: items.length
-        } satisfies ScanProgress)
-
-        const reqs = items
-          .filter((i) => i.iconHash)
-          .map((i) => ({
-            hash: i.iconHash,
-            sources: [i.mainExe, i.installPath ? join(i.installPath, 'app.ico') : ''].filter(Boolean)
-          }))
-        try {
-          await extractIcons(reqs, this.paths.iconDir)
-        } catch {
-          /* 图标失败不影响主流程，前端有首字母色块兜底 */
+        //
+        // v3.0.0 · A2：改为**可关闭的预热**。
+        // 主路径已是「渲染层请求 → 未命中磁盘缓存 → 入队聚批提取」（见 icon-queue.ts），
+        // 这里保留一次预热只是为了让首屏列表不至于全是占位色块；
+        // 实测提取是幂等的（脚本首行就跳过已存在的 PNG），因此预热不会重复劳动。
+        if (process.env.SG_ICON_PREWARM !== '0') {
+          this.emit('scan:software:progress', {
+            scanId,
+            phase: '预取软件图标',
+            percent: 99,
+            current: `共 ${items.length} 个`,
+            found: items.length
+          } satisfies ScanProgress)
+          try {
+            await extractIcons(this.iconRequests(items), this.paths.iconDir)
+          } catch {
+            /* 图标失败不影响主流程，前端有首字母色块兜底 */
+          }
         }
 
         await this.store.persist()
@@ -1023,6 +1083,199 @@ export class ScanService {
   /** 最近审计条目（E4，设置抽屉展示） */
   auditRecent(limit = 50) {
     return this.audit.recent(limit)
+  }
+
+  // ───────────────── 注册表残留清理（v3.0.0 · M4-UI / M4-RESTORE）─────────────────
+
+  /**
+   * 扫描卸载残留（只读）。
+   *
+   * 与垃圾扫描的分工：这里只枚举三条 `...\Uninstall` 子树并做纯函数判定，
+   * **不做任何写操作** —— UI 拿到清单后由用户勾选，再走 `cleanRegistry`。
+   *
+   * 体积只在「判定为残留且安装目录仍存在」时才实测：残留项多数属于
+   * 「目录早就没了」，为它们逐个遍历目录是纯粹的浪费。
+   */
+  async scanRegistry(): Promise<RegistryScanResult> {
+    const t0 = Date.now()
+    const { enumerateUninstallKeys, classifyResidues, measureDirSize } = await import('@junk/registry')
+    const entries = await enumerateUninstallKeys()
+    // 第一遍只用「存在性」判定（不传 dirSize）—— 这一步是纯字符串 + stat，很快
+    const judged = classifyResidues(entries)
+
+    const residues: RegistryResidueItem[] = []
+    for (const r of judged) {
+      const loc = r.installLocation.replace(/^"|"$/g, '')
+      const sizeBytes = loc && existsSync(loc) ? await measureDirSize(loc) : 0
+      residues.push({
+        keyPath: r.keyPath,
+        hive: r.hive,
+        view: r.view,
+        displayName: r.displayName,
+        publisher: r.publisher,
+        displayVersion: r.displayVersion,
+        installLocation: r.installLocation,
+        uninstallString: r.uninstallString,
+        reasons: r.reasons,
+        risk: r.risk,
+        sizeBytes
+      })
+    }
+
+    // HKLM 删除需要管理员权限；已经提权时就不必再提示了
+    const hasHklm = residues.some((r) => r.hive === 'HKLM')
+    const elevated = await isElevated()
+    return {
+      scanMs: Date.now() - t0,
+      scanned: entries.length,
+      residues,
+      needsElevation: hasHklm && !elevated
+    }
+  }
+
+  /**
+   * 清理选中的残留键（先备份后删除，顺序由内核固定）。
+   *
+   * 安全设计：**渲染层只回传键路径**，这里重新枚举一次把路径还原成完整键信息。
+   * 这样即便渲染层被注入，也拿不到「构造一个不存在的键」的能力，
+   * 并且白名单校验用的是内核重新读到的真实键路径。
+   */
+  async cleanRegistry(keyPaths: string[]): Promise<RegistryCleanOutcome> {
+    const { enumerateUninstallKeys, removeResidues, resolveTargetKeys } = await import('@junk/registry')
+    const wanted = (keyPaths ?? []).map((k) => String(k).trim()).filter(Boolean)
+    if (wanted.length === 0) {
+      return { ok: false, removed: 0, failed: 0, needsElevation: false, rejected: [], error: '未选择任何键' }
+    }
+
+    const entries = await enumerateUninstallKeys()
+    // 重新枚举后对齐：提交方的输入只决定「选哪几条」，参与删除的键全部来自系统本身
+    const { targets, rejected } = resolveTargetKeys(entries, wanted)
+
+    if (targets.length === 0) {
+      return {
+        ok: false,
+        removed: 0,
+        failed: 0,
+        needsElevation: false,
+        rejected,
+        error: '所选键已不在当前枚举结果中（建议重新扫描）'
+      }
+    }
+
+    const r = await removeResidues(targets, { backupDir: this.paths.registryBackupDir })
+    const ok = !r.backupFailed && !r.needsElevation && r.removed > 0
+
+    // 审计留痕（E4）：注册表删除不可逆，必须留痕。
+    // 逐条成败由聚合计数推导 —— 删除是在同一趟 PowerShell 里完成的，
+    // 内核只回传总数，因此这里按「前 removed 条成功」还原，
+    // reason 文案保持粗粒度，不假装知道每一条的真实结果。
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'registry-clean',
+      taskId: uid('reg_'),
+      freedBytes: 0,
+      results: targets.map((t, i) => ({
+        path: t.keyPath,
+        sizeBytes: 0,
+        ok: ok && i < r.removed,
+        reason: r.backupFailed
+          ? '备份失败，已拒绝删除'
+          : r.needsElevation
+            ? '需要管理员权限'
+            : ok && i < r.removed
+              ? undefined
+              : '未删除'
+      }))
+    })
+    log.info('registry', '残留清理', {
+      selected: targets.length,
+      removed: r.removed,
+      failed: r.failed,
+      needsElevation: r.needsElevation,
+      backupFailed: !!r.backupFailed,
+      backupFile: r.backupFile ?? null,
+      rejected: rejected.length
+    })
+    void logger().flushNow()
+
+    return {
+      ok,
+      removed: r.removed,
+      failed: r.failed,
+      needsElevation: r.needsElevation,
+      backupFailed: r.backupFailed,
+      backupFile: r.backupFile,
+      rejected
+    }
+  }
+
+  /** 列出注册表备份快照（新的在前），供「从备份还原」入口选择 */
+  async listRegistryBackups(): Promise<RegistryBackupInfo[]> {
+    const dir = this.paths.registryBackupDir
+    let names: string[]
+    try {
+      names = await fs.readdir(dir)
+    } catch {
+      return []
+    }
+    const out: RegistryBackupInfo[] = []
+    for (const n of names) {
+      if (!n.toLowerCase().endsWith('.json')) continue
+      const file = join(dir, n)
+      try {
+        const raw = JSON.parse(await fs.readFile(file, 'utf8')) as { createdAt?: unknown; keys?: unknown[] }
+        out.push({
+          file,
+          createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',
+          keyCount: Array.isArray(raw.keys) ? raw.keys.length : 0
+        })
+      } catch {
+        /* 损坏的快照跳过，不进列表让用户误选 */
+      }
+    }
+    return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  /**
+   * 从备份快照还原。
+   *
+   * 路径必须落在**备份目录内** —— 该接口会写注册表，
+   * 不能变成「用任意 JSON 路径往注册表写数据」的通道。
+   */
+  async restoreRegistryBackup(file: string): Promise<{ restored: number; failed: number; error?: string }> {
+    const dir = resolve(this.paths.registryBackupDir)
+    const target = resolve(String(file ?? ''))
+    if (target !== dir && !target.startsWith(dir + sep)) {
+      return { restored: 0, failed: 0, error: '只允许还原备份目录内的快照' }
+    }
+
+    // 先读出快照里的键名 —— 还原动作要留痕，而内核只回传总数
+    let keys: string[] = []
+    try {
+      const raw = JSON.parse(await fs.readFile(target, 'utf8')) as { keys?: { key?: unknown }[] }
+      keys = (raw.keys ?? []).map((k) => String(k?.key ?? '')).filter(Boolean)
+    } catch {
+      return { restored: 0, failed: 0, error: '备份快照无法解析' }
+    }
+
+    const { restoreBackup } = await import('@junk/registry')
+    const r = await restoreBackup(target)
+
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'registry-restore',
+      taskId: uid('regres_'),
+      freedBytes: 0,
+      results: keys.map((k, i) => ({
+        path: k,
+        sizeBytes: 0,
+        ok: i < r.restored,
+        reason: i < r.restored ? undefined : '还原失败'
+      }))
+    })
+    log.info('registry', '从备份还原', { file: target, restored: r.restored, failed: r.failed })
+    void logger().flushNow()
+    return r
   }
 
   /** 外部（index.ts handler）直接写入审计条目 */

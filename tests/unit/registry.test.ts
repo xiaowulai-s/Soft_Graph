@@ -6,11 +6,16 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   isRegistryKeyAllowed,
   exeFromUninstallString,
   judgeResidue,
   classifyResidues,
+  resolveTargetKeys,
+  measureDirSize,
   REGISTRY_ALLOWED_PREFIXES,
   type RegistryEntry
 } from '@junk/registry'
@@ -172,5 +177,83 @@ describe('残留判定', () => {
     assert.equal(out.length, 1)
     assert.equal(out[0].displayName, 'Gone App')
     assert.equal(out[0].sizeBytes, 0, '目录不存在时体积为 0')
+  })
+})
+
+// ───────────────── M4-UI：清单对齐（UI 提交 → 真实键）─────────────────
+
+describe('清理清单对齐', () => {
+  const a = entry({ keyPath: REGISTRY_ALLOWED_PREFIXES[0] + '{aaaa}', displayName: 'A' })
+  const b = entry({ keyPath: REGISTRY_ALLOWED_PREFIXES[2] + '{bbbb}', displayName: 'B', hive: 'HKCU' })
+
+  it('命中枚举结果的键被接受', () => {
+    const r = resolveTargetKeys([a, b], [a.keyPath, b.keyPath])
+    assert.deepEqual(r.targets.map((t) => t.displayName), ['A', 'B'])
+    assert.deepEqual(r.rejected, [])
+  })
+
+  it('大小写与空白差异被归一（提交方不必精确复刻枚举串）', () => {
+    const r = resolveTargetKeys([a], [`  ${a.keyPath.toUpperCase()}  `])
+    assert.equal(r.targets.length, 1)
+    assert.equal(r.rejected.length, 0)
+  })
+
+  it('凭空构造的键被拒绝（不在枚举结果里 → 不参与删除）', () => {
+    const r = resolveTargetKeys([a], [REGISTRY_ALLOWED_PREFIXES[0] + '{fake}'])
+    assert.equal(r.targets.length, 0)
+    assert.deepEqual(r.rejected, [REGISTRY_ALLOWED_PREFIXES[0] + '{fake}'])
+  })
+
+  it('白名单之外的键即便在枚举结果里也被拒绝（枚举源被污染时的第二道闸）', () => {
+    // 模拟 enumerateUninstallKeys 意外吐出一条 Run 键：判定函数必须继续拦
+    const evil = entry({ keyPath: 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\Evil' })
+    const r = resolveTargetKeys([a, evil], [a.keyPath, evil.keyPath])
+    assert.deepEqual(r.targets.map((t) => t.displayName), ['A'])
+    assert.equal(r.rejected.length, 1)
+  })
+
+  it('重复提交同一个键只算一次', () => {
+    const r = resolveTargetKeys([a], [a.keyPath, a.keyPath, a.keyPath.toUpperCase()])
+    assert.equal(r.targets.length, 1)
+  })
+
+  it('空输入 / 空枚举都得到空结果，不抛异常', () => {
+    assert.deepEqual(resolveTargetKeys([], []), { targets: [], rejected: [] })
+    assert.deepEqual(resolveTargetKeys([a], []), { targets: [], rejected: [] })
+  })
+})
+
+// ───────────────── M4-UI：残留项目录体积 ─────────────────
+
+describe('残留项目录体积', () => {
+  it('递归累加文件大小（含子目录）', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sg-regsize-'))
+    try {
+      await writeFile(join(root, 'a.bin'), Buffer.alloc(1000))
+      await mkdir(join(root, 'sub'), { recursive: true })
+      await writeFile(join(root, 'sub', 'b.bin'), Buffer.alloc(2000))
+      const size = await measureDirSize(root)
+      assert.equal(size, 3000)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('触到条目上限即返回已累计值（不把界面卡死）', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sg-regsize-cap-'))
+    try {
+      for (let i = 0; i < 30; i++) await writeFile(join(root, `f${i}.bin`), Buffer.alloc(10))
+      // 上限 5 → 最多累加 5 个文件，必然小于总量
+      const size = await measureDirSize(root, 5)
+      assert.ok(size <= 50, `上限生效时不应超过 5 个文件，实际 ${size}`)
+      assert.ok(size < 300)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('目录不存在时返回 0 而不是抛异常（残留项多数属于这种情况）', async () => {
+    const size = await measureDirSize(join(tmpdir(), 'sg-regsize-does-not-exist-7f3a'))
+    assert.equal(size, 0)
   })
 })

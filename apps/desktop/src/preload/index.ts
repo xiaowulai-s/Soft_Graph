@@ -24,6 +24,7 @@ const api: SoftGraphApi = {
   cancelSoftwareScan: () => ipcRenderer.invoke(CH.SCAN_SOFTWARE_CANCEL),
   listSoftware: () => ipcRenderer.invoke(CH.SOFTWARE_LIST),
   getIcon: (iconHash) => ipcRenderer.invoke(CH.SOFTWARE_ICON, iconHash),
+  getIcons: (iconHashes) => ipcRenderer.invoke(CH.SOFTWARE_ICONS, iconHashes),
   markPortable: (payload) => ipcRenderer.invoke(CH.SOFTWARE_MARK_PORTABLE, payload),
 
   // 图谱
@@ -33,6 +34,7 @@ const api: SoftGraphApi = {
   graphDiff: (softwareId) => ipcRenderer.invoke(CH.GRAPH_DIFF, { softwareId }),
   auditRecent: () => ipcRenderer.invoke(CH.AUDIT_LIST),
   fileDetail: (payload) => ipcRenderer.invoke(CH.FILE_DETAIL, payload),
+  searchFiles: (payload) => ipcRenderer.invoke(CH.FILE_SEARCH, payload),
 
   // 垃圾
   scanJunk: (payload) => ipcRenderer.invoke(CH.JUNK_SCAN, payload),
@@ -51,6 +53,12 @@ const api: SoftGraphApi = {
   quarantineList: () => ipcRenderer.invoke(CH.QUARANTINE_LIST),
   quarantineRestore: (payload) => ipcRenderer.invoke(CH.QUARANTINE_RESTORE, payload),
   quarantinePurge: (payload) => ipcRenderer.invoke(CH.QUARANTINE_PURGE, payload),
+
+  // 注册表残留清理（v3.0.0 M4）
+  registryScan: () => ipcRenderer.invoke(CH.REGISTRY_SCAN),
+  registryClean: (keyPaths) => ipcRenderer.invoke(CH.REGISTRY_CLEAN, { keyPaths }),
+  registryBackups: () => ipcRenderer.invoke(CH.REGISTRY_BACKUPS),
+  registryRestore: (file) => ipcRenderer.invoke(CH.REGISTRY_RESTORE, { file }),
 
   // 系统
   reveal: (payload) => ipcRenderer.invoke(CH.FS_REVEAL, payload),
@@ -82,6 +90,7 @@ const api: SoftGraphApi = {
   // 事件订阅
   onScanProgress: (cb) => sub(CH.SCAN_SOFTWARE_PROGRESS, cb as never),
   onSoftwareBatch: (cb) => sub(CH.SCAN_SOFTWARE_BATCH, cb as never),
+  onSoftwareIcons: (cb) => sub(CH.SOFTWARE_ICONS_READY, cb as never),
   onScanDone: (cb) => sub(CH.SCAN_SOFTWARE_DONE, cb as never),
   onJunkProgress: (cb) => sub(CH.JUNK_PROGRESS, cb as never),
   onCleanProgress: (cb) => sub(CH.CLEAN_PROGRESS, cb as never),

@@ -10,6 +10,15 @@ import type { SoftwareItem, SoftwareSource } from '../shared/types'
 import { normPath, normKey, isSubPath, extName, baseName, dirName, mapPool } from '../shared/util'
 import { enumerateWindows, type EnumResult, type RawUninstall } from './winenum'
 import { readPeMeta } from './pe'
+import {
+  installedFingerprintOf,
+  portableEntryMatches,
+  probePortableDir,
+  prunePortableCache,
+  rememberPortableEntry,
+  type PortableCacheFile,
+  type PortableDirEntry
+} from './portable-cache'
 
 // ───────────────── ID / 哈希 ─────────────────
 
@@ -19,6 +28,17 @@ export function softwareId(installPath: string, name: string): string {
 
 export function iconHashOf(sources: string[]): string {
   return createHash('sha256').update(sources.map(normKey).join('|')).digest('hex').slice(0, 16)
+}
+
+/**
+ * 图标的候选来源（与 `extractIcons` 的尝试顺序一致）：主 exe 优先，其次安装目录下的 app.ico。
+ *
+ * v3.0.0 · A2：抽成单一实现，是因为现在有**两条**路径要用它 ——
+ * 扫描后的批量预热，以及按需提取队列（靠 hash 反查来源）。
+ * 两处各写一份必然漂移（hash 是按 sources 算出来的，口径一变缓存就整体失效）。
+ */
+export function iconSourcesFor(mainExe: string, installPath: string): string[] {
+  return [mainExe ?? '', installPath ? join(installPath, 'app.ico') : ''].filter(Boolean)
 }
 
 // ───────────────── 过滤规则 ─────────────────
@@ -190,6 +210,21 @@ export interface PortableCandidate {
 }
 
 /**
+ * `scorePortableDir` 的完整输出（v3.0.0 · A3）。
+ * 除候选本身外，还带回签名判定所需的三个观测值 —— 这三个值只能在**这次**遍历里顺带拿到，
+ * 事后再补就要重走一遍目录（`stat(dir)` / `stat(mainExe)`），等于把省下的开销又付回去。
+ */
+interface PortableScoreResult {
+  cand: PortableCandidate
+  /** 目录 mtimeMs */
+  dirMtime: number
+  /** 目录直属条目数 */
+  entryCount: number
+  /** 主 exe 的 mtimeMs */
+  mainExeMtime: number
+}
+
+/**
  * 对单个目录做便携软件评分。
  * @param installedPaths 已安装软件目录集合（用于「无卸载项」特征判定）
  */
@@ -197,13 +232,17 @@ async function scorePortableDir(
   dir: string,
   installedPaths: Set<string>,
   manual: boolean
-): Promise<PortableCandidate | null> {
+): Promise<PortableScoreResult | null> {
   let entries: import('node:fs').Dirent[]
+  let dirMtime = 0
   try {
     entries = await fs.readdir(dir, { withFileTypes: true })
+    // A3：目录 mtime 与条目数一起组成签名 —— 这里顺手取，不额外走一遍目录
+    dirMtime = (await fs.stat(dir)).mtimeMs
   } catch {
     return null
   }
+  const entryCount = entries.length
 
   const exes: string[] = []
   const files: string[] = []
@@ -291,17 +330,30 @@ async function scorePortableDir(
     evidence.push(PORTABLE_FEATURES.manual.label)
   }
 
+  // 主 exe 的 mtime：签名里唯一能兜住「文件被原地覆写」的字段（目录 mtime 不会变）
+  let mainExeMtime = 0
+  try {
+    mainExeMtime = (await fs.stat(mainExe)).mtimeMs
+  } catch {
+    /* 取不到就按 0 参与签名，下次必然不匹配 → 重算，安全侧 */
+  }
+
   // 体积不在此处计算：dirSize 要递归 stat 最多 3000 个文件，是评分阶段最贵的
   // IO 操作，而阈值判定根本用不到它 —— 由调用方对「命中项」并行补算（v2.0.0 M1）
   return {
-    dir: normPath(dir),
-    mainExe: normPath(mainExe),
-    score,
-    evidence,
-    name: meta.productName || meta.fileDescription || dirStem,
-    version: meta.fileVersion,
-    publisher: meta.companyName,
-    sizeBytes: 0
+    cand: {
+      dir: normPath(dir),
+      mainExe: normPath(mainExe),
+      score,
+      evidence,
+      name: meta.productName || meta.fileDescription || dirStem,
+      version: meta.fileVersion,
+      publisher: meta.companyName,
+      sizeBytes: 0
+    },
+    dirMtime,
+    entryCount,
+    mainExeMtime
   }
 }
 
@@ -349,19 +401,39 @@ export async function dirSize(dir: string, maxDepth = 3, maxFiles = 20000): Prom
   return total
 }
 
+/** A3：便携扫描的缓存挂钩（load/save 由调用方提供，本模块不关心文件位置） */
+export interface PortableCacheHooks {
+  cache?: PortableCacheFile | null
+  onStats?: (s: PortableCacheStats) => void
+}
+
+export interface PortableCacheStats {
+  hit: number
+  miss: number
+  hitRate: number
+}
+
 /** 便携软件扫描入口（支持用户指定目录 + 盘符常见目录名）
  *
  * v2.0.0 M1：目录处理并发化（worker 池拉取共享 BFS 队列）。
  * 串行版每个候选要串行跑 readPeMeta + dirSize（递归 stat 最多 3000 文件），
  * 两个根目录 68 个候选全串联 —— 实测 6.5s；并发后主要等待重叠。
+ *
+ * v3.0.0 A3：接入目录级签名缓存。命中路径只做 readdir + 2 次 stat，
+ * 省掉 readPeMeta（要读 PE 文件）与 dirSize（最多 3000 次 stat）。
  */
 export async function scanPortable(
   roots: string[],
   installedPaths: Set<string>,
   threshold: number,
   manualMarks: Map<string, boolean>,
-  onProgress?: (cur: string, found: number) => void
+  onProgress?: (cur: string, found: number) => void,
+  hooks: PortableCacheHooks = {}
 ): Promise<SoftwareItem[]> {
+  const cache = hooks.cache ?? null
+  const cacheStats = { hit: 0, miss: 0 }
+  /** 主 exe(normKey) → 缓存条目：体积补算完成后把实测值写回，下次命中就能直接用 */
+  const cacheEntryByExe = new Map<string, PortableDirEntry>()
   const found: SoftwareItem[] = []
   const pendingSize: { dir: string; mainExe: string }[] = []
   const visited = new Set<string>()
@@ -385,6 +457,33 @@ export async function scanPortable(
 
   const queue: { dir: string; depth: number }[] = []
 
+  /** 把一个候选转成 SoftwareItem 并入列（命中路径与全量路径共用，保证两条路产出完全一致） */
+  const pushCandidate = (c: PortableCandidate, sizeBytes: number): void => {
+    found.push({
+      id: softwareId(c.dir, c.name),
+      name: c.name,
+      version: c.version || '',
+      publisher: c.publisher || '',
+      installPath: c.dir,
+      mainExe: c.mainExe,
+      iconHash: iconHashOf([c.mainExe]),
+      source: 'portable',
+      sizeBytes,
+      portableScore: c.score,
+      portableEvidence: c.evidence
+    })
+  }
+
+  const expandChildren = async (dir: string, depth: number): Promise<void> => {
+    if (depth >= 2) return
+    try {
+      const subs = await fs.readdir(dir, { withFileTypes: true })
+      for (const s of subs) if (s.isDirectory()) queue.push({ dir: join(dir, s.name), depth: depth + 1 })
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function processOne(dir: string, depth: number): Promise<void> {
     const key = normKey(dir)
     if (visited.has(key)) return
@@ -394,32 +493,61 @@ export async function scanPortable(
     const manual = manualMarks.get(key) === true
     if (manualMarks.get(key) === false) return // 用户显式纠正为「非便携」
 
-    const cand = await scorePortableDir(dir, installedPaths, manual)
-    if (cand && cand.score >= threshold) {
-      pendingSize.push(cand)
-      found.push({
-        id: softwareId(cand.dir, cand.name),
-        name: cand.name,
-        version: cand.version || '',
-        publisher: cand.publisher || '',
-        installPath: cand.dir,
-        mainExe: cand.mainExe,
-        iconHash: iconHashOf([cand.mainExe]),
-        source: 'portable',
-        sizeBytes: 0, // 命中后统一并行补算
-        portableScore: cand.score,
-        portableEvidence: cand.evidence
-      })
-      return // 命中即不再深入其子目录
-    }
-    if (depth < 2) {
-      try {
-        const subs = await fs.readdir(dir, { withFileTypes: true })
-        for (const s of subs) if (s.isDirectory()) queue.push({ dir: join(dir, s.name), depth: depth + 1 })
-      } catch {
-        /* ignore */
+    // ── A3 快路径：签名命中 → 直接复用 ──
+    const cached = cache?.dirs[key]
+    if (cached && cache) {
+      const probe = await probePortableDir(dir, cached.mainExe)
+      if (!probe) {
+        // 目录已消失：条目作废，也不再深入
+        delete cache.dirs[key]
+        cacheStats.miss++
+        return
+      }
+      probe.manual = manual
+      if (portableEntryMatches(cached, probe)) {
+        cacheStats.hit++
+        if (cached.cand.score >= threshold) {
+          // 体积沿用缓存值（不再补算 —— dirSize 正是要省掉的开销）
+          pushCandidate(cached.cand, cached.cand.sizeBytes)
+          cacheEntryByExe.set(normKey(cached.cand.mainExe), cached)
+          return // 命中即不再深入其子目录
+        }
+        await expandChildren(dir, depth)
+        return
       }
     }
+
+    cacheStats.miss++
+    const scored = await scorePortableDir(dir, installedPaths, manual)
+    if (scored) {
+      // A3：**未达阈值的候选也要缓存**。
+      // 初版只缓存「命中的便携软件」，真机实测命中率仅 30.6%（D:\Software + E:\Software，
+      // 36 个候选里 25 个分数不够）—— 而这 25 个每次都要跑 readPeMeta，
+      // 恰恰是开销的主要来源。分数与阈值无关（阈值只在命中时比较），
+      // 因此缓存分数不会因为用户调整阈值而失效。
+      if (cache) {
+        rememberPortableEntry(
+          cache,
+          dir,
+          {
+            dirMtime: scored.dirMtime,
+            entryCount: scored.entryCount,
+            mainExe: normKey(scored.cand.mainExe),
+            mainExeMtime: scored.mainExeMtime,
+            manual
+          },
+          scored.cand
+        )
+        const entry = cache.dirs[normKey(dir)]
+        if (entry && scored.cand.score >= threshold) cacheEntryByExe.set(normKey(scored.cand.mainExe), entry)
+      }
+      if (scored.cand.score >= threshold) {
+        pendingSize.push({ dir: scored.cand.dir, mainExe: scored.cand.mainExe })
+        pushCandidate(scored.cand, 0) // 命中后统一并行补算
+        return // 命中即不再深入其子目录
+      }
+    }
+    await expandChildren(dir, depth)
   }
 
   async function worker(): Promise<void> {
@@ -460,9 +588,17 @@ export async function scanPortable(
       const size = await dirSize(p.dir, 2, 3000)
       const item = byExe.get(normKey(p.mainExe))
       if (item) item.sizeBytes = size
+      // A3：把实测体积写回缓存 —— 否则下次命中会显示 0
+      const entry = cacheEntryByExe.get(normKey(p.mainExe))
+      if (entry) entry.cand.sizeBytes = size
       return size
     })
   }
+  hooks.onStats?.({
+    hit: cacheStats.hit,
+    miss: cacheStats.miss,
+    hitRate: cacheStats.hit + cacheStats.miss > 0 ? cacheStats.hit / (cacheStats.hit + cacheStats.miss) : 0
+  })
   return found
 }
 
@@ -514,6 +650,16 @@ export interface ScanSoftwareOptions {
   onProgress?: (phase: string, percent: number, current: string, found: number) => void
   onBatch?: (items: SoftwareItem[]) => void
   signal?: { cancelled: boolean }
+  /**
+   * A3：便携目录缓存的读写挂钩。
+   * 指纹要等 `scanInstalled` 跑完（拿到 installedPaths）才算得出来，
+   * 所以这里交给调用方在指纹就绪时惰性 load / 结束后 save。
+   */
+  portableCache?: {
+    load: (installedFingerprint: string) => Promise<PortableCacheFile | null>
+    save: (cache: PortableCacheFile) => Promise<void>
+    onStats?: (s: PortableCacheStats) => void
+  }
 }
 
 export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions = {}): Promise<SoftwareItem[]> {
@@ -732,16 +878,33 @@ export async function discoverSoftware(opts: ScanSoftwareOptions = {}): Promise<
   const roots = opts.portableRoots?.length ? opts.portableRoots : await defaultPortableRoots()
   onProgress?.('扫描便携软件', 85, roots.join('、') || '未配置目录', installed.length)
 
+  // A3：指纹只有在 installedPaths 就绪后才算得出来，因此缓存在这里惰性载入
+  let portableCache: PortableCacheFile | null = null
+  if (opts.portableCache && roots.length > 0) {
+    try {
+      portableCache = await opts.portableCache.load(installedFingerprintOf(installedPaths))
+    } catch {
+      portableCache = null
+    }
+  }
+
   const portable = roots.length
     ? await scanPortable(
         roots,
         installedPaths,
         opts.portableThreshold ?? 55,
         opts.manualMarks ?? new Map(),
-        (cur, found) => onProgress?.('扫描便携软件', 85 + Math.min(found, 10), cur, installed.length + found)
+        (cur, found) => onProgress?.('扫描便携软件', 85 + Math.min(found, 10), cur, installed.length + found),
+        { cache: portableCache, onStats: opts.portableCache?.onStats }
       )
     : []
   if (portable.length) onBatch?.(portable)
+
+  // A3：清理过期条目并回写（写失败不影响扫描结果，见 savePortableCache）
+  if (portableCache && opts.portableCache) {
+    prunePortableCache(portableCache)
+    await opts.portableCache.save(portableCache).catch(() => {})
+  }
 
   onProgress?.('去重与合并', 98, '', installed.length + portable.length)
   return dedupe([...installed, ...portable])

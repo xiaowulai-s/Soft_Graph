@@ -34,7 +34,9 @@ async function main(): Promise<void> {
     comIndexFile: join(root, 'cache', 'com-index.json'),
     tmpDir: join(root, 'tmp'),
     apiSetCacheFile: join(root, 'cache', 'apiset-map.json'),
-    logDir: join(root, 'logs')
+    logDir: join(root, 'logs'),
+    registryBackupDir: join(root, 'registry-backups'),
+    portableCacheFile: join(root, 'cache', 'portable-scan.json')
   }
 
   console.log('═══ 准备：写入若干条日志（含真实用户路径）═══')

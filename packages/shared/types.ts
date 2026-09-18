@@ -380,6 +380,95 @@ export interface QuarantineRecord {
   isDir?: boolean
 }
 
+// ───────────────── 注册表清理（v3.0.0 · M4）─────────────────────────
+
+/**
+ * 一条「卸载残留」注册表项。
+ * 只承载展示与定位所需字段 —— 删除时上层只回传 keyPath，
+ * 由主进程重新枚举取回完整信息，渲染层无法伪造键内容。
+ */
+export interface RegistryResidueItem {
+  /** PowerShell 路径，如 HKLM:\SOFTWARE\...\Uninstall\{GUID} */
+  keyPath: string
+  hive: 'HKLM' | 'HKCU'
+  view: '64' | '32'
+  displayName: string
+  publisher: string
+  displayVersion: string
+  installLocation: string
+  uninstallString: string
+  /** 判定为残留的依据（逐条可读） */
+  reasons: string[]
+  risk: RiskLevel
+  /** 安装目录仍存在时的实测体积；目录已不存在则为 0 */
+  sizeBytes: number
+}
+
+export interface RegistryScanResult {
+  scanMs: number
+  /** 枚举到的 Uninstall 键总数（不是残留数） */
+  scanned: number
+  residues: RegistryResidueItem[]
+  /** 含 HKLM 项且当前未提权 → 清理会失败，UI 据此提示 */
+  needsElevation: boolean
+}
+
+export interface RegistryCleanOutcome {
+  ok: boolean
+  removed: number
+  failed: number
+  needsElevation: boolean
+  /** 备份失败 → 已拒绝删除（内核硬约束：备份拿不到就什么都不做） */
+  backupFailed?: boolean
+  /** 备份快照绝对路径，供「还原」入口直接引用 */
+  backupFile?: string
+  /** 未通过白名单 / 未能回查到枚举结果的键 */
+  rejected: string[]
+  error?: string
+}
+
+export interface RegistryBackupInfo {
+  file: string
+  createdAt: string
+  keyCount: number
+}
+
+// ───────────────── 文件检索（v3.0.0 · I-11）─────────────────────────
+
+export interface FileSearchHit {
+  id: string
+  fullPath: string
+  name: string
+  sizeBytes: number
+  ext: string
+  kind: string
+  /** 被多少个软件引用（结果排序依据） */
+  refCount: number
+  missing: boolean
+}
+
+/**
+ * 实际生效的检索策略。**不是装饰字段** —— 它决定 UI 该不该提示「这次是走索引还是全表」：
+ *   - `prefix-index`：范围查询命中 idx_file_path_lc / idx_file_name_lc（默认路径）
+ *   - `unindexed-scan`：小写派生列迁移失败，范围比较退化为扫描
+ *   - `substring-scan`：子串检索必然是全表（`%q%` 无法用 B+Tree 索引）
+ *   - `fts5`：驱动支持 FTS5 时用 MATCH（**打包应用到不了这条**，见 docs/09）
+ */
+export type FileSearchStrategy = 'prefix-index' | 'unindexed-scan' | 'substring-scan' | 'fts5'
+
+export interface FileSearchOptions {
+  limit?: number
+  /** 'prefix'（默认，走索引）| 'substring'（显式启用，代价高） */
+  mode?: 'prefix' | 'substring'
+}
+
+export interface FileSearchResult {
+  hits: FileSearchHit[]
+  strategy: FileSearchStrategy
+  /** 合并去重后的候选总数（可能大于 hits.length，因为 hits 被 limit 截断） */
+  total: number
+}
+
 // ───────────────────────── 扫描进度 ─────────────────────────
 
 export interface ScanProgress {

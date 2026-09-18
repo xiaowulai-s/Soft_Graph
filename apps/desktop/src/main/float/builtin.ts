@@ -524,6 +524,79 @@ const focusPlugin: FloatPlugin = {
   }
 }
 
+// ───────────────── 12. CPU 占用 TOP（F3 补齐） ─────────────────
+
+/**
+ * 与「内存占用 TOP」（sys.topproc）配对：一个看内存，一个看 CPU。
+ *
+ * 为什么用 Win32_PerfFormattedData 而不是 Get-Process 的 CPU 字段：
+ *   `Get-Process.CPU` 是**进程启动以来的累计 CPU 秒数**，单调增长 ——
+ *   按它排序等于「谁活得久谁第一」，完全反映不了此刻谁在烧 CPU。
+ *   `PercentProcessorTime` 是瞬时占比，才是这个问题要的答案。
+ *
+ * 归一化：该计数器在多核机器上以「单核 = 100%」计量，8 核满载可到 800%。
+ * 这里除以逻辑核数换算成「占整机比例」，与任务管理器的口径一致，
+ * 避免浮窗上出现「180%」这种让人困惑的数字。
+ *
+ * 按进程名合并多实例进程（chrome 的十几个渲染进程应算作一条）。
+ */
+const topCpuPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sys.topcpu',
+    name: 'CPU 占用 TOP',
+    description: '当前 CPU 占用最高的前 4 个进程（同名进程已合并）',
+    interval: 10_000,
+    view: 'list',
+    icon: 'process',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  async collect(ctx: PluginContext): Promise<FloatPluginDatum[]> {
+    let rows: { name: string; cpu: number }[] | null = null
+    try {
+      const r = await ctx.psJson<{ name: string; cpu: number }[]>(
+        `
+$proc = @{}
+try {
+  $rows = Get-CimInstance -ClassName Win32_PerfFormattedData_PerfProc_Process -ErrorAction Stop
+  foreach ($p in $rows) {
+    if (-not $p.Name) { continue }
+    if ($p.Name -eq '_Total' -or $p.Name -eq 'Idle') { continue }
+    $v = [double]$p.PercentProcessorTime
+    if ($proc.ContainsKey($p.Name)) { $proc[$p.Name] = $proc[$p.Name] + $v } else { $proc[$p.Name] = $v }
+  }
+} catch { }
+$out = New-Object System.Collections.ArrayList
+foreach ($e in ($proc.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 4)) {
+  [void]$out.Add([pscustomobject]@{ name = [string]$e.Key; cpu = [double]$e.Value })
+}
+Write-SgJson @($out)
+`,
+        15_000
+      )
+      const arr = Array.isArray(r) ? r : r ? [r as unknown as { name: string; cpu: number }] : []
+      rows = arr.filter((x) => x && typeof x.name === 'string' && x.name.length > 0)
+    } catch {
+      rows = null
+    }
+    if (!rows || rows.length === 0) return [{ label: 'CPU', value: '不可用', tone: 'warn' }]
+
+    const cores = Math.max(1, os.cpus().length)
+    return rows.map((r) => {
+      const raw = Number(r.cpu)
+      // 非有限值一律归 0：浮窗上出现 NaN 比数字不准更糟
+      const pct = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw / cores)) : 0
+      return {
+        label: r.name,
+        value: `${pct.toFixed(1)}%`,
+        ratio: pct,
+        tone: pct > 50 ? 'danger' : pct > 20 ? 'warn' : 'normal'
+      }
+    })
+  }
+}
+
 export const BUILTIN_PLUGINS: FloatPlugin[] = [
   cpuMemPlugin,
   diskPlugin,
@@ -532,6 +605,7 @@ export const BUILTIN_PLUGINS: FloatPlugin[] = [
   netPlugin,
   overviewPlugin,
   topProcPlugin,
+  topCpuPlugin,
   tempPlugin,
   batteryPlugin,
   netConnPlugin,

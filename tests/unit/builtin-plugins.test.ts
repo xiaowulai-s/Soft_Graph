@@ -1,15 +1,16 @@
 /**
  * 浮窗内置插件单元测试（v3.0.0 · G2 覆盖率补测）
  *
- * builtin.ts 是 7 个内置插件的集合体（241 行），此前**零覆盖** ——
+ * builtin.ts 是全部内置插件的集合体，此前**零覆盖** ——
  * 它只在 Electron 主进程里被 registry 驱动，测试链路从来没碰过。
  * 这里用最小 PluginContext 直接驱动每个插件的 collect，验证：
  *   1. 每个插件都能产出符合契约的数据（label 非空、ratio 在 0~100）
- *   2. 跨轮次状态（CPU 差分、网络速率差分）在首轮/次轮行为正确
+ *   2. 跨轮次状态（CPU 差分、网络速率差分、专注计时）在首轮/次轮行为正确
  *   3. 采集源不可用时的降级文案不会出现 undefined / NaN
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import * as os from 'node:os'
 import { BUILTIN_PLUGINS, DEFAULT_ENABLED } from '../../apps/desktop/src/main/float/builtin'
 import type { PluginContext } from '../../apps/desktop/src/main/float/plugin-api'
 
@@ -56,7 +57,7 @@ const byId = (id: string) => {
 
 describe('浮窗内置插件 · 清单完整性', () => {
   it('全部插件都具备合法清单', () => {
-    assert.equal(BUILTIN_PLUGINS.length, 11)
+    assert.equal(BUILTIN_PLUGINS.length, 12)
     const ids = new Set<string>()
     for (const p of BUILTIN_PLUGINS) {
       const m = p.manifest
@@ -163,6 +164,35 @@ describe('浮窗内置插件 · collect 契约', () => {
     const bad = await p.collect(makeCtx({ psJson: async () => { throw new Error('PS 失败') } }))
     assert.ok(Array.isArray(bad))
     for (const d of bad) assert.ok(!/NaN|undefined/.test(d.value))
+  })
+
+  it('CPU 占用 TOP：按核数归一化，且非有限值不冒 NaN', async () => {
+    const p = byId('sys.topcpu')
+    const cores = Math.max(1, os.cpus().length)
+
+    // 计数器以「单核 = 100%」计量：给满核数倍应显示 100%
+    const full = await p.collect(
+      makeCtx({ psJson: async () => [{ name: 'busy', cpu: cores * 100 }] as never })
+    )
+    assert.equal(full[0].value, '100.0%')
+    assert.equal(full[0].ratio, 100)
+
+    // 取到一半核数 → 占整机 50%
+    const half = await p.collect(makeCtx({ psJson: async () => [{ name: 'half', cpu: cores * 50 }] as never }))
+    assert.equal(half[0].value, '50.0%')
+
+    // 脏数据（NaN / 缺字段）必须归 0，不能把 NaN 直接印到浮窗上
+    const dirty = await p.collect(
+      makeCtx({ psJson: async () => [{ name: 'weird', cpu: null }, { name: '', cpu: 5 }] as never })
+    )
+    assert.equal(dirty.length, 1, 'name 为空的条目应被过滤')
+    assert.equal(dirty[0].value, '0.0%')
+    for (const d of dirty) assert.ok(!/NaN|undefined/.test(d.value))
+
+    // 采集源不可用 → 降级文案
+    const bad = await p.collect(makeCtx({ psJson: async () => { throw new Error('PS 失败') } }))
+    assert.equal(bad[0].value, '不可用')
+    assert.equal(bad[0].tone, 'warn')
   })
 })
 

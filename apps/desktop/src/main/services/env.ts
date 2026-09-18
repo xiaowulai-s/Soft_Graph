@@ -30,6 +30,10 @@ export interface AppPaths {
   apiSetCacheFile: string
   /** 结构化日志目录（M3/C5） */
   logDir: string
+  /** 注册表清理备份目录（v3.0.0 · M4：先备份后删除，备份是删除的前置条件） */
+  registryBackupDir: string
+  /** 便携目录扫描缓存（v3.0.0 · A3：目录级签名 → 复用评分结果） */
+  portableCacheFile: string
 }
 
 export function resolvePaths(): AppPaths {
@@ -49,7 +53,9 @@ export function resolvePaths(): AppPaths {
     comIndexFile: join(root, 'cache', 'com-index.json'),
     tmpDir: join(root, 'tmp'),
     apiSetCacheFile: join(root, 'cache', 'apiset-map.json'),
-    logDir: join(root, 'logs')
+    logDir: join(root, 'logs'),
+    registryBackupDir: join(root, 'registry-backups'),
+    portableCacheFile: join(root, 'cache', 'portable-scan.json')
   }
 }
 
@@ -63,7 +69,8 @@ export async function ensurePaths(p: AppPaths): Promise<void> {
     join(p.root, 'rules'),
     join(p.root, 'cache'),
     p.tmpDir,
-    p.reportDir
+    p.reportDir,
+    p.registryBackupDir
   ]) {
     await fs.mkdir(d, { recursive: true }).catch(() => {})
   }

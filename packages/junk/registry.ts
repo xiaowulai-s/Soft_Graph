@@ -15,7 +15,8 @@
  *      管，删键只会留下更脏的残留，直接跳过。
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, readdir, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { psJson, asArray } from '../scanner/psbridge'
@@ -203,6 +204,76 @@ export function classifyResidues(entries: RegistryEntry[], opts: JudgeOptions = 
   return out
 }
 
+// ───────────────── 目录体积（残留项展示用）─────────────────
+
+/**
+ * 实测一个目录的体积，带硬上限。
+ *
+ * 为什么需要上限：残留项的安装目录可能指向一个仍然存在的大目录
+ * （典型场景是「卸载程序被删了，但安装目录还在」），无上限遍历会在
+ * 用户点「扫描」时卡住界面。超过上限就返回已累计的值 —— 宁愿少算，
+ * 也不能让扫描挂死。
+ */
+export async function measureDirSize(dir: string, maxEntries = 20_000): Promise<number> {
+  let total = 0
+  let seen = 0
+  const stack = [dir]
+  while (stack.length > 0) {
+    const cur = stack.pop() as string
+    let entries: Dirent[]
+    try {
+      entries = await readdir(cur, { withFileTypes: true })
+    } catch {
+      continue // 权限不足 / 已消失的目录直接跳过
+    }
+    for (const e of entries) {
+      if (++seen > maxEntries) return total
+      const p = join(cur, e.name)
+      if (e.isDirectory()) stack.push(p)
+      else if (e.isFile()) {
+        try {
+          total += (await stat(p)).size
+        } catch {
+          /* 单个文件取不到大小不影响整体 */
+        }
+      }
+    }
+  }
+  return total
+}
+
+// ───────────────── 清单对齐（UI 提交 → 真实键）─────────────────
+
+/**
+ * 把「上层提交的键路径」对齐回真实枚举结果。
+ *
+ * 为什么必须重新枚举而不是直接相信提交上来的路径：
+ *   UI 只回传 keyPath，若直接照着建删除脚本，等于把「往注册表写路径」的能力
+ *   交给了渲染层。重新枚举一次后，参与删除的每个键都来自系统本身，
+ *   提交方能影响的只有「选哪几条」，而不是「删什么内容」。
+ *
+ * 两类一律拒绝：不在枚举结果里的（键已消失 / 凭空构造）、不在白名单内的。
+ */
+export function resolveTargetKeys(
+  entries: RegistryEntry[],
+  keyPaths: string[]
+): { targets: RegistryEntry[]; rejected: string[] } {
+  const byKey = new Map(entries.map((e) => [e.keyPath.toLowerCase(), e]))
+  const wanted = [...new Set((keyPaths ?? []).map((k) => String(k).trim().toLowerCase()).filter(Boolean))]
+
+  const targets: RegistryEntry[] = []
+  const rejected: string[] = []
+  for (const k of wanted) {
+    const hit = byKey.get(k)
+    if (!hit || !isRegistryKeyAllowed(hit.keyPath)) {
+      rejected.push(k)
+      continue
+    }
+    targets.push(hit)
+  }
+  return { targets, rejected }
+}
+
 // ───────────────── 备份 ─────────────────
 
 export interface RegistryBackup {
@@ -282,6 +353,8 @@ export interface RemoveOutcome {
   needsElevation: boolean
   /** 备份失败：拒绝执行删除 */
   backupFailed?: boolean
+  /** 本次删除依据的备份快照路径（供 UI 直接提供「还原」入口） */
+  backupFile?: string
   /** 被白名单拒绝的键 */
   rejected: string[]
 }
@@ -321,13 +394,14 @@ Write-SgJson ([pscustomobject]@{ removed = [double]$removed; failed = [double]$f
       removed: Number(r?.removed) || 0,
       failed: Number(r?.failed) || 0,
       needsElevation: false,
+      backupFile,
       rejected
     }
   } catch (e) {
     // 与 B2/B3 同一套语义：非提权环境明确返回 needsElevation，不伪装成失败
     const msg = String((e as Error).message ?? e)
     const denied = /Access is denied|错误 5|拒绝访问|Requested registry access is not allowed/i.test(msg)
-    return { removed: 0, failed: allowed.length, needsElevation: denied, rejected }
+    return { removed: 0, failed: allowed.length, needsElevation: denied, backupFile, rejected }
   }
 }
 

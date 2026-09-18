@@ -31,6 +31,10 @@ export const CH = {
   SCAN_SOFTWARE_DONE: 'scan:software:done',
   SOFTWARE_LIST: 'software:list',
   SOFTWARE_ICON: 'software:icon',
+  /** v3.0.0 M5/A2：批量取图标（把 N 次串行 IPC 折成 1 次） */
+  SOFTWARE_ICONS: 'software:icons',
+  /** v3.0.0 M5/A2：按需提取完成后推送就绪的图标 */
+  SOFTWARE_ICONS_READY: 'software:iconsReady',
   SOFTWARE_MARK_PORTABLE: 'software:markPortable',
 
   // 图谱
@@ -44,6 +48,8 @@ export const CH = {
   /** v2.0.0 M5/E4：读取最近审计条目 */
   AUDIT_LIST: 'audit:list',
   FILE_DETAIL: 'file:detail',
+  /** v3.0.0 I-11：全库文件检索（前缀走索引；子串需显式启用） */
+  FILE_SEARCH: 'file:search',
 
   // 垃圾
   JUNK_SCAN: 'junk:scan',
@@ -68,6 +74,12 @@ export const CH = {
   QUARANTINE_LIST: 'quarantine:list',
   QUARANTINE_RESTORE: 'quarantine:restore',
   QUARANTINE_PURGE: 'quarantine:purge',
+
+  // 注册表清理（v3.0.0 · M4）
+  REGISTRY_SCAN: 'registry:scan',
+  REGISTRY_CLEAN: 'registry:clean',
+  REGISTRY_BACKUPS: 'registry:backups',
+  REGISTRY_RESTORE: 'registry:restore',
 
   // 系统
   FS_REVEAL: 'fs:reveal',
@@ -121,6 +133,13 @@ export interface SoftGraphApi {
   cancelSoftwareScan(): Promise<void>
   listSoftware(): Promise<SoftwareItem[]>
   getIcon(iconHash: string): Promise<string | null>
+  /**
+   * 批量取图标（A2）。
+   * 已落盘的直接返回；未落盘的**入按需提取队列**并在此次结果中缺席，
+   * 提取完成后由 `onSoftwareIcons` 推送给渲染层。
+   * 返回：hash → dataURL 的映射（只含已就绪的）。
+   */
+  getIcons(iconHashes: string[]): Promise<Record<string, string>>
   markPortable(payload: { path: string; isPortable: boolean }): Promise<SoftwareItem | null>
 
   buildGraph(payload: { softwareId: string; maxDepth?: number }): Promise<GraphModel>
@@ -132,6 +151,16 @@ export interface SoftGraphApi {
   /** 最近审计条目（E4） */
   auditRecent(): Promise<import('./types').AuditEntry[]>
   fileDetail(payload: { path: string }): Promise<FileDetail>
+  /**
+   * 全库文件检索（I-11）。
+   * 覆盖范围是**整个 file_index**，不限于当前图谱已加载的节点；
+   * 命中结果可直接交给 `graphDrilldown(fileId)` 打开该文件的反向子图。
+   */
+  searchFiles(payload: {
+    query: string
+    limit?: number
+    mode?: 'prefix' | 'substring'
+  }): Promise<import('./types').FileSearchResult>
 
   scanJunk(payload?: { categoryIds?: string[]; force?: boolean }): Promise<{ scanId: string }>
   cancelJunkScan(): Promise<void>
@@ -160,6 +189,15 @@ export interface SoftGraphApi {
   quarantineList(): Promise<QuarantineRecord[]>
   quarantineRestore(payload: { ids: string[] }): Promise<{ ok: number; failed: string[] }>
   quarantinePurge(payload: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }>
+
+  /**
+   * 注册表卸载残留（M4-UI）。
+   * 扫描只读不写；清理只接受扫描结果里的键路径，且由主进程重新校验白名单。
+   */
+  registryScan(): Promise<import('./types').RegistryScanResult>
+  registryClean(keyPaths: string[]): Promise<import('./types').RegistryCleanOutcome>
+  registryBackups(): Promise<import('./types').RegistryBackupInfo[]>
+  registryRestore(file: string): Promise<{ restored: number; failed: number; error?: string }>
 
   reveal(payload: { path: string }): Promise<void>
   pickDir(): Promise<string | null>
@@ -194,6 +232,8 @@ export interface SoftGraphApi {
   // 事件订阅
   onScanProgress(cb: (p: ScanProgress) => void): () => void
   onSoftwareBatch(cb: (items: SoftwareItem[]) => void): () => void
+  /** 按需提取完成的一批图标（A2） */
+  onSoftwareIcons(cb: (icons: { hash: string; data: string }[]) => void): () => void
   onScanDone(cb: (p: { scanId: string; total: number; ms: number }) => void): () => void
   onJunkProgress(cb: (p: ScanProgress) => void): () => void
   onCleanProgress(cb: (p: { taskId: string; done: number; total: number; current: string }) => void): () => void
