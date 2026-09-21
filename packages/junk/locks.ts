@@ -42,11 +42,23 @@ $err = ''
 $src = @'
 using System;
 using System.Runtime.InteropServices;
+// 结构体必须与原生 RM_PROCESS_INFO **逐字节**对齐，两处踩过来的坑：
+//   1. FILETIME 不能用 C# 的 long 声明 —— long 的 8 字节对齐会在 dwProcessId 之后
+//      插入 4 字节填充，而原生布局是紧排的。这里拆成两个 uint 表达低/高 32 位。
+//   2. strAppName 是 255 个 WCHAR（不是 256）。
+// 错位后 ProcessId 之外的字段全部读歪，数组第 2 条起连 ProcessId 都是垃圾值
+// （实测读出 3500506783 这类不存在的 pid），Get-Process 的参数绑定错误还会
+// 直接中断循环 —— 表现为「多进程占用时只报前几条」且界面上占用者 PID 是错的。
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct RM_UNIQUE_PROCESS {
+  public uint dwProcessId;
+  public uint ProcessStartTimeLow;
+  public uint ProcessStartTimeHigh;
+}
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 public struct RM_PROCESS_INFO {
-  public uint ProcessId;
-  public long ProcessStartTime;
-  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string AppName;
+  public RM_UNIQUE_PROCESS Process;
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 255)] public string AppName;
   [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string ServiceShortName;
   public uint ApplicationType;
   public uint AppStatus;
@@ -87,13 +99,20 @@ try {
       $g2 = [SgRm]::RmGetList($h, [ref]$needed, [ref]$n, $arr, [ref]$reasons)
       if ($g2 -eq 0) {
         foreach ($p in $arr) {
-          if ($p.ProcessId -eq 0) { continue }
-          $nm = ''
-          $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
-          if ($proc) { $nm = $proc.ProcessName }
+          $procId = [int64]$p.Process.dwProcessId
+          if ($procId -eq 0 -or $procId -gt [int]::MaxValue) { continue }
+          $nm = [string]$p.AppName
+          try {
+            $proc = Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue
+            if ($proc) { $nm = $proc.ProcessName }
+          } catch {
+            # 进程在其它会话或已退出：拿名字就用 RM 给的 AppName。
+            # 这里必须 try —— 参数绑定失败是**终止性**错误，-ErrorAction 拦不住，
+            # 一条坏数据会让整份占用清单被截断。
+          }
           [void]$out.Add([pscustomobject]@{
-            pid         = [int]$p.ProcessId
-            name        = [string]$nm
+            pid         = [int]$procId
+            name        = $nm
             appType     = [int]$p.ApplicationType
             restartable = [bool]$p.Restartable
           })

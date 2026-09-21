@@ -88,6 +88,39 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+  compat:
+    name: 兼容探测（另一台 Windows 的基线 · C1 前置）
+    runs-on: windows-latest
+    timeout-minutes: 25
+    needs: verify
+    # runner 机型随镜像版本变化，这一作业的定位是「产出可对比的基线数据」而非门禁。
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: 能力探测（含内核冒烟）
+        run: npm run compat:probe -- --with-smoke
+
+      - name: 签名预检（记录证书是否接入，不阻塞）
+        run: node scripts/sign-check.mjs --precheck
+
+      - name: 上传探测与签名报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-probe-${{ github.sha }}
+          path: |
+            .tmp/compat-*.json
+            .tmp/sign-check.json
+          retention-days: 30
+          if-no-files-found: warn
+
   e2e:
     name: CDP 端到端（真实交互）
     runs-on: windows-latest

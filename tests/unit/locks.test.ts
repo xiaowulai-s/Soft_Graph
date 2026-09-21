@@ -41,6 +41,23 @@ describe('占用检测与重启后删除（M2/B2+B3）', () => {
     }
   })
 
+  it('查自身可执行文件：必须看到本进程（RM_PROCESS_INFO 布局哨兵）', async () => {
+    if (!ON_WIN) return
+    // 本进程的 exe 必然处于「已被加载」状态，所以它一定在占用清单里。
+    // 这条断言钉的是托管结构体与原生逐字节对齐：v3.0.0 兼容探测发现旧声明
+    // 用 C# long 表达 FILETIME（多出 4 字节对齐填充）+ AppName 用了 256 而非 255，
+    // 于是第 2 条记录起 PID 全是垃圾值，且 Get-Process 的**终止性**参数绑定错误
+    // 会中断整个循环 —— 单占用者用例永远测不到（BUG-35）。
+    const d = await findLockingProcessesDetailed(process.execPath)
+    assert.ok(!d.error, `RM 通道不应报错：${d.error ?? ''}`)
+    const pids = d.lockers.map((l) => l.pid)
+    assert.ok(pids.includes(process.pid), `应包含本进程 pid=${process.pid}，实得 ${JSON.stringify(pids)}`)
+    assert.ok(
+      pids.every((p) => Number.isInteger(p) && p > 0 && p <= 0x7fffffff),
+      `所有 pid 必须是合法值：${JSON.stringify(pids)}`
+    )
+  })
+
   it('重启后删除：非提权环境下明确返回 needsElevation，不抛异常', async () => {
     if (!ON_WIN) return
     const dir = join(tmpdir(), 'sg-lock-t2-' + randomBytes(4).toString('hex'))

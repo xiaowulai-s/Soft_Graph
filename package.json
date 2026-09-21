@@ -39,6 +39,8 @@
     "smoke": "node scripts/run-smoke.mjs",
     "e2e": "node scripts/run-e2e.mjs",
     "e2e:ci": "node scripts/e2e-ci.mjs",
+    "compat:probe": "node scripts/run-ts.mjs tests/compat-probe.ts",
+    "sign:check": "node scripts/sign-check.mjs",
     "pack:dir": "electron-vite build && electron-builder --dir",
     "pack:win": "electron-vite build && electron-builder --win nsis portable",
     "release": "node scripts/publish-release.mjs"

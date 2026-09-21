@@ -162,8 +162,11 @@ npm run typecheck     # tsc + vue-tsc 双套类型检查
 npm test              # 单元测试（esbuild + node:test，零新增依赖）
 npm run bench         # 性能基准（完整，含 13 类全量垃圾扫描）
 npm run bench:quick   # 性能基准（快速，跳过重量级规则）
-npm run samples:collect  # 采集 PE 样本库清单（样本文件不入库）
-npm run samples:verify   # 按清单回归校验解析器
+npm run samples:collect  # 采集 PE 样本库清单（样本文件不入库，本机 707 个 / 5.2s）
+npm run samples:verify   # 按清单回归校验解析器（漂移检测）
+npm run test:cov         # 单元测试 + 行覆盖率（零依赖 sourcemap 还原到 TS 源）
+npm run compat:probe     # 跨基线兼容探测：逐卷 USN / API Set / RM / 长路径…→ 兼容矩阵行
+npm run sign:check       # 代码签名预检 + 产物签名验收（无证书时给出明确结论）
 npm run pack:dir      # 仅产出未打包目录（调试用）
 ```
 

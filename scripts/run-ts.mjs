@@ -44,7 +44,8 @@ execFileSync(
     '--alias:@junk=./packages/junk',
     '--alias:@graph-core=./packages/graph-core',
     '--alias:@rules=./packages/rules',
-  '--alias:@native=./packages/native'
+  '--alias:@native=./packages/native',
+  '--alias:@main=./apps/desktop/src/main'
   ],
   { cwd: root, stdio: 'inherit' }
 )
