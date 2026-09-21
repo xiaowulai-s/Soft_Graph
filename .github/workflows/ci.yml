@@ -65,7 +65,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     continue-on-error: true
-    needs: verify
+    # 不写 `needs: verify`：三个非门禁作业原先挂在 verify 下面，
+    # 而 verify 自 2026-09-13 起一直是红的 —— 结果它们从未在 CI 上真正跑过一次，
+    # 「接入了基准 / 兼容探测 / E2E」就只停留在文件层面。各自都有 `npm ci`，独立可跑。
 
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +94,6 @@ jobs:
     name: 兼容探测（另一台 Windows 的基线 · C1 前置）
     runs-on: windows-latest
     timeout-minutes: 25
-    needs: verify
     # runner 机型随镜像版本变化，这一作业的定位是「产出可对比的基线数据」而非门禁。
     continue-on-error: true
 
@@ -125,7 +126,7 @@ jobs:
     name: CDP 端到端（真实交互）
     runs-on: windows-latest
     timeout-minutes: 30
-    needs: verify
+    # 自带 `npm ci` + `npm run build`，不依赖 verify 作业（见 benchmark 处的说明）
     # windows-latest runner 提供桌面会话，但 GUI 启动仍受 runner 环境影响，
     # 因此与 smoke 一样先作为「信号」而非门禁；稳定后去掉这行即可变成门禁。
     continue-on-error: true

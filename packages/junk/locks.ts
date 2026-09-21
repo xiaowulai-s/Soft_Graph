@@ -28,6 +28,11 @@ export interface RebootDeleteResult {
   needsElevation?: boolean
   /** 人可读的原因 */
   reason?: string
+  /**
+   * 是否真的出现在 `PendingFileRenameOperations` 里（由脚本回读注册表确认）。
+   * `ok` 只代表 `MoveFileEx` 返回 TRUE —— 该 API 不校验目标存在，所以「成功」需要第二证据。
+   */
+  queued?: boolean
   source: 'native' | 'ps' | 'none'
 }
 
@@ -252,6 +257,7 @@ export async function scheduleDeleteOnReboot(path: string): Promise<RebootDelete
       win32Error: r?.win32Error || undefined,
       needsElevation: r?.win32Error === 5,
       reason: r?.error || undefined,
+      queued: !!r?.queued,
       source: 'ps'
     }
   } catch (e) {

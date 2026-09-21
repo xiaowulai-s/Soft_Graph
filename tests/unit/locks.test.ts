@@ -78,12 +78,26 @@ describe('占用检测与重启后删除（M2/B2+B3）', () => {
     }
   })
 
-  it('不存在的文件登记重启删除：返回失败且有原因', async () => {
+  it('不存在的路径登记重启删除：不抛异常，且结论随权限自洽', async () => {
     if (!ON_WIN) return
+    // 原先这里断言「不存在的路径一定登记失败」，在 CI 上错了 8 天：
+    // MoveFileEx(DELAY_UNTIL_REBOOT) **不校验目标是否存在**，它只往
+    // PendingFileRenameOperations 里记一条待办。GitHub 托管 runner 以管理员身份运行，
+    // 登记会成功（重启时自然无事发生）；本机是普通用户，被拒（错误 5）才恰好通过。
+    // 也就是说这条断言把「本机没提权」当成了产品契约。
+    // 现在按权限分支，两个分支各自钉住真实契约，且都要求「绝不抛异常」。
     const ghost = join(tmpdir(), 'sg-lock-ghost2-' + randomBytes(4).toString('hex') + '.bin')
     const r = await scheduleDeleteOnReboot(ghost)
-    assert.equal(r.ok, false)
-    assert.ok(r.reason || r.win32Error !== undefined, '失败时应给出原因或 Win32 错误码')
+    assert.equal(typeof r.ok, 'boolean')
+    assert.ok(['native', 'ps', 'none'].includes(r.source))
+    if (await isElevated()) {
+      // 提权：登记可以成功，但成功就必须真的出现在待办队列里 —— 否则就是假报告
+      if (r.ok) assert.equal(r.queued, true, '提权下登记成功必须能在 PendingFileRenameOperations 里查到')
+      else assert.ok(r.reason || r.win32Error !== undefined, '提权下仍失败时须给出原因或 Win32 错误码')
+    } else {
+      assert.equal(r.ok, false, '未提权不应登记成功')
+      assert.equal(r.needsElevation, true, '未提权失败时应标记 needsElevation')
+    }
   })
 
   it('isElevated 返回布尔值且不抛异常', async () => {
