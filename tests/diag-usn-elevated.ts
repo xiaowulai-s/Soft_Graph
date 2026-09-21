@@ -103,7 +103,11 @@ async function main(): Promise<void> {
   console.log(`isUsnAvailable：${available}`)
 
   const t1 = Date.now()
-  const r = await readJournal(vol, info?.nextUsn)
+  // 起点取「最低有效 USN」以便真的抓到若干条记录用于核对解析器；
+  // 拿不到就退回 nextUsn（此时记录为 0 条，只证明通道可用）。
+  // 传空串则 readJournal 会直接拒绝 —— 它不允许无界读取整卷（会撑爆输出缓冲）。
+  const start = info?.lowestValidUsn || info?.nextUsn || ''
+  const r = await readJournal(vol, start)
   const readMs = Date.now() - t1
   console.log(`变更记录 readJournal（需提权）：记录 ${r.records.length} 条 · needsElevation=${r.needsElevation} · ${readMs}ms`)
   if (r.error) console.log(`  错误：${r.error}`)

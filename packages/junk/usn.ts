@@ -134,15 +134,24 @@ export async function isUsnAvailable(volume: string): Promise<boolean> {
  * 读取自 startUsn 之后的变更记录。
  * **需要管理员权限**；非提权时返回 needsElevation，调用方必须优雅降级。
  *
+ * `startUsn` **必填**：不带起点时 fsutil 会吐整卷的变更记录，实测在繁忙卷上直接
+ * 撑爆 32MB 的 maxBuffer（CI 上耗时 9.6s 后报 `stdout maxBuffer length exceeded`），
+ * 而 catch 分支只能把它归成「非提权失败」—— 既慢又误导。fsutil 在这个 build 上
+ * 没有 `/c:` `/l:` 这类限量参数（实测均报「无效参数」），所以只能从接口上堵掉。
+ * 生产调用点本来就只查「哨兵变化卷 + 上次记录的 startusn」，不受影响。
+ *
  * 验证状态（v3.0.0 · 2026-09-17）：在未提权的普通用户环境下实测，
  * `fsutil usn readjournal` 稳定返回错误（needsElevation=true），与 v2.0.0 记录一致。
  * 因此**默认关闭**，增量继续走「卷哨兵（queryJournal，无需提权）+ 目录签名」降级方案。
  * 解析器本身已由 `tests/unit/usn-parse.test.ts` 用中英文双套输出覆盖（17 个用例），
  * 拿到管理员权限后可直接跑 `node scripts/run-ts.mjs tests/diag-usn-elevated.ts` 复测。
  */
-export async function readJournal(volume: string, startUsn?: string): Promise<ReadJournalResult> {
+export async function readJournal(volume: string, startUsn: string): Promise<ReadJournalResult> {
   const vol = volume.replace(/\\+$/, '').slice(0, 2).toUpperCase()
-  const args = startUsn ? ['usn', 'readjournal', vol, 'startusn=' + startUsn] : ['usn', 'readjournal', vol]
+  if (!startUsn) {
+    return { records: [], needsElevation: false, error: '缺少 startUsn：无界读取整卷变更会超出输出缓冲上限' }
+  }
+  const args = ['usn', 'readjournal', vol, 'startusn=' + startUsn]
   try {
     const { stdout } = await execFileAsync(FSUTIL, args, {
       encoding: 'buffer',
