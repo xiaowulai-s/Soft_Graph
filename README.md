@@ -14,23 +14,26 @@
 
 ### 直接运行（推荐）
 
-到 Releases 下载，或用仓库根目录构建：
+到 [Releases](https://github.com/xiaowulai-s/Soft_Graph/releases/latest) 下载（当前 v3.0.0），或用仓库根目录构建：
 
 ```bash
 npm install                 # 已内置 npmmirror 镜像配置（.npmrc）
 npm run dev                 # 开发模式（热重载）
 npm run build               # 构建到 out/
-npm run pack:win            # 产出 release/1.0.0/ 下的安装包 + 便携版
+npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携版
 ```
 
-打包产物：
+打包产物（以 v3.0.0 为例）：
 
 | 文件 | 说明 |
 |---|---|
-| `SoftGraph Setup 1.0.0.exe` | NSIS 安装包（约 86 MB），可选安装目录、创建快捷方式 |
-| `SoftGraph-1.0.0-portable.exe` | 免安装便携版（约 86 MB），双击即用 |
+| `SoftGraph-Setup-3.0.0.exe` | NSIS 安装包（85.42 MB），可选安装目录、创建快捷方式 |
+| `SoftGraph-3.0.0-portable.exe` | 免安装便携版（85.20 MB），双击即用 |
+| `SHA256SUMS.txt` | 上述两个产物的校验值（随 Release 一起作为附件） |
 
-> 未做代码签名，杀软可能误报（扫描类工具常见，对应设计文档风险 R8），加入白名单即可。
+> 未做代码签名（正式证书待接入，见 [`docs/07-代码签名.md`](docs/07-代码签名.md)），
+> 杀软可能误报（扫描类工具常见，对应设计文档风险 R8），加入白名单即可；
+> 发布前用 `npm run sign:check` 确认签名状态与产物验收结论。
 
 ### 首次使用
 
@@ -104,10 +107,12 @@ npm run pack:win            # 产出 release/1.0.0/ 下的安装包 + 便携版
 | [`docs/02-架构与实现.md`](docs/02-架构与实现.md) | 分层架构、目录结构、关键算法、与设计方案的实现差异 |
 | [`docs/03-插件开发.md`](docs/03-插件开发.md) | 浮窗插件契约、五种视图、ctx 能力、示例 |
 | [`docs/04-验证报告.md`](docs/04-验证报告.md) | 内核冒烟 + 真机端到端数据、缺陷修复记录 |
-| [`docs/05-推送与发布.md`](docs/05-推送与发布.md) | 推送远端、Release 资产发布、离线 bundle 搬运 |
+| [`docs/05-推送与发布.md`](docs/05-推送与发布.md) | 推送远端、Release 资产发布与历次发布记录、离线 bundle 搬运 |
 | [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md) | v2.0.0 规划：遗留问题清单、7 条工作主线、里程碑与验收标准、M0 交付明细 |
-| [`docs/07-代码签名.md`](docs/07-代码签名.md) | 证书选择、electron-builder 接线、手动签名、杀软白名单申报 |
-| [`docs/benchmarks/`](docs/benchmarks/) | 性能基准报告（每次 `npm run bench` 生成，含达标对照） |
+| [`docs/07-代码签名.md`](docs/07-代码签名.md) | 证书选择、electron-builder 接线、`npm run sign:check` 预检与产物验收、杀软白名单申报 |
+| [`docs/08-v3.0.0-开发计划.md`](docs/08-v3.0.0-开发计划.md) | v3.0.0 规划：v2 遗留清单收编、里程碑排期、**未完成清单（含已实测排除项）**、验收清单与验证记录 |
+| [`docs/09-顺延项补全计划（A2-A3-A7-I11）.md`](docs/09-顺延项补全计划（A2-A3-A7-I11）.md) | 四项性能/工程化顺延项的实测结论（含 A7 原方案被数据推翻的经过） |
+| [`docs/benchmarks/`](docs/benchmarks/) | 性能基准与覆盖率报告（每次 `npm run bench` / `test:cov` 生成）；[`compat-matrix.md`](docs/benchmarks/compat-matrix.md) 是 Win10/Win11 兼容矩阵（由 `npm run compat:probe` 产出数据） |
 | [`Update.md`](Update.md) | 版本变更记录与排期 |
 
 ---
