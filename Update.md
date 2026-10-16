@@ -697,3 +697,36 @@ Usn               : 22712337088
 | 真机扫描 | 本机无相关 AI 目录时 0.3s 空转无异常 |
 | 升级合并 | 4 用例：全新落盘 / 老文件追加+用户自定义保留 / 幂等 / 损坏文件不崩溃 |
 | 全量测试 | **462/462 全绿**（规则库契约测试同步 13→15 类，新增 GC-15 bigfile 与盘点不删除断言） |
+
+---
+
+## v3.0.1 补充 —— E2 规则在线更新链路激活（老用户免升级收到 GC-14/15）
+
+### 激活的三块拼图
+
+| 项 | 内容 |
+|---|---|
+| **签名密钥对** | Ed25519 正式密钥对生成；公钥 hex **固化进代码**（`RULES_SIGNING_PUBKEY` 兜底值，`SG_RULES_PUBKEY` 环境变量仍可覆盖）；私钥不入库（`.keys/` 已 gitignore，维护者本地保管，泄露即须换钥重发版） |
+| **规则包 v2** | `packages/rules/dist/`（manifest.json + junk-rules.json）：version=2、sha256、Ed25519 签名齐全；`junk-rules.json` 增加 `_version: 2` 字段供签发脚本读取 |
+| **毒丸防线 v2** | 修复 verifyRulesStructure 两处缺陷：① 裸 `*` 判定读编译后正则源（glob `*` → `[^\]*`）**从写下起就是死代码**，改为读 raw 原始模式；② 改为「模式宽度 × 根目录」联合判定 —— walk 类裸 `*` 必须全部根落在「已知安全清理区」白名单（TEMP/回收站/浏览器缓存/更新缓存/旧系统残留/开发与 AI 缓存），文件级算法（duplicate/bigfile/deadlink/orphan）豁免；`rootInSafeZone` 同时支持 %VAR% 原始形式与字面路径（并修复 expandRoots token 大小写敏感导致的展开为空） |
+
+### 端到端真机验证（tests/diag-e2-live.ts，内置公钥走完整链路）
+
+| 项 | 结果 |
+|---|---|
+| 老客户端（版本 0）应用 v2 包 | ✅ 15 条规则落盘，含 GC-14/15 |
+| 重放/降级防御 | ✅ 远端版本不高于当前 → 拒绝 |
+| 篡改检测 | ✅ 改一字节 → 哈希不匹配拒绝 |
+| 毒丸主场景 | ✅ 伪造 GC-16（walk + 裸 * + %USERPROFILE%）→ 结构校验拒绝 |
+
+### 老用户使用方式
+
+设置 → 清理与安全 → 规则更新源，填入：
+
+    https://raw.githubusercontent.com/xiaowulai-s/Soft_Graph/main/packages/rules/dist
+
+点「检查规则更新」→ 验签通过后原子写入（失败不触碰现有规则）。签名 180 天时效，维护者需滚动重签（`SG_RULES_PRIVKEY=$(cat .keys/rules-signing.key) node scripts/publish-rules.mjs packages/rules/junk-rules.json packages/rules/dist`，记得递增 `_version`）。
+
+### 测试
+
+468/468 全绿（新增毒丸防线 v2 六用例：白名单根放行 / AI 缓存根放行 / %USERPROFILE% 整树拒绝 / 用户文档拒绝 / bigfile 豁免 / 具体模式不受限）。

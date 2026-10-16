@@ -28,12 +28,6 @@ const args = process.argv.slice(2)
 const rulesFile = args[0]
 const outDir = args[1]
 
-if (!rulesFile || !outDir) {
-  console.error('用法：SG_RULES_PRIVKEY=<hex> node scripts/publish-rules.mjs <rules.json> <outputDir>')
-  console.error('生成密钥对：node scripts/publish-rules.mjs --gen-keys')
-  process.exit(1)
-}
-
 if (args[0] === '--gen-keys') {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
   const publicKeyHex = publicKey.export({ format: 'der', type: 'spki' }).toString('hex')
@@ -41,6 +35,12 @@ if (args[0] === '--gen-keys') {
   console.log('PUBLIC_KEY_HEX（提交到 RULES_SIGNING_PUBKEY）:\n' + publicKeyHex)
   console.log('\nPRIVATE_KEY_HEX（放 CI Secret，勿入库）:\n' + privateKeyHex)
   process.exit(0)
+}
+
+if (!rulesFile || !outDir) {
+  console.error('用法：SG_RULES_PRIVKEY=<hex> node scripts/publish-rules.mjs <rules.json> <outputDir>')
+  console.error('生成密钥对：node scripts/publish-rules.mjs --gen-keys')
+  process.exit(1)
 }
 
 const privHex = process.env.SG_RULES_PRIVKEY

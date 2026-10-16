@@ -19,7 +19,7 @@
 import { createHash, verify, generateKeyPairSync, sign as edSign, createPrivateKey, createPublicKey } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { loadRulesSync, type RuleSet } from './engine'
+import { loadRulesSync, expandRoots, type RuleSet } from './engine'
 
 export const RULES_UPDATE_VERSION = 1
 
@@ -41,11 +41,11 @@ export interface UpdateVerdict {
 /**
  * 内置公钥（hex）。
  *
- * 开发/测试阶段为空 —— 此时 applyRulesUpdate 会拒绝任何在线更新（防呆），
- * 单测会注入临时密钥对。发布 v2.0.0 前由维护者生成正式密钥对：
- *   私钥进仓库 Secret（CI 签名用），公钥 hex 提交到这里。
+ * 正式公钥已内置（2026-10-16 生成，Ed25519 SPKI DER hex）——
+ * 内置值保证发布版应用可直接验签；环境变量 SG_RULES_PUBKEY 仅用于
+ * 开发/测试覆盖（单测注入临时密钥对）。私钥不在仓库，由维护者本地保管。
  */
-export const RULES_SIGNING_PUBKEY = process.env.SG_RULES_PUBKEY || ''
+export const RULES_SIGNING_PUBKEY = process.env.SG_RULES_PUBKEY || '302a300506032b657003210059039f2969afde88cb219df1d0e326a12ec68226c83ad2b7dcbe2156ed31685c'
 
 export function generateRuleKeyPair(): { publicKeyHex: string; privateKeyHex: string } {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519')
@@ -91,6 +91,104 @@ export function verifyRulesSignature(
  * 防的攻击：合法私钥泄露（或维护者失误）发布毒丸规则，
  * 例如把 C:\Windows 列进 roots、把 * 作为 pattern、删掉 minSizeBytes 限制。
  */
+/**
+ * 「已知安全清理区」白名单（原始 %VAR% 形式，小写比较）。
+ *
+ * walk 类规则（树级删除语义）若允许裸 `*` 模式 + 任意根目录，
+ * 一个被伪造的规则包就能把 `%USERPROFILE%` 整树标成垃圾 —— 这就是毒丸。
+ * 因此裸 `*` 只允许出现在删除树级内容也安全的目录（TEMP / 回收站 /
+ * 浏览器缓存 / Windows 更新缓存 / 旧系统残留 / 开发与 AI 工具缓存）。
+ *
+ * 新增规则若需要在新目录上用裸 `*`，必须同步扩充此白名单并随应用发版；
+ * file 级语义的特殊算法（duplicate / bigfile / deadlink / orphan）不受此限。
+ */
+const WIDE_PATTERN_SAFE_PREFIXES = [
+  '%temp%',
+  '%windir%\\temp',
+  '%localappdata%\\temp',
+  '%sg_drives%\\$recycle.bin',
+  // 浏览器缓存（GC-04）
+  '%localappdata%\\google\\chrome\\user data\\default\\cache',
+  '%localappdata%\\google\\chrome\\user data\\default\\code cache',
+  '%localappdata%\\google\\chrome\\user data\\default\\gpucache',
+  '%localappdata%\\google\\chrome\\user data\\default\\service worker\\cachestorage',
+  '%localappdata%\\microsoft\\edge\\user data\\default\\cache',
+  '%localappdata%\\microsoft\\edge\\user data\\default\\code cache',
+  '%localappdata%\\microsoft\\edge\\user data\\default\\gpucache',
+  '%localappdata%\\microsoft\\edge\\user data\\default\\service worker\\cachestorage',
+  '%localappdata%\\bravesoftware\\brave-browser\\user data\\default\\cache',
+  '%localappdata%\\mozilla\\firefox\\profiles',
+  '%appdata%\\mozilla\\firefox\\profiles',
+  // Windows 更新缓存与旧系统残留（GC-05/06）
+  '%windir%\\softwaredistribution\\download',
+  '%systemdrive%\\windows.old',
+  '%systemdrive%\\$windows.~bt',
+  '%systemdrive%\\$windows.~ws',
+  '%systemdrive%\\$windows.~q',
+  // 开发缓存（GC-10）
+  '%localappdata%\\npm-cache\\_cacache',
+  '%appdata%\\npm-cache\\_cacache',
+  '%localappdata%\\pip\\cache',
+  '%localappdata%\\yarn\\cache',
+  '%userprofile%\\.nuget\\packages',
+  '%userprofile%\\.m2\\repository',
+  '%userprofile%\\.gradle\\caches',
+  '%userprofile%\\.cargo\\registry\\cache',
+  '%localappdata%\\pnpm\\store',
+  '%localappdata%\\go-build',
+  // AI 工具缓存（GC-14）与模型库（GC-15，bigfile 本身文件级）
+  '%userprofile%\\.cache\\huggingface\\hub',
+  '%userprofile%\\.cache\\modelscope\\hub',
+  '%userprofile%\\.cache\\lm-studio',
+  '%appdata%\\comfyui\\temp',
+  '%userprofile%\\.conda\\pkgs',
+  '%userprofile%\\miniconda3\\pkgs',
+  '%userprofile%\\anaconda3\\pkgs',
+  '%userprofile%\\.ollama\\models',
+  '%userprofile%\\.lmstudio\\models'
+]
+
+/** 特殊算法：文件级选择语义，不整树删除，不受裸 `*` 限制 */
+const FILE_LEVEL_ALGORITHMS = new Set(['duplicate', 'bigfile', 'deadlink', 'orphan'])
+
+/**
+ * 根目录是否落在安全清理区。两种命中方式（夹具/在线包可能用字面路径或 %VAR%）：
+ *  1. 原始 %VAR% 形式直接前缀匹配白名单
+ *  2. 展开后（expandRoots）与白名单前缀的展开结果做前缀比较
+ */
+/** expandRoots 的 token 是大写敏感的（%SG_DRIVES%），这里统一把 token 大写化后再展开 */
+function expandTokensUpper(x: string): string[] {
+  const up = x.replace(/%([a-z_][a-z0-9_]*)%/g, (_m, t: string) => `%${t.toUpperCase()}%`)
+  return expandRoots(up)
+}
+
+/** 白名单前缀的展开结果（模块级缓存，避免每条规则重复展开全部盘符） */
+let _expandedSafePrefixes: string[] | null = null
+function expandedSafePrefixes(): string[] {
+  if (!_expandedSafePrefixes) {
+    _expandedSafePrefixes = WIDE_PATTERN_SAFE_PREFIXES.flatMap((prefix) => {
+      try {
+        return expandTokensUpper(prefix)
+      } catch {
+        return []
+      }
+    }).map((e) => e.toLowerCase().replace(/\//g, '\\'))
+  }
+  return _expandedSafePrefixes
+}
+
+function rootInSafeZone(rawRoot: string): boolean {
+  const lower = rawRoot.toLowerCase().replace(/\//g, '\\')
+  if (WIDE_PATTERN_SAFE_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true
+  try {
+    const expanded = expandTokensUpper(rawRoot).map((e) => e.toLowerCase().replace(/\//g, '\\'))
+    const prefixes = expandedSafePrefixes()
+    return expanded.length > 0 && expanded.every((el) => prefixes.some((prefix) => el.startsWith(prefix)))
+  } catch {
+    return false
+  }
+}
+
 export function verifyRulesStructure(ruleSet: RuleSet): UpdateVerdict {
   if (!Array.isArray(ruleSet.rules) || ruleSet.rules.length === 0) {
     return { ok: false, reason: '规则清单为空' }
@@ -100,10 +198,21 @@ export function verifyRulesStructure(ruleSet: RuleSet): UpdateVerdict {
     if (r.risk !== 'low' && r.risk !== 'medium' && r.risk !== 'high' && r.risk !== 'hint') {
       return { ok: false, reason: `风险级别非法：${r.id} → ${String(r.risk)}` }
     }
-    // 模式不能过宽：单个 * 或 *.* 一律拒绝
-    for (const p of r.patterns) {
-      const src = p.source.replace(/\\/g, '')
-      if (/^\*+$/.test(src)) return { ok: false, reason: `${r.id} 存在过宽模式（*）` }
+    // 模式宽度与根目录联合判定：
+    //  - 特殊算法（文件级语义）不限制模式宽度
+    //  - walk 类规则用裸 `*`（整树删除语义）时，所有根必须落在已知安全清理区，
+    //    否则一个伪造包就能把 %USERPROFILE% 整树标成垃圾（毒丸）
+    const fileLevel = FILE_LEVEL_ALGORITHMS.has(String((r as { algorithm?: string }).algorithm ?? ''))
+    // 注意：用 raw 原始模式判定 —— glob '*' 编译后的正则源是 [^\\]*，
+    // 对编译产物做 /^\*+$/ 判断永远不命中（旧实现因此一直是死代码）
+    const rawPatterns = (r as { raw?: { match?: { patterns?: string[] } } }).raw?.match?.patterns ?? []
+    const hasBareStar = rawPatterns.some((pat) => /^\*+$/.test(String(pat).trim()))
+    if (hasBareStar && !fileLevel) {
+      const rawRoots = (r as { raw?: { match?: { roots?: string[] } } }).raw?.match?.roots ?? []
+      const allSafe = rawRoots.length > 0 && rawRoots.every(rootInSafeZone)
+      if (!allSafe) {
+        return { ok: false, reason: `${r.id} 存在过宽模式（*）：根目录不在已知安全清理区白名单` }
+      }
     }
     // 根目录不允许是盘根或 Windows 本体
     for (const root of r.roots) {

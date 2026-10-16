@@ -261,3 +261,46 @@ describe('E2 版本存取', () => {
     assert.equal(parseStoredVersion(JSON.stringify('-1')), 0)
   })
 })
+
+describe('E2 裸 * 模式与根目录联合判定（毒丸防线 v2）', () => {
+  function mk(id: string, algorithm: string | undefined, roots: string[], patterns: string[]) {
+    const rule: Record<string, unknown> = {
+      id,
+      name: `测试${id}`,
+      description: 'x',
+      risk: 'low',
+      defaultSelected: false,
+      match: { roots, patterns, maxDepth: 3 }
+    }
+    if (algorithm) rule.algorithm = algorithm
+    return loadRulesSync({ schemaVersion: 1, updatedAt: '', rules: [rule] } as never)
+  }
+
+  it('walk + 裸 * + 白名单根（%TEMP%）→ 放行', () => {
+    const v = verifyRulesStructure(mk('GC-80', undefined, ['%TEMP%'], ['*']))
+    assert.equal(v.ok, true)
+  })
+
+  it('walk + 裸 * + AI 缓存根（.ollama / HF hub）→ 放行（GC-14/15 场景）', () => {
+    assert.equal(verifyRulesStructure(mk('GC-81', undefined, ['%USERPROFILE%\\.ollama\\models'], ['*'])).ok, true)
+    assert.equal(verifyRulesStructure(mk('GC-82', undefined, ['%USERPROFILE%\\.cache\\huggingface\\hub'], ['*'])).ok, true)
+  })
+
+  it('walk + 裸 * + %USERPROFILE% 整树 → 拒绝（毒丸主场景）', () => {
+    const v = verifyRulesStructure(mk('GC-83', undefined, ['%USERPROFILE%'], ['*']))
+    assert.equal(v.ok, false)
+    assert.ok(/过宽模式/.test(v.reason ?? ''))
+  })
+
+  it('walk + 裸 * + 用户文档 → 拒绝（防误伤用户数据）', () => {
+    assert.equal(verifyRulesStructure(mk('GC-84', undefined, ['%USERPROFILE%\\Documents'], ['*'])).ok, false)
+  })
+
+  it('文件级算法（bigfile）+ 裸 * + 任意根 → 豁免放行（GC-12/15 场景）', () => {
+    assert.equal(verifyRulesStructure(mk('GC-85', 'bigfile', ['%USERPROFILE%'], ['*'])).ok, true)
+  })
+
+  it('具体模式（*.tmp）+ 任意根 → 不受白名单约束（由盘根/Windows 检查兜底）', () => {
+    assert.equal(verifyRulesStructure(mk('GC-86', undefined, ['%USERPROFILE%\\Documents'], ['*.tmp'])).ok, true)
+  })
+})
