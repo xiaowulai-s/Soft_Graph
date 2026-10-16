@@ -725,7 +725,12 @@ Usn               : 22712337088
 
     https://raw.githubusercontent.com/xiaowulai-s/Soft_Graph/main/packages/rules/dist
 
-点「检查规则更新」→ 验签通过后原子写入（失败不触碰现有规则）。签名 180 天时效，维护者需滚动重签（`SG_RULES_PRIVKEY=$(cat .keys/rules-signing.key) node scripts/publish-rules.mjs packages/rules/junk-rules.json packages/rules/dist`，记得递增 `_version`）。
+点「检查规则更新」→ 验签通过后原子写入（失败不触碰现有规则）。
+
+    国内镜像（jsDelivr，内容与 GitHub 同源，缓存约 12 小时）：
+    https://cdn.jsdelivr.net/gh/xiaowulai-s/Soft_Graph@main/packages/rules/dist
+
+签名 180 天时效，维护者需滚动重签（`SG_RULES_PRIVKEY=$(cat .keys/rules-signing.key) node scripts/publish-rules.mjs packages/rules/junk-rules.json packages/rules/dist`，记得递增 `_version`）。
 
 ### 测试
 
