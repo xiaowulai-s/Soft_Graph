@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-11",
+  "updatedAt": "2026-10-16",
   "rules": [
     {
       "id": "GC-01",
@@ -304,6 +304,51 @@
           "*.lnk"
         ],
         "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-14",
+      "name": "AI 工具缓存",
+      "description": "HuggingFace / LM Studio / ComfyUI / conda 等 AI 工具的可再生缓存（模型与数据集删除后可重新下载，故默认不勾选）",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\.cache\\huggingface\\hub",
+          "%USERPROFILE%\\.cache\\modelscope\\hub",
+          "%USERPROFILE%\\.cache\\lm-studio",
+          "%APPDATA%\\ComfyUI\\temp",
+          "%USERPROFILE%\\.conda\\pkgs",
+          "%USERPROFILE%\\miniconda3\\pkgs",
+          "%USERPROFILE%\\anaconda3\\pkgs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-15",
+      "name": "AI 模型库盘点",
+      "description": "Ollama / LM Studio 本地模型文件盘点（仅提示占用，不自动清理——是否删除由用户决定）",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "bigfile",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\.ollama\\models",
+          "%USERPROFILE%\\.lmstudio\\models",
+          "%USERPROFILE%\\.ollama\\models\\blobs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "minSizeBytes": 52428800,
+        "maxDepth": 8
+      },
+      "options": {
+        "topN": 100
       }
     }
   ]

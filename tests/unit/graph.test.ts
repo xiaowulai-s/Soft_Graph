@@ -18,10 +18,10 @@ import { fileId } from '@scanner/deps'
 const ruleSet = loadRulesSync(rulesJson as never)
 
 describe('规则库完整性', () => {
-  it('恰好 13 类，编号连续且唯一', () => {
+  it('恰好 15 类，编号连续且唯一', () => {
     const ids = ruleSet.rules.map((r) => r.id)
-    assert.equal(ids.length, 13)
-    assert.equal(new Set(ids).size, 13, '存在重复编号')
+    assert.equal(ids.length, 15)
+    assert.equal(new Set(ids).size, 15, '存在重复编号')
     ids.forEach((id, i) => assert.equal(id, `GC-${String(i + 1).padStart(2, '0')}`))
   })
 
@@ -34,7 +34,7 @@ describe('规则库完整性', () => {
     }
   })
 
-  it('13 类中 7 类为 defaultSelected=true（低风险直清项）', () => {
+  it('15 类中低风险直清项数量在合理区间（默认勾选）', () => {
     const on = ruleSet.rules.filter((r) => r.defaultSelected)
     assert.ok(on.length >= 4 && on.length <= 8, `默认勾选数量异常: ${on.length}`)
   })
@@ -45,6 +45,20 @@ describe('规则库完整性', () => {
     assert.equal(map.get('GC-11')?.algorithm, 'duplicate')
     assert.equal(map.get('GC-12')?.algorithm, 'bigfile')
     assert.equal(map.get('GC-13')?.algorithm, 'deadlink')
+    assert.equal(map.get('GC-15')?.algorithm, 'bigfile')
+  })
+
+  it('AI 专项规则（GC-14/15）：默认不勾选、GC-15 仅盘点', () => {
+    const map = new Map(ruleSet.rules.map((r) => [r.id, r]))
+    for (const id of ['GC-14', 'GC-15']) {
+      const r = map.get(id)
+      assert.ok(r, `缺少 ${id}`)
+      assert.equal(r.defaultSelected, false, `${id} 必须默认不勾选（模型不可自动删）`)
+    }
+    assert.equal(map.get('GC-15')?.risk, 'hint', 'GC-15 必须是 hint 级（盘点不删除）')
+    // 盘点规则只允许指向模型目录，不允许扩散到整个用户目录
+    const roots = (map.get('GC-15')?.roots ?? []).join('|').toLowerCase()
+    assert.ok(roots.includes('.ollama') && roots.includes('.lmstudio'), 'GC-15 根目录应指向模型库')
   })
 
   it('每个规则至少解析出一个存在的根目录', () => {

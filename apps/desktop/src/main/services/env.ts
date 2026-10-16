@@ -173,6 +173,27 @@ export async function ensureRules(p: AppPaths, builtinJson: unknown): Promise<st
     } catch {
       return ''
     }
+    return p.rulesFile
+  }
+
+  // 升级合并：老版本安装的规则文件会遮蔽内置新规则（例如 v3.0.1 新增的
+  // GC-14/GC-15）。只**追加**本地缺失的规则 id，绝不覆盖/删除用户已有内容，
+  // 用户对既有规则的自定义得以保留；无缺失时不写盘（幂等）。
+  try {
+    const local = JSON.parse(await fs.readFile(p.rulesFile, 'utf8')) as { rules?: { id?: string }[]; updatedAt?: string }
+    const localIds = new Set((local.rules ?? []).map((r) => r.id).filter(Boolean))
+    const builtin = builtinJson as { rules?: { id?: string }[]; updatedAt?: string }
+    const missing = (builtin.rules ?? []).filter((r) => r.id && !localIds.has(r.id))
+    if (missing.length > 0) {
+      const merged = {
+        ...local,
+        rules: [...(local.rules ?? []), ...missing],
+        updatedAt: new Date().toISOString().slice(0, 10)
+      }
+      await fs.writeFile(p.rulesFile, JSON.stringify(merged, null, 2), 'utf8')
+    }
+  } catch {
+    /* 本地文件损坏时不合并 —— 交由在线更新（E2）兜底，不阻塞启动 */
   }
   return p.rulesFile
 }

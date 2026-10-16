@@ -670,3 +670,30 @@ Usn               : 22712337088
 1. 直接采信 V8 覆盖率会得到 **100%**：esbuild 把整个 bundle 包进一个匿名顶层函数，其整体 range 覆盖全文件、count 恒为 1 —— 必须跳过 `functionName === ''` 的包装函数
 2. 只用块级 range 会得到 **52%**（低估）：块级 range 之间不含顺序语句（常量数组、模块顶层赋值），因此改为「两遍法」—— 函数整体 range 标记覆盖 → count=0 的子区间扣除
 3. 分母取 sourcemap 中生成了代码的行，并排除非代码文件（规则 JSON）与纯类型声明文件（编译后无可执行代码）
+
+---
+
+## v3.0.1 —— AI 工具垃圾治理（GC-14 / GC-15）
+
+> 背景：AI 工具（Ollama / LM Studio / ComfyUI / HuggingFace 生态 / conda）长期使用会积累数十 GB 的模型与缓存，v3.0.0 的 13 类规则对此无专项覆盖。
+
+| 规则 | 定位 | 覆盖目录 | 风险 |
+|---|---|---|---|
+| **GC-14 AI 工具缓存** | 可再生内容清理（默认不勾选） | HuggingFace hub 缓存、ModelScope hub 缓存、LM Studio 日志缓存、ComfyUI\temp、conda pkgs（.conda / miniconda3 / anaconda3） | medium |
+| **GC-15 AI 模型库盘点** | **只盘点不删除**（bigfile 算法，≥50MB TOP 100） | Ollama models（含 blobs）、LM Studio models | hint |
+
+设计原则：**模型是不是垃圾只有用户能判断** —— GC-15 全部为 hint 级、默认不勾选，程序只报告占用，绝不越权删除模型。
+
+### 配套修复：ensureRules 升级合并
+
+老版本安装的 `%APPDATA%\SoftGraph\rules\junk-rules.json` 会遮蔽内置新规则（旧逻辑只在文件缺失时写入）——升级后用户**永远拿不到**新增规则。现改为：启动时比对内置规则，**只追加**本地缺失的规则 id，用户对既有规则的自定义原样保留；无缺失不写盘（幂等）；本地文件损坏时不合并（交由 E2 在线更新兜底）。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 规则加载 | 15 条全部通过引擎 schema 校验；GC-14 medium / GC-15 hint·bigfile·50MB |
+| 安全层零误伤 | 两个规则展开后的全部根子项通过 guardPath + isScannable（与 GC-10 的 .nuget 同等对待） |
+| 真机扫描 | 本机无相关 AI 目录时 0.3s 空转无异常 |
+| 升级合并 | 4 用例：全新落盘 / 老文件追加+用户自定义保留 / 幂等 / 损坏文件不崩溃 |
+| 全量测试 | **462/462 全绿**（规则库契约测试同步 13→15 类，新增 GC-15 bigfile 与盘点不删除断言） |
