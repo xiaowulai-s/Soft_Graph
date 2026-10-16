@@ -58,7 +58,7 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 | 缺失依赖预警 | 红色虚线节点 + 修复建议（如提示安装 VC++ 运行库） |
 | 图谱可视化 | 径向分层（T0–T3）、SVG/Canvas 双渲染、缩放平移惯性、搜索筛选、双击下钻、右键菜单、导出 PNG |
 | 悬停详情 | 标题 / 完整路径（可复制）/ 属性 / 关系 / 归属 / 安全 / 操作 —— 七区块齐全 |
-| 垃圾治理 | 15 类规则（GC-01~GC-15，含 AI 工具缓存与模型库盘点）JSON 驱动 + Ed25519 签名在线更新、重复文件三级过滤、环形图 + 分类列表 + 明细抽屉 |
+| 垃圾治理 | 15 类规则（GC-01~GC-15，含 AI 工具缓存 / AI IDE 缓存族 / 模型库盘点）JSON 驱动 + Ed25519 签名在线更新、重复文件三级过滤、环形图 + 分类列表 + 明细抽屉 |
 | 删除安全 | 白名单硬拦截 + 三重校验 + 隔离区可还原 + 三级确认强度 |
 
 ### 模块二：桌面浮窗监控
@@ -166,6 +166,17 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 npm run typecheck     # tsc + vue-tsc 双套类型检查
 npm test              # 单元测试（esbuild + node:test，零新增依赖）
 npm run bench         # 性能基准（完整，含 15 类全量垃圾扫描）
+
+## 规则在线更新（GC 规则包，Ed25519 签名）
+
+应用内置签名公钥，可在线接收新规则而无需重装。设置 → 清理与安全 → 规则更新源：
+
+    https://raw.githubusercontent.com/xiaowulai-s/Soft_Graph/main/packages/rules/dist
+    国内镜像: https://cdn.jsdelivr.net/gh/xiaowulai-s/Soft_Graph@main/packages/rules/dist
+
+> 注：v3.0.2 起下载走 Electron net（系统代理可用）；v3.0.1 若 fetch failed，
+> 多为直连被网络拦截，可改用镜像地址或挂代理后重试。
+
 npm run bench:quick   # 性能基准（快速，跳过重量级规则）
 npm run samples:collect  # 采集 PE 样本库清单（样本文件不入库，本机 707 个 / 5.2s）
 npm run samples:verify   # 按清单回归校验解析器（漂移检测）

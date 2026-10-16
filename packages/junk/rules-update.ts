@@ -148,6 +148,33 @@ const WIDE_PATTERN_SAFE_PREFIXES = [
   '%userprofile%\\.lmstudio\\models'
 ]
 
+/**
+ * AI IDE（Trae / Cursor / Windsurf / WorkBuddy / Qoder / ZCode / Codeium）
+ * 的 Electron 缓存族目录：任意已知应用目录下的标准缓存子目录视为安全清理区。
+ * 只匹配「应用名 + 缓存族」两层，绝不放行应用目录本身（extensions / User /
+ * WebStorage / session 等用户数据不在其中）。
+ */
+const AI_IDE_CACHE_FAMILY = new Set([
+  'cache', 'code cache', 'gpucache', 'dawncache', 'dawngraphitecache',
+  'dawnwebgpucache', 'shadercache', 'cacheddata', 'cachedextensionvsixs',
+  'cachedprofilesdata', 'crashpad', 'logs', 'service worker\\cachestorage'
+])
+const AI_IDE_NAMES = new Set(['trae', 'cursor', 'windsurf', 'workbuddy', 'qoder', 'zcode', 'codeium'])
+
+/** 根目录是否为「AI IDE 应用目录 + 缓存族子目录」结构 */
+function isAiIdeCacheRoot(lower: string): boolean {
+  // %appdata%\<app>\<cache-family>（可带更深层：service worker\cachestorage）
+  let m = /^%(?:appdata|localappdata)%\\([a-z0-9 .-]+)\\([a-z0-9 ]+(?:\\[a-z0-9 ]+)?)(?:\\|$)/.exec(lower)
+  if (m && AI_IDE_NAMES.has(m[1]) && AI_IDE_CACHE_FAMILY.has(m[2])) return true
+  // %userprofile%\.<app>\logs
+  m = /^%userprofile%\\\.([a-z0-9-]+)\\logs(?:\\|$)/.exec(lower)
+  if (m && AI_IDE_NAMES.has(m[1])) return true
+  // 展开后的字面路径：C:\users\…\appdata\roaming\<app>\<cache-family>
+  const ex = /^c:\\users\\[^\\]+\\appdata\\(?:roaming|local)\\([a-z0-9 .-]+)\\([a-z0-9 ]+(?:\\[a-z0-9 ]+)?)(?:\\|$)/.exec(lower)
+  if (ex && AI_IDE_NAMES.has(ex[1]) && AI_IDE_CACHE_FAMILY.has(ex[2])) return true
+  return false
+}
+
 /** 特殊算法：文件级选择语义，不整树删除，不受裸 `*` 限制 */
 const FILE_LEVEL_ALGORITHMS = new Set(['duplicate', 'bigfile', 'deadlink', 'orphan'])
 
@@ -180,6 +207,7 @@ function expandedSafePrefixes(): string[] {
 function rootInSafeZone(rawRoot: string): boolean {
   const lower = rawRoot.toLowerCase().replace(/\//g, '\\')
   if (WIDE_PATTERN_SAFE_PREFIXES.some((prefix) => lower.startsWith(prefix))) return true
+  if (isAiIdeCacheRoot(lower)) return true
   try {
     const expanded = expandTokensUpper(rawRoot).map((e) => e.toLowerCase().replace(/\//g, '\\'))
     const prefixes = expandedSafePrefixes()
@@ -247,6 +275,22 @@ export async function downloadUpdate(
       return fs.readFile(fileURLToPath(url), 'utf8')
     }
     if (!url.startsWith('https://')) throw new Error('仅允许 HTTPS 更新源')
+    // Electron 主进程优先用 net.fetch：走 Chromium 网络栈（系统代理 / 证书库）。
+    // 全局 fetch（undici）不读系统代理 —— 配了代理的用户会直接 fetch failed。
+    try {
+      const electron = (await import('electron')) as unknown as {
+        net?: { fetch?: (url: string, init?: unknown) => Promise<Response> }
+      }
+      if (electron.net?.fetch) {
+        const res = await electron.net.fetch(url, { signal: AbortSignal.timeout(timeoutMs) } as never)
+        if (!res.ok) throw new Error(`HTTP ${res.status}：${url}`)
+        return await res.text()
+      }
+    } catch (e) {
+      // net.fetch 内的 HTTP 错误（如 404）应直接上抛；仅对「electron 不可用」
+      // 的环境（单测 / worker）回退全局 fetch
+      if (/HTTP \d+/.test(String((e as Error).message))) throw e
+    }
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
     if (!res.ok) throw new Error(`HTTP ${res.status}：${url}`)
     return res.text()

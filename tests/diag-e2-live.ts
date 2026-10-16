@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     await mkdir(site, { recursive: true })
     await cp('packages/rules/dist/manifest.json', join(site, 'manifest.json'))
     await cp('packages/rules/dist/junk-rules.json', join(site, 'junk-rules.json'))
+    const pkgVersion = (JSON.parse(await readFile('packages/rules/dist/manifest.json', 'utf8')) as { version: number }).version
     const url = pathToFileURL(join(site, 'x')).href.replace(/x$/, '')
 
     // 1) 老客户端（version 0）应用 v2 包 —— 使用内置公钥（不传 publicKeyHex）
@@ -28,15 +29,15 @@ async function main(): Promise<void> {
       baseUrl: url,
       allowFileUrl: true
     })
-    console.log('1) 应用 v2 包:', JSON.stringify(r1))
+    console.log('1) 应用规则包:', JSON.stringify(r1))
     if (!r1.ok || r1.ruleCount !== 15) throw new Error('应用失败')
     const written = JSON.parse(await readFile(target, 'utf8')) as { rules: { id: string }[] }
     const ids = written.rules.map((r) => r.id)
     if (!ids.includes('GC-14') || !ids.includes('GC-15')) throw new Error('GC-14/15 未到达')
     console.log('   规则数:', ids.length, '| 含 GC-14:', ids.includes('GC-14'), '| 含 GC-15:', ids.includes('GC-15'))
 
-    // 2) 防降级/重放：currentVersion 已是 2
-    const r2 = await applyRulesUpdate({ currentVersion: 2, rulesFile: target, baseUrl: url, allowFileUrl: true })
+    // 2) 防降级/重放：currentVersion 已是包版本
+    const r2 = await applyRulesUpdate({ currentVersion: pkgVersion, rulesFile: target, baseUrl: url, allowFileUrl: true })
     console.log('2) 重放防御:', r2.ok ? '❌ 不应成功' : `✅ ${r2.reason}`)
 
     // 3) 篡改：改规则文件一个字节
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
     await mkdir(tampered, { recursive: true })
     await cp(join(site, 'manifest.json'), join(tampered, 'manifest.json'))
     const rules = await readFile(join(site, 'junk-rules.json'), 'utf8')
-    await writeFile(join(tampered, 'junk-rules.json'), rules.replace('"_version": 2', '"_version": 9'))
+    await writeFile(join(tampered, 'junk-rules.json'), rules.replace('"_version": ' + pkgVersion, '"_version": 99'))
     const r3 = await applyRulesUpdate({
       currentVersion: 0,
       rulesFile: join(base, 'out3.json'),
