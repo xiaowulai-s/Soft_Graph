@@ -10,6 +10,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH } from '@shared/ipc'
 import type { SoftGraphApi } from '@shared/ipc'
+import type { AppUpdateState } from '@shared/types'
 
 /** 订阅事件频道，返回取消订阅函数（渲染层组件卸载时必须调用，避免监听器泄漏） */
 function sub(channel: string, cb: (payload: never) => void): () => void {
@@ -81,6 +82,14 @@ const api: SoftGraphApi = {
   floatPluginInstall: (payload) => ipcRenderer.invoke(CH.FLOAT_PLUGIN_INSTALL, payload),
   floatPluginApprove: (payload) => ipcRenderer.invoke(CH.FLOAT_PLUGIN_APPROVE, payload),
   floatPluginRemove: (id) => ipcRenderer.invoke(CH.FLOAT_PLUGIN_REMOVE, { id }),
+  appUpdateCheck: () => ipcRenderer.invoke(CH.APP_UPDATE_CHECK),
+  appUpdateDownload: () => ipcRenderer.invoke(CH.APP_UPDATE_DOWNLOAD),
+  appUpdateInstall: () => ipcRenderer.send(CH.APP_UPDATE_INSTALL),
+  onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {
+    const l = (_e: unknown, state: AppUpdateState): void => cb(state)
+    ipcRenderer.on(CH.APP_UPDATE_STATE, l as never)
+    return () => ipcRenderer.removeListener(CH.APP_UPDATE_STATE, l as never)
+  },
   floatDrag: (payload) => ipcRenderer.invoke(CH.FLOAT_DRAG, payload),
   floatDragEnd: () => ipcRenderer.invoke(CH.FLOAT_DRAG_END),
   floatPeek: (entered) => ipcRenderer.invoke(entered ? CH.FLOAT_PEEK_ENTER : CH.FLOAT_PEEK_LEAVE),

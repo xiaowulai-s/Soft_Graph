@@ -14,6 +14,7 @@ import { formatBytes } from '@shared/util'
 import { openDb } from './db/driver'
 import { Store } from './db/store'
 import { ScanService } from './services/scan'
+import { initAppUpdater, checkForAppUpdate, downloadAppUpdate, quitAndInstallAppUpdate } from './updater'
 import { ensurePaths, ensureRules, isElevated, resolvePaths, SettingsStore, type AppPaths } from './services/env'
 import { FloatWindows, floatRendererTarget, normalizeInstances, DEFAULT_INSTANCE_ID } from './float/window'
 import { PluginRegistry } from './float/registry'
@@ -545,6 +546,12 @@ function registerIpc(): void {
   })
   // v2.0.0 M5/F2：删除外部插件
   h(CH.FLOAT_PLUGIN_REMOVE, async (payload: { id: string }) => registry.removeExternal(payload.id))
+  // v3.0.3：应用自更新
+  h(CH.APP_UPDATE_CHECK, async () => checkForAppUpdate())
+  h(CH.APP_UPDATE_DOWNLOAD, async () => {
+    await downloadAppUpdate()
+  })
+  h(CH.APP_UPDATE_INSTALL, () => quitAndInstallAppUpdate())
   h(CH.FLOAT_PLUGIN_DIR, async () => {
     await fs.mkdir(registry.externalDir, { recursive: true }).catch(() => {})
     void shell.openPath(registry.externalDir)
@@ -684,6 +691,13 @@ async function bootstrap(): Promise<void> {
 
   registerIpc()
   createMainWindow()
+
+  // v3.0.3：应用自更新（electron-updater；dev 不启用，见 updater.ts 守卫）
+  initAppUpdater((state) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send(CH.APP_UPDATE_STATE, state)
+    }
+  })
 
   if (settings.get().float.enabled) {
     float.open()

@@ -1,6 +1,6 @@
 {
   "name": "softgraph",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "SoftGraph — 软件图谱与磁盘清理工具",
   "main": "./out/main/index.js",
   "author": "SoftGraph Team",
@@ -46,9 +46,9 @@
     "release": "node scripts/publish-release.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "sql.js": "^1.11.0"
   },
-  "optionalDependencies": {},
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",

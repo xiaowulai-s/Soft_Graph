@@ -2,8 +2,9 @@
 /**
  * 设置抽屉：设置（FR-15）/ 浮窗（模块二控制面板）/ 隔离区（FR-11）/ 规则库 / 关于
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '@shared/ipc'
+import type { AppUpdateState } from '@shared/types'
 import type {
   AppSettings,
   FloatInstanceSettings,
@@ -198,6 +199,38 @@ const instOrderedPlugins = computed(() => {
   const off = plugins.value.filter((p) => !order.includes(p.id))
   return [...on, ...off]
 })
+
+// ── 应用自更新（v3.0.3） ──
+const appUpdate = ref<AppUpdateState | null>(null)
+let appUpdateUnsub: (() => void) | null = null
+onMounted(() => {
+  appUpdateUnsub = window.api.onAppUpdateState((st) => {
+    appUpdate.value = st
+  })
+})
+onBeforeUnmount(() => {
+  appUpdateUnsub?.()
+  appUpdateUnsub = null
+})
+
+async function checkAppUpdate(): Promise<void> {
+  appUpdate.value = { phase: 'checking' }
+  try {
+    const r = await window.api.appUpdateCheck()
+    if (r.available) appUpdate.value = { phase: 'available', version: r.version ?? '' }
+    else appUpdate.value = { phase: 'not-available', version: r.version ?? '' }
+  } catch (e) {
+    appUpdate.value = { phase: 'error', message: (e as Error).message }
+  }
+}
+
+async function downloadAppUpdate(): Promise<void> {
+  await window.api.appUpdateDownload()
+}
+
+function installAppUpdate(): void {
+  window.api.appUpdateInstall()
+}
 
 function openPluginDir(): void {
   void window.api.floatOpenPluginDir()
@@ -709,6 +742,32 @@ function daysLeft(r: QuarantineRecord): string {
                 </span>
               </div>
               <div v-if="rulesText" class="sd-hint" :class="rulesOk ? '' : 'warn'">{{ rulesText }}</div>
+            </div>
+
+            <!-- 应用自更新（v3.0.3，electron-updater） -->
+            <div class="sd-row col">
+              <label>应用更新</label>
+              <div class="sd-actions">
+                <button class="ghost" :disabled="appUpdate?.phase === 'checking' || appUpdate?.phase === 'downloading'" @click="checkAppUpdate">
+                  {{ appUpdate?.phase === 'checking' ? '检查中…' : '检查应用更新' }}
+                </button>
+                <button v-if="appUpdate?.phase === 'available'" class="ghost" @click="downloadAppUpdate">
+                  下载 v{{ appUpdate.version }}
+                </button>
+                <button v-if="appUpdate?.phase === 'downloaded'" class="ghost" @click="installAppUpdate">
+                  重启并安装 v{{ appUpdate.version }}
+                </button>
+              </div>
+              <div v-if="appUpdate?.phase === 'downloading'" class="sd-hint">
+                下载中 {{ appUpdate.percent }}%（{{ (appUpdate.bytesPerSecond / 1048576).toFixed(1) }} MB/s）
+              </div>
+              <div v-else-if="appUpdate?.phase === 'not-available'" class="sd-hint">已是最新版本（v{{ appUpdate.version }}）</div>
+              <div v-else-if="appUpdate?.phase === 'downloaded'" class="sd-hint">下载完成，点「重启并安装」完成更新</div>
+              <div v-else-if="appUpdate?.phase === 'error'" class="sd-hint warn">更新失败：{{ appUpdate.message }}</div>
+              <div v-else-if="appUpdate?.phase === 'available'" class="sd-hint">发现新版本 v{{ appUpdate.version }}，点「下载」获取</div>
+              <div class="sd-hint sd-inline">
+                启动后自动检查（每 24h 一次），下载需手动确认；下载走系统代理。
+              </div>
             </div>
           </section>
         </template>

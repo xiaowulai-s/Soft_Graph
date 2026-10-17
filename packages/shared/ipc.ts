@@ -111,6 +111,11 @@ export const CH = {
   FLOAT_PLUGIN_INSTALL: 'float:pluginInstall',
   FLOAT_PLUGIN_APPROVE: 'float:pluginApprove',
   FLOAT_PLUGIN_REMOVE: 'float:pluginRemove',
+  /** v3.0.3：应用自更新（electron-updater） */
+  APP_UPDATE_CHECK: 'app:updateCheck',
+  APP_UPDATE_DOWNLOAD: 'app:updateDownload',
+  APP_UPDATE_INSTALL: 'app:updateInstall',
+  APP_UPDATE_STATE: 'app:updateState',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -223,6 +228,11 @@ export interface SoftGraphApi {
   floatPluginApprove(payload: { id: string; permissions: string[] }): Promise<import('./types').FloatPluginManifest[]>
   /** F2：删除外部插件 */
   floatPluginRemove(id: string): Promise<{ ok: boolean; error?: string }>
+  /** 应用自更新 */
+  appUpdateCheck(): Promise<{ available: boolean; version?: string }>
+  appUpdateDownload(): Promise<void>
+  appUpdateInstall(): void
+  onAppUpdateState(cb: (state: import('./types').AppUpdateState) => void): () => void
   floatDrag(payload: { dx: number; dy: number }): Promise<void>
   floatDragEnd(): Promise<void>
   floatPeek(entered: boolean): Promise<void>

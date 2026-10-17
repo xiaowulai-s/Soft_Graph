@@ -608,3 +608,13 @@ export interface FileDetail {
   exists: boolean
   isDir: boolean
 }
+
+/** v3.0.3 应用自更新状态（electron-updater 事件归一化） */
+export type AppUpdateState =
+  | { phase: 'idle' }
+  | { phase: 'checking' }
+  | { phase: 'not-available'; version: string }
+  | { phase: 'available'; version: string; releaseNotes?: string }
+  | { phase: 'downloading'; percent: number; bytesPerSecond: number }
+  | { phase: 'downloaded'; version: string }
+  | { phase: 'error'; message: string }

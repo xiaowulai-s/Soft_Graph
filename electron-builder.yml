@@ -51,3 +51,9 @@ portable:
 compression: normal
 npmRebuild: false
 buildDependenciesFromSource: false
+
+# 应用自更新（electron-updater）：发布到 GitHub Releases，构建产出 latest.yml + blockmap
+publish:
+  provider: github
+  owner: xiaowulai-s
+  repo: Soft_Graph

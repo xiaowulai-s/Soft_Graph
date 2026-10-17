@@ -170,7 +170,9 @@ async function main() {
   const byName = new Set(remote.map((a) => a.name))
   const bySize = new Map(remote.map((a) => [a.size, a.name]))
 
-  const files = readdirSync(assetDir).filter((f) => f.endsWith('.exe') || f.endsWith('.zip'))
+  const files = readdirSync(assetDir).filter(
+    (f) => f.endsWith('.exe') || f.endsWith('.zip') || f === 'latest.yml' || f.endsWith('.blockmap')
+  )
 
   // 校验值清单**先写好再进上传循环**：发布说明里写的是「见附件 SHA256SUMS.txt」，
   // 只在本地生成而不上传，等于让 Release 指向一个不存在的附件。
