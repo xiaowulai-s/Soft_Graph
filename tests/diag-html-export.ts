@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     enabledJunkCategories: [],
     advancedMode: false,
     allowDirectDelete: false,
-    rulesUpdateUrl: '',
+    rulesUpdateUrl: '', junkSchedule: { enabled: false, intervalHours: 168 },
     float: {
       enabled: false,
       plugins: [],

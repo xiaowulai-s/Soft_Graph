@@ -116,6 +116,12 @@ export const CH = {
   APP_UPDATE_DOWNLOAD: 'app:updateDownload',
   APP_UPDATE_INSTALL: 'app:updateInstall',
   APP_UPDATE_STATE: 'app:updateState',
+  /** v3.1：定时清理调度 + winget 升级管家 */
+  JUNK_SCHEDULE_RUN: 'junk:scheduleRun',
+  WINGET_LIST: 'winget:list',
+  WINGET_UPGRADE: 'winget:upgrade',
+  QUARANTINE_SHRED: 'quarantine:shred',
+  RULES_IMPORT_WINAPP2: 'rules:importWinapp2',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -192,6 +198,9 @@ export interface SoftGraphApi {
    */
   cleanElevate(itemIds: string[]): Promise<ElevateOutcome>
   quarantineList(): Promise<QuarantineRecord[]>
+  quarantineShred(ids: string[]): Promise<{ ok: number; freed: number; failed: string[] }>
+  /** Winapp2.ini 社区规则导入（弹文件选择框）；返回导入的规则数 */
+  rulesImportWinapp2(): Promise<{ imported: number; skipped: number }>
   quarantineRestore(payload: { ids: string[] }): Promise<{ ok: number; failed: string[] }>
   quarantinePurge(payload: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }>
 
@@ -233,6 +242,11 @@ export interface SoftGraphApi {
   appUpdateDownload(): Promise<void>
   appUpdateInstall(): void
   onAppUpdateState(cb: (state: import('./types').AppUpdateState) => void): () => void
+  /** 定时清理：立即执行一次调度清理（诊断用）；返回 cleaned 项数 */
+  junkScheduleRun(): Promise<{ cleaned: number; freedBytes: number }>
+  /** winget 升级管家 */
+  wingetList(): Promise<import('./types').WingetUpgrade[]>
+  wingetUpgrade(id: string): Promise<{ ok: boolean; output?: string }>
   floatDrag(payload: { dx: number; dy: number }): Promise<void>
   floatDragEnd(): Promise<void>
   floatPeek(entered: boolean): Promise<void>

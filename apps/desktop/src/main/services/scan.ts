@@ -42,6 +42,7 @@ import { loadRules, loadRulesSync, type RuleSet } from '@junk/engine'
 import { scanJunk, type JunkScanContext } from '@junk/scanner'
 import type { CacheFile } from '@junk/incremental'
 import { log, logger } from './logger'
+import * as crypto from 'node:crypto'
 import { buildPlan, execute, listQuarantine, purge, restore } from '@junk/cleaner'
 import { buildElevatedTask } from '@junk/elevated'
 import { AuditLog } from '@junk/audit'
@@ -1065,6 +1066,176 @@ export class ScanService {
     })
     void logger().flushNow()
     return r
+  }
+
+  /**
+   * v3.1 P1-1：Winapp2.ini 社区规则导入 —— 弹文件框 → 解析 → 合并进本地规则文件 → 失效缓存。
+   * 幂等：同 name 的 [社区] 规则已存在则跳过。
+   */
+  async importWinapp2(): Promise<{ imported: number; skipped: number }> {
+    const { dialog } = await import('electron')
+    const w = (await import('electron')).BrowserWindow.getAllWindows()[0]
+    const r = await dialog.showOpenDialog(w, {
+      title: '选择 Winapp2.ini',
+      filters: [{ name: 'Winapp2.ini', extensions: ['ini'] }],
+      properties: ['openFile']
+    })
+    if (r.canceled || !r.filePaths[0]) return { imported: 0, skipped: 0 }
+    const { parseWinapp2, convertSections } = await import('@shared/winapp2')
+    const fs = await import('node:fs/promises')
+    const text = await fs.readFile(r.filePaths[0], 'utf8')
+    const sections = parseWinapp2(text)
+    const converted = convertSections(sections)
+    const local = JSON.parse(await fs.readFile(this.paths.rulesFile, 'utf8')) as {
+      rules: { id: string; name?: string }[]
+      _version?: number
+      updatedAt?: string
+    }
+    const existingNames = new Set((local.rules ?? []).filter((x) => x.name?.startsWith('[社区]')).map((x) => x.name))
+    const existingIds = new Set((local.rules ?? []).map((x) => x.id))
+    let nextId = 101
+    const fresh: { id: string; name?: string }[] = []
+    let skipped = 0
+    for (const rule of converted) {
+      if (existingNames.has(rule.name) || existingIds.has(rule.id)) {
+        skipped++
+        continue
+      }
+      while (existingIds.has(`GC-${nextId}`)) nextId++
+      if (nextId > 999) break
+      fresh.push({ ...rule, id: `GC-${nextId}` })
+      existingIds.add(`GC-${nextId}`)
+      nextId++
+    }
+    if (fresh.length) {
+      local.rules = [...(local.rules ?? []), ...fresh]
+      local.updatedAt = new Date().toISOString().slice(0, 10)
+      const tmp = this.paths.rulesFile + '.importing'
+      await fs.writeFile(tmp, JSON.stringify(local, null, 2), 'utf8')
+      await fs.rename(tmp, this.paths.rulesFile)
+      this.invalidateRules()
+      await this.rules() // 立即重载
+    }
+    await import('./logger').then((m) => m.logger().info('rules', 'Winapp2 导入完成', { imported: fresh.length, skipped }))
+    void logger().flushNow()
+    return { imported: fresh.length, skipped }
+  }
+
+  /**
+   * v3.1 P0-1：定时静默清理 —— 到期则扫描 defaultSelected 分类并隔离清理。
+   * 返回 null = 未到期/未启用/扫描进行中。
+   */
+  async maybeRunScheduledClean(): Promise<{ cleaned: number; freedBytes: number } | null> {
+    const st = this.settings.get()
+    const lastRunAt = Number(this.store.getKv('junk:schedule:lastRunAt') ?? '0')
+    const { isScheduleDue } = await import('@shared/schedule')
+    const chk = isScheduleDue(st.junkSchedule ?? { enabled: false, intervalHours: 168 }, lastRunAt)
+    if (!chk.due) return null
+    const ids = await this.oneClickItems()
+    if (!ids.length) {
+      this.store.setKv('junk:schedule:lastRunAt', String(Date.now()))
+      return { cleaned: 0, freedBytes: 0 }
+    }
+    const r = await this.clean(ids, true)
+    this.store.setKv('junk:schedule:lastRunAt', String(Date.now()))
+    await import('./logger').then((m) => m.logger().info('schedule', '定时静默清理完成', { cleaned: r.ok, freedBytes: r.freedBytes }))
+    void logger().flushNow()
+    return { cleaned: r.ok, freedBytes: r.freedBytes }
+  }
+
+  /** winget 升级管家（v3.1 P0-2）：列出可升级软件 */
+  async wingetList(): Promise<import('@shared/types').WingetUpgrade[]> {
+    const { spawn } = await import('node:child_process')
+    return new Promise((resolve) => {
+      const child = spawn('winget', ['upgrade', '--disable-interactivity'], { windowsHide: true })
+      let raw = Buffer.alloc(0)
+      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.on('error', () => resolve([])) // winget 未安装
+      child.on('close', async () => {
+        // winget 输出为控制台码页（中文 GBK）——必须 buffer 解码，不能直接 toString
+        let text = raw.toString('utf8')
+        try {
+          const u = await import('node:util')
+          text = new u.TextDecoder('gbk').decode(raw)
+        } catch {
+          /* 保底 utf8 */
+        }
+        void import('@shared/schedule').then((m) => resolve(m.parseWingetUpgradeOutput(text)))
+      })
+    })
+  }
+
+  /** winget 升级管家（v3.1 P0-2）：静默升级单个软件 */
+  async wingetUpgrade(id: string): Promise<{ ok: boolean; output?: string }> {
+    const { spawn } = await import('node:child_process')
+    return new Promise((resolve) => {
+      // id 来自我们自己的解析结果（winget Id 格式白名单字符），防注入
+      if (!/^[A-Za-z0-9.\-_]+$/.test(id)) return resolve({ ok: false, output: '非法软件 Id' })
+      const child = spawn('winget', ['upgrade', '--id', id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'], { windowsHide: true })
+      let raw = Buffer.alloc(0)
+      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.on('error', (e) => resolve({ ok: false, output: e.message }))
+      child.on('close', async (code) => {
+        const u = await import('node:util')
+        resolve({ ok: code === 0, output: new u.TextDecoder('gbk').decode(raw).slice(-4000) })
+      })
+    })
+  }
+
+  /**
+   * v3.1 P0-4：隔离区粉碎 —— 对选中条目先单遍随机覆写再删除。
+   * 仅允许作用于隔离区目录内的文件（路径必须以 quarantineDir 开头，防越权覆写）。
+   */
+  async quarantineShred(ids: string[]): Promise<{ ok: number; freed: number; failed: string[] }> {
+    const records = (await this.quarantineList()).filter((r) => ids.includes(r.id))
+    const root = this.paths.quarantineDir.toLowerCase()
+    const fs = await import('node:fs/promises')
+    const results: { path: string; sizeBytes: number; ok: boolean }[] = []
+    let freed = 0
+    for (const rec of records) {
+      const target = rec.quarantinedPath
+      const okPath = target.toLowerCase().startsWith(root)
+      try {
+        if (!okPath) throw new Error('路径不在隔离区内（拒绝覆写）')
+        const st = await fs.stat(target)
+        if (st.isFile()) {
+          const fh = await fs.open(target, 'r+')
+          try {
+            const CHUNK = 1 << 20
+            const buf = Buffer.alloc(CHUNK)
+            let pos = 0
+            while (pos < st.size) {
+              const n = Math.min(CHUNK, st.size - pos)
+              crypto.randomFillSync(buf, 0, n)
+              await fh.write(buf, 0, n, pos)
+              pos += n
+            }
+          } finally {
+            await fh.close()
+          }
+        }
+        await fs.rm(target, { recursive: true, force: true })
+        freed += rec.sizeBytes
+        results.push({ path: rec.originalPath, sizeBytes: rec.sizeBytes, ok: true })
+      } catch (e) {
+        results.push({ path: rec.originalPath, sizeBytes: rec.sizeBytes, ok: false })
+        await import('./logger').then((m) => m.logger().warn('shred', `粉碎失败：${rec.originalPath}`, { error: String((e as Error).message) }))
+      }
+    }
+    const failed = results.filter((r) => !r.ok).map((r) => r.path)
+    const ok = results.filter((r) => r.ok).length
+    // 审计（E4）：粉碎是不可逆动作，必须留痕
+    await this.audit.append({
+      ts: Date.now(),
+      action: 'shred',
+      taskId: 'shred_' + Date.now(),
+      freedBytes: freed,
+      results
+    })
+    void logger().flushNow()
+    return { ok, freed, failed }
   }
 
   async quarantinePurge(opts: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }> {

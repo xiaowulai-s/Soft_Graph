@@ -552,6 +552,21 @@ function registerIpc(): void {
     await downloadAppUpdate()
   })
   h(CH.APP_UPDATE_INSTALL, () => quitAndInstallAppUpdate())
+  // v3.1：定时清理 + winget 升级管家
+  h(CH.JUNK_SCHEDULE_RUN, async () => {
+    const r = await scan.maybeRunScheduledClean()
+    return r ?? { cleaned: 0, freedBytes: 0 }
+  })
+  h(CH.WINGET_LIST, async () => scan.wingetList())
+  h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
+  h(CH.WINGET_UPGRADE, async (payload: { id: string }) => scan.wingetUpgrade(payload.id))
+  h(
+    CH.QUARANTINE_SHRED,
+    async (payload: { ids: string[] }) => {
+      const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).slice(0, 10000) : []
+      return scan.quarantineShred(ids)
+    }
+  )
   h(CH.FLOAT_PLUGIN_DIR, async () => {
     await fs.mkdir(registry.externalDir, { recursive: true }).catch(() => {})
     void shell.openPath(registry.externalDir)
@@ -698,6 +713,10 @@ async function bootstrap(): Promise<void> {
       w.webContents.send(CH.APP_UPDATE_STATE, state)
     }
   })
+
+  // v3.1：定时静默清理调度器（每 15 分钟检查是否到期；到期由 maybeRunScheduledClean 决定执行）
+  setInterval(() => void scan.maybeRunScheduledClean().catch(() => {}), 15 * 60_000)
+  setTimeout(() => void scan.maybeRunScheduledClean().catch(() => {}), 2 * 60_000)
 
   if (settings.get().float.enabled) {
     float.open()

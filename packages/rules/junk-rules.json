@@ -547,7 +547,33 @@
         ],
         "maxDepth": 6
       }
+    },
+    {
+      "id": "GC-17",
+      "name": "浏览器隐私数据",
+      "description": "Chrome / Edge / Firefox 的 Cookie、浏览历史与会话数据（hint 级仅盘点：清理后会登出所有网站、丢失历史，是否清理由用户决定）",
+      "risk": "hint",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Network",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Sessions",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Network",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Sessions",
+          "%APPDATA%\\Mozilla\\Firefox\\Profiles"
+        ],
+        "patterns": [
+          "Cookies",
+          "Cookies-journal",
+          "History",
+          "History-journal",
+          "sessions.bin",
+          "sessionstore*.jsonlz4",
+          "recovery.jsonlz4"
+        ],
+        "maxDepth": 4
+      }
     }
   ],
-  "_version": 4
+  "_version": 5
 }

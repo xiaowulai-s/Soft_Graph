@@ -89,6 +89,7 @@ export function defaultSettings(): AppSettings {
     advancedMode: false,
     allowDirectDelete: false,
     rulesUpdateUrl: '',
+    junkSchedule: { enabled: false, intervalHours: 168 },
     float: defaultFloatSettings()
   }
 }

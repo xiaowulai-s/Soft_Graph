@@ -85,7 +85,12 @@ const api: SoftGraphApi = {
   appUpdateCheck: () => ipcRenderer.invoke(CH.APP_UPDATE_CHECK),
   appUpdateDownload: () => ipcRenderer.invoke(CH.APP_UPDATE_DOWNLOAD),
   appUpdateInstall: () => ipcRenderer.send(CH.APP_UPDATE_INSTALL),
-  onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {
+    rulesImportWinapp2: () => ipcRenderer.invoke(CH.RULES_IMPORT_WINAPP2),
+  quarantineShred: (ids: string[]) => ipcRenderer.invoke(CH.QUARANTINE_SHRED, { ids }),
+  junkScheduleRun: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_RUN),
+  wingetList: () => ipcRenderer.invoke(CH.WINGET_LIST),
+  wingetUpgrade: (id: string) => ipcRenderer.invoke(CH.WINGET_UPGRADE, { id }),
+onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {
     const l = (_e: unknown, state: AppUpdateState): void => cb(state)
     ipcRenderer.on(CH.APP_UPDATE_STATE, l as never)
     return () => ipcRenderer.removeListener(CH.APP_UPDATE_STATE, l as never)

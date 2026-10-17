@@ -219,6 +219,7 @@ export type AuditAction =
   | 'reboot-delete'
   | 'restore'
   | 'purge'
+  | 'shred'
   /** 注册表残留清理（v3.0.0 · M4） */
   | 'registry-clean'
   /** 注册表备份还原 */
@@ -591,7 +592,17 @@ export interface AppSettings {
   allowDirectDelete: boolean
   /** 规则库在线更新源（HTTPS，需签名匹配才生效；空 = 禁用在线更新） */
   rulesUpdateUrl: string
+  /** v3.1 定时静默清理：到期自动扫描 defaultSelected 分类并隔离清理 */
+  junkSchedule: { enabled: boolean; intervalHours: number }
   float: FloatSettings
+}
+
+/** v3.1 winget 可升级软件 */
+export interface WingetUpgrade {
+  id: string
+  name: string
+  version: string
+  available: string
 }
 
 export interface FileDetail {
