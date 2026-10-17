@@ -4,6 +4,7 @@ node_modules/
 # 构建产物
 out/
 dist/
+!packages/rules/dist/
 release/
 
 # 临时与调试产物

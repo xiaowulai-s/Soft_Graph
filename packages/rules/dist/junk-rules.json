@@ -1,0 +1,553 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-16",
+  "rules": [
+    {
+      "id": "GC-01",
+      "name": "系统临时文件",
+      "description": "用户与系统 TEMP 目录下的临时文件，程序退出后通常不再需要",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%TEMP%",
+          "%WINDIR%\\Temp",
+          "%LOCALAPPDATA%\\Temp"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "exclude": [
+          "**\\*.lock",
+          "**\\SoftGraph\\**"
+        ],
+        "maxAgeDays": 1,
+        "minSizeBytes": 0,
+        "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-02",
+      "name": "回收站",
+      "description": "各磁盘回收站内已删除文件，清空后无法通过回收站还原",
+      "risk": "low",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%SG_DRIVES%\\$Recycle.Bin"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 3
+      }
+    },
+    {
+      "id": "GC-03",
+      "name": "缩略图与图标缓存",
+      "description": "资源管理器缩略图与图标缓存数据库，删除后系统会自动重建",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer",
+          "%LOCALAPPDATA%\\IconCache.db"
+        ],
+        "patterns": [
+          "thumbcache_*.db",
+          "iconcache_*.db",
+          "IconCache.db"
+        ],
+        "maxDepth": 1
+      }
+    },
+    {
+      "id": "GC-04",
+      "name": "浏览器缓存",
+      "description": "Chrome / Edge / Firefox 的网页缓存、代码缓存与 GPU 缓存",
+      "risk": "low",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Code Cache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\GPUCache",
+          "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Code Cache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\GPUCache",
+          "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles",
+          "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cache",
+          "%APPDATA%\\Mozilla\\Firefox\\Profiles"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "exclude": [
+          "**\\index-dir\\*",
+          "**\\*.sqlite",
+          "**\\logins.json",
+          "**\\key4.db",
+          "**\\places.sqlite"
+        ],
+        "maxAgeDays": 0,
+        "minSizeBytes": 0,
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-05",
+      "name": "Windows 更新缓存",
+      "description": "Windows Update 已下载的安装包，删除后系统会在需要时重新下载",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%WINDIR%\\SoftwareDistribution\\Download"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 4
+      }
+    },
+    {
+      "id": "GC-06",
+      "name": "旧系统残留",
+      "description": "系统升级后保留的旧版本目录，删除后无法回退到上一个 Windows 版本",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%SYSTEMDRIVE%\\Windows.old",
+          "%SYSTEMDRIVE%\\$WINDOWS.~BT",
+          "%SYSTEMDRIVE%\\$WINDOWS.~WS",
+          "%SYSTEMDRIVE%\\$Windows.~Q"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "wholeDir": true,
+        "maxDepth": 2
+      }
+    },
+    {
+      "id": "GC-07",
+      "name": "日志与崩溃转储",
+      "description": "应用日志、内存转储与 Windows 错误报告，仅在排障时需要",
+      "risk": "medium",
+      "defaultSelected": true,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\Microsoft\\Windows\\WER",
+          "%PROGRAMDATA%\\Microsoft\\Windows\\WER",
+          "%WINDIR%\\Logs",
+          "%WINDIR%\\Minidump",
+          "%LOCALAPPDATA%\\CrashDumps",
+          "%LOCALAPPDATA%\\Temp"
+        ],
+        "patterns": [
+          "*.log",
+          "*.dmp",
+          "*.mdmp",
+          "*.hdmp",
+          "*.etl",
+          "*.evtx.bak",
+          "Report*"
+        ],
+        "exclude": [
+          "**\\WindowsUpdate.log"
+        ],
+        "maxAgeDays": 3,
+        "minSizeBytes": 0,
+        "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-08",
+      "name": "卸载残留目录",
+      "description": "软件卸载后遗留的空目录与 AppData 孤儿目录",
+      "risk": "medium",
+      "defaultSelected": false,
+      "algorithm": "orphan",
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%",
+          "%APPDATA%",
+          "%PROGRAMFILES%",
+          "%PROGRAMFILES(X86)%"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 2
+      },
+      "options": {
+        "maxDirBytes": 209715200
+      }
+    },
+    {
+      "id": "GC-09",
+      "name": "安装包残留",
+      "description": "下载目录中的安装包与 Windows\\Installer 中的孤儿缓存包",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%SG_DOWNLOADS%",
+          "%WINDIR%\\Installer"
+        ],
+        "patterns": [
+          "*.msi",
+          "*.msp",
+          "*.exe",
+          "*.msu",
+          "*.cab"
+        ],
+        "maxAgeDays": 30,
+        "minSizeBytes": 1048576,
+        "maxDepth": 2
+      }
+    },
+    {
+      "id": "GC-10",
+      "name": "开发包管理器缓存",
+      "description": "npm / pip / NuGet / Maven / Gradle / yarn 等包管理器的本地缓存",
+      "risk": "low",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%LOCALAPPDATA%\\npm-cache\\_cacache",
+          "%APPDATA%\\npm-cache\\_cacache",
+          "%LOCALAPPDATA%\\pip\\cache",
+          "%LOCALAPPDATA%\\Yarn\\Cache",
+          "%USERPROFILE%\\.nuget\\packages",
+          "%USERPROFILE%\\.m2\\repository",
+          "%USERPROFILE%\\.gradle\\caches",
+          "%USERPROFILE%\\.cargo\\registry\\cache",
+          "%LOCALAPPDATA%\\pnpm\\store",
+          "%LOCALAPPDATA%\\go-build"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-11",
+      "name": "重复文件",
+      "description": "按大小分组后经三段采样哈希与全文件 SHA-256 复核确认的重复文件",
+      "risk": "medium",
+      "defaultSelected": false,
+      "algorithm": "duplicate",
+      "match": {
+        "roots": [
+          "%SG_DOWNLOADS%",
+          "%SG_DOCUMENTS%",
+          "%SG_PICTURES%",
+          "%SG_DESKTOP%"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "minSizeBytes": 1048576,
+        "maxDepth": 8
+      },
+      "options": {
+        "maxCandidates": 60000,
+        "sampleBytes": 65536
+      }
+    },
+    {
+      "id": "GC-12",
+      "name": "超大文件",
+      "description": "体积超过 100MB 的文件 TOP 200，仅作占用提示，不自动勾选",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "bigfile",
+      "match": {
+        "roots": [
+          "%USERPROFILE%",
+          "%SG_DOCUMENTS%",
+          "%SG_PICTURES%",
+          "%SG_VIDEOS%",
+          "%SG_MUSIC%"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "minSizeBytes": 104857600,
+        "maxDepth": 8
+      },
+      "options": {
+        "topN": 200
+      }
+    },
+    {
+      "id": "GC-13",
+      "name": "失效快捷方式",
+      "description": "目标路径已不存在的 .lnk 快捷方式",
+      "risk": "low",
+      "defaultSelected": false,
+      "algorithm": "deadlink",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\Desktop",
+          "%PUBLIC%\\Desktop",
+          "%APPDATA%\\Microsoft\\Windows\\Start Menu",
+          "%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu",
+          "%APPDATA%\\Microsoft\\Windows\\Recent"
+        ],
+        "patterns": [
+          "*.lnk"
+        ],
+        "maxDepth": 5
+      }
+    },
+    {
+      "id": "GC-14",
+      "name": "AI 工具缓存",
+      "description": "本地模型工具的可再生缓存（HuggingFace / ModelScope / LM Studio / ComfyUI / conda；模型删除后可重新下载，故默认不勾选）",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%APPDATA%\\ComfyUI\\temp",
+          "%USERPROFILE%\\.cache\\huggingface\\hub",
+          "%USERPROFILE%\\.cache\\lm-studio",
+          "%USERPROFILE%\\.cache\\modelscope\\hub",
+          "%USERPROFILE%\\.conda\\pkgs",
+          "%USERPROFILE%\\anaconda3\\pkgs",
+          "%USERPROFILE%\\miniconda3\\pkgs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-15",
+      "name": "AI 模型库盘点",
+      "description": "Ollama / LM Studio 本地模型文件盘点（仅提示占用，不自动清理——是否删除由用户决定）",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "bigfile",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\.ollama\\models",
+          "%USERPROFILE%\\.lmstudio\\models",
+          "%USERPROFILE%\\.ollama\\models\\blobs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "minSizeBytes": 52428800,
+        "maxDepth": 8
+      },
+      "options": {
+        "topN": 100
+      }
+    },
+    {
+      "id": "GC-16",
+      "name": "AI IDE 缓存",
+      "description": "Trae / Cursor / Windsurf / WorkBuddy / Qoder / ZCode / Codeium 等 AI IDE 的 Electron 缓存族与应用日志（Cache / Code Cache / GPUCache / Dawn* / ShaderCache / CachedData / CachedExtensionVSIXs / Crashpad / Service Worker 缓存 / logs）；不触碰 extensions、workspaceStorage、会话与用户数据",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%APPDATA%\\Codeium\\Cache",
+          "%APPDATA%\\Codeium\\CachedData",
+          "%APPDATA%\\Codeium\\CachedExtensionVSIXs",
+          "%APPDATA%\\Codeium\\CachedProfilesData",
+          "%APPDATA%\\Codeium\\Code Cache",
+          "%APPDATA%\\Codeium\\Crashpad",
+          "%APPDATA%\\Codeium\\DawnCache",
+          "%APPDATA%\\Codeium\\DawnGraphiteCache",
+          "%APPDATA%\\Codeium\\DawnWebGPUCache",
+          "%APPDATA%\\Codeium\\GPUCache",
+          "%APPDATA%\\Codeium\\Service Worker\\CacheStorage",
+          "%APPDATA%\\Codeium\\ShaderCache",
+          "%APPDATA%\\Codeium\\logs",
+          "%APPDATA%\\Cursor\\Cache",
+          "%APPDATA%\\Cursor\\CachedData",
+          "%APPDATA%\\Cursor\\CachedExtensionVSIXs",
+          "%APPDATA%\\Cursor\\CachedProfilesData",
+          "%APPDATA%\\Cursor\\Code Cache",
+          "%APPDATA%\\Cursor\\Crashpad",
+          "%APPDATA%\\Cursor\\DawnCache",
+          "%APPDATA%\\Cursor\\DawnGraphiteCache",
+          "%APPDATA%\\Cursor\\DawnWebGPUCache",
+          "%APPDATA%\\Cursor\\GPUCache",
+          "%APPDATA%\\Cursor\\Service Worker\\CacheStorage",
+          "%APPDATA%\\Cursor\\ShaderCache",
+          "%APPDATA%\\Cursor\\logs",
+          "%APPDATA%\\Qoder\\Cache",
+          "%APPDATA%\\Qoder\\CachedData",
+          "%APPDATA%\\Qoder\\CachedExtensionVSIXs",
+          "%APPDATA%\\Qoder\\CachedProfilesData",
+          "%APPDATA%\\Qoder\\Code Cache",
+          "%APPDATA%\\Qoder\\Crashpad",
+          "%APPDATA%\\Qoder\\DawnCache",
+          "%APPDATA%\\Qoder\\DawnGraphiteCache",
+          "%APPDATA%\\Qoder\\DawnWebGPUCache",
+          "%APPDATA%\\Qoder\\GPUCache",
+          "%APPDATA%\\Qoder\\Service Worker\\CacheStorage",
+          "%APPDATA%\\Qoder\\ShaderCache",
+          "%APPDATA%\\Qoder\\logs",
+          "%APPDATA%\\Trae\\Cache",
+          "%APPDATA%\\Trae\\CachedData",
+          "%APPDATA%\\Trae\\CachedExtensionVSIXs",
+          "%APPDATA%\\Trae\\CachedProfilesData",
+          "%APPDATA%\\Trae\\Code Cache",
+          "%APPDATA%\\Trae\\Crashpad",
+          "%APPDATA%\\Trae\\DawnCache",
+          "%APPDATA%\\Trae\\DawnGraphiteCache",
+          "%APPDATA%\\Trae\\DawnWebGPUCache",
+          "%APPDATA%\\Trae\\GPUCache",
+          "%APPDATA%\\Trae\\Service Worker\\CacheStorage",
+          "%APPDATA%\\Trae\\ShaderCache",
+          "%APPDATA%\\Trae\\logs",
+          "%APPDATA%\\Windsurf\\Cache",
+          "%APPDATA%\\Windsurf\\CachedData",
+          "%APPDATA%\\Windsurf\\CachedExtensionVSIXs",
+          "%APPDATA%\\Windsurf\\CachedProfilesData",
+          "%APPDATA%\\Windsurf\\Code Cache",
+          "%APPDATA%\\Windsurf\\Crashpad",
+          "%APPDATA%\\Windsurf\\DawnCache",
+          "%APPDATA%\\Windsurf\\DawnGraphiteCache",
+          "%APPDATA%\\Windsurf\\DawnWebGPUCache",
+          "%APPDATA%\\Windsurf\\GPUCache",
+          "%APPDATA%\\Windsurf\\Service Worker\\CacheStorage",
+          "%APPDATA%\\Windsurf\\ShaderCache",
+          "%APPDATA%\\Windsurf\\logs",
+          "%APPDATA%\\WorkBuddy\\Cache",
+          "%APPDATA%\\WorkBuddy\\CachedData",
+          "%APPDATA%\\WorkBuddy\\CachedExtensionVSIXs",
+          "%APPDATA%\\WorkBuddy\\CachedProfilesData",
+          "%APPDATA%\\WorkBuddy\\Code Cache",
+          "%APPDATA%\\WorkBuddy\\Crashpad",
+          "%APPDATA%\\WorkBuddy\\DawnCache",
+          "%APPDATA%\\WorkBuddy\\DawnGraphiteCache",
+          "%APPDATA%\\WorkBuddy\\DawnWebGPUCache",
+          "%APPDATA%\\WorkBuddy\\GPUCache",
+          "%APPDATA%\\WorkBuddy\\Service Worker\\CacheStorage",
+          "%APPDATA%\\WorkBuddy\\ShaderCache",
+          "%APPDATA%\\WorkBuddy\\logs",
+          "%APPDATA%\\ZCode\\Cache",
+          "%APPDATA%\\ZCode\\CachedData",
+          "%APPDATA%\\ZCode\\CachedExtensionVSIXs",
+          "%APPDATA%\\ZCode\\CachedProfilesData",
+          "%APPDATA%\\ZCode\\Code Cache",
+          "%APPDATA%\\ZCode\\Crashpad",
+          "%APPDATA%\\ZCode\\DawnCache",
+          "%APPDATA%\\ZCode\\DawnGraphiteCache",
+          "%APPDATA%\\ZCode\\DawnWebGPUCache",
+          "%APPDATA%\\ZCode\\GPUCache",
+          "%APPDATA%\\ZCode\\Service Worker\\CacheStorage",
+          "%APPDATA%\\ZCode\\ShaderCache",
+          "%APPDATA%\\ZCode\\logs",
+          "%LOCALAPPDATA%\\Codeium\\Cache",
+          "%LOCALAPPDATA%\\Codeium\\CachedData",
+          "%LOCALAPPDATA%\\Codeium\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\Codeium\\CachedProfilesData",
+          "%LOCALAPPDATA%\\Codeium\\Code Cache",
+          "%LOCALAPPDATA%\\Codeium\\Crashpad",
+          "%LOCALAPPDATA%\\Codeium\\DawnCache",
+          "%LOCALAPPDATA%\\Codeium\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\Codeium\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\Codeium\\GPUCache",
+          "%LOCALAPPDATA%\\Codeium\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Codeium\\ShaderCache",
+          "%LOCALAPPDATA%\\Cursor\\Cache",
+          "%LOCALAPPDATA%\\Cursor\\CachedData",
+          "%LOCALAPPDATA%\\Cursor\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\Cursor\\CachedProfilesData",
+          "%LOCALAPPDATA%\\Cursor\\Code Cache",
+          "%LOCALAPPDATA%\\Cursor\\Crashpad",
+          "%LOCALAPPDATA%\\Cursor\\DawnCache",
+          "%LOCALAPPDATA%\\Cursor\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\Cursor\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\Cursor\\GPUCache",
+          "%LOCALAPPDATA%\\Cursor\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Cursor\\ShaderCache",
+          "%LOCALAPPDATA%\\Qoder\\Cache",
+          "%LOCALAPPDATA%\\Qoder\\CachedData",
+          "%LOCALAPPDATA%\\Qoder\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\Qoder\\CachedProfilesData",
+          "%LOCALAPPDATA%\\Qoder\\Code Cache",
+          "%LOCALAPPDATA%\\Qoder\\Crashpad",
+          "%LOCALAPPDATA%\\Qoder\\DawnCache",
+          "%LOCALAPPDATA%\\Qoder\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\Qoder\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\Qoder\\GPUCache",
+          "%LOCALAPPDATA%\\Qoder\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Qoder\\ShaderCache",
+          "%LOCALAPPDATA%\\Trae\\Cache",
+          "%LOCALAPPDATA%\\Trae\\CachedData",
+          "%LOCALAPPDATA%\\Trae\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\Trae\\CachedProfilesData",
+          "%LOCALAPPDATA%\\Trae\\Code Cache",
+          "%LOCALAPPDATA%\\Trae\\Crashpad",
+          "%LOCALAPPDATA%\\Trae\\DawnCache",
+          "%LOCALAPPDATA%\\Trae\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\Trae\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\Trae\\GPUCache",
+          "%LOCALAPPDATA%\\Trae\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Trae\\ShaderCache",
+          "%LOCALAPPDATA%\\Windsurf\\Cache",
+          "%LOCALAPPDATA%\\Windsurf\\CachedData",
+          "%LOCALAPPDATA%\\Windsurf\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\Windsurf\\CachedProfilesData",
+          "%LOCALAPPDATA%\\Windsurf\\Code Cache",
+          "%LOCALAPPDATA%\\Windsurf\\Crashpad",
+          "%LOCALAPPDATA%\\Windsurf\\DawnCache",
+          "%LOCALAPPDATA%\\Windsurf\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\Windsurf\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\Windsurf\\GPUCache",
+          "%LOCALAPPDATA%\\Windsurf\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\Windsurf\\ShaderCache",
+          "%LOCALAPPDATA%\\WorkBuddy\\Cache",
+          "%LOCALAPPDATA%\\WorkBuddy\\CachedData",
+          "%LOCALAPPDATA%\\WorkBuddy\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\WorkBuddy\\CachedProfilesData",
+          "%LOCALAPPDATA%\\WorkBuddy\\Code Cache",
+          "%LOCALAPPDATA%\\WorkBuddy\\Crashpad",
+          "%LOCALAPPDATA%\\WorkBuddy\\DawnCache",
+          "%LOCALAPPDATA%\\WorkBuddy\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\WorkBuddy\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\WorkBuddy\\GPUCache",
+          "%LOCALAPPDATA%\\WorkBuddy\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\WorkBuddy\\ShaderCache",
+          "%LOCALAPPDATA%\\ZCode\\Cache",
+          "%LOCALAPPDATA%\\ZCode\\CachedData",
+          "%LOCALAPPDATA%\\ZCode\\CachedExtensionVSIXs",
+          "%LOCALAPPDATA%\\ZCode\\CachedProfilesData",
+          "%LOCALAPPDATA%\\ZCode\\Code Cache",
+          "%LOCALAPPDATA%\\ZCode\\Crashpad",
+          "%LOCALAPPDATA%\\ZCode\\DawnCache",
+          "%LOCALAPPDATA%\\ZCode\\DawnGraphiteCache",
+          "%LOCALAPPDATA%\\ZCode\\DawnWebGPUCache",
+          "%LOCALAPPDATA%\\ZCode\\GPUCache",
+          "%LOCALAPPDATA%\\ZCode\\Service Worker\\CacheStorage",
+          "%LOCALAPPDATA%\\ZCode\\ShaderCache",
+          "%USERPROFILE%\\.codeium\\logs",
+          "%USERPROFILE%\\.cursor\\logs",
+          "%USERPROFILE%\\.qoder\\logs",
+          "%USERPROFILE%\\.trae\\logs",
+          "%USERPROFILE%\\.windsurf\\logs",
+          "%USERPROFILE%\\.workbuddy\\logs",
+          "%USERPROFILE%\\.zcode\\logs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 6
+      }
+    }
+  ],
+  "_version": 4
+}
