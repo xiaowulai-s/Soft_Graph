@@ -547,7 +547,14 @@ function registerIpc(): void {
   // v2.0.0 M5/F2：删除外部插件
   h(CH.FLOAT_PLUGIN_REMOVE, async (payload: { id: string }) => registry.removeExternal(payload.id))
   // v3.0.3：应用自更新
-  h(CH.APP_UPDATE_CHECK, async () => checkForAppUpdate())
+  h(CH.APP_UPDATE_CHECK, async () => {
+    const r = await checkForAppUpdate()
+    if (r.available && r.version) {
+      const skip = store.getKv('appupdate:skipVersion')
+      if (skip && (JSON.parse(skip) as string) === r.version) return { available: false, version: r.version }
+    }
+    return r
+  })
   h(CH.APP_UPDATE_DOWNLOAD, async () => {
     await downloadAppUpdate()
   })
@@ -560,6 +567,19 @@ function registerIpc(): void {
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
   h(CH.WINGET_UPGRADE, async (payload: { id: string }) => scan.wingetUpgrade(payload.id))
+  h(CH.WINGET_UPGRADE_ELEVATED, async (payload: { id: string }) => scan.wingetUpgradeElevated(payload.id))
+  h(CH.JUNK_SCHEDULE_INFO, async () => {
+    const lastRunAt = Number(scan.scheduleLastRunAt() ?? '0')
+    const last = scan.scheduleLastResult()
+    return lastRunAt || last ? { lastRunAt, lastCleaned: last?.cleaned ?? 0, lastFreedBytes: last?.freedBytes ?? 0 } : null
+  })
+  h(CH.APP_UPDATE_SKIP, async (payload: { version: string }) => {
+    store.setKv('appupdate:skipVersion', JSON.stringify(String(payload.version)))
+  })
+  h(CH.APP_UPDATE_SKIP_GET, async () => {
+    const raw = store.getKv('appupdate:skipVersion')
+    return raw ? (JSON.parse(raw) as string) : null
+  })
   h(
     CH.QUARANTINE_SHRED,
     async (payload: { ids: string[] }) => {

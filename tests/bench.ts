@@ -223,6 +223,29 @@ async function main(): Promise<void> {
     console.log('  警告：用户库目录解析失败，库目录相关规则将退回英文名猜测')
   }
   const ruleSet = loadRulesSync(rulesJson as never)
+  // v3.2 E3：模拟「含 500 条社区规则」的重负载场景，量化规则编译/合并成本
+  if (!QUICK) {
+    const tImport0 = performance.now()
+    const communityRules = Array.from({ length: 500 }, (_, i) => ({
+      id: `GC-${101 + i}`,
+      name: `[社区] Bench Section ${i + 1}`,
+      description: 'winapp2 模拟',
+      risk: 'medium',
+      defaultSelected: false,
+      match: {
+        roots: [`%LOCALAPPDATA%\\BenchApp${i % 10}\\Cache${i}`],
+        patterns: ['*.log', '*.tmp', 'cache_*'],
+        maxDepth: 3
+      }
+    }))
+    const merged = loadRulesSync({
+      schemaVersion: 1,
+      updatedAt: '',
+      rules: [...rulesJson.rules, ...communityRules]
+    } as never)
+    const importMs = Math.round((performance.now() - tImport0) * 10) / 10
+    console.log(`  [E3] 含 500 条社区规则：编译+合并 ${importMs}ms（规则总数 ${merged.rules.length}）`)
+  }
   if (ruleSet.warnings.length) {
     for (const w of ruleSet.warnings) console.log(`  ⚠ ${w}`)
     notes.push(...ruleSet.warnings)

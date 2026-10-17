@@ -17,6 +17,7 @@ const settings = ref<AppSettings>({
   maxDepth: 2, enabledJunkCategories: [], advancedMode: false,
   allowDirectDelete: false, rulesUpdateUrl: '',
   junkSchedule: { enabled: false, intervalHours: 168 },
+  extraScanDirs: [],
   float: { enabled: false, instances: [], theme: 'auto', opacity: 90 } as never
 })
 
@@ -35,6 +36,15 @@ async function patch(p: Partial<AppSettings>): Promise<void> {
 // ── 定时静默清理 ──
 const scheduleBusy = ref(false)
 const scheduleText = ref('')
+const schedInfo = ref<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>(null)
+async function loadSchedInfo(): Promise<void> {
+  try {
+    schedInfo.value = await window.api.junkScheduleInfo()
+  } catch {
+    /* ignore */
+  }
+}
+onMounted(() => void loadSchedInfo())
 async function runScheduleNow(): Promise<void> {
   scheduleBusy.value = true
   try {
@@ -52,14 +62,36 @@ const shredBusy = ref(false)
 const shredConfirm = ref(false)
 const shredText = ref('')
 const shredOk = ref(false)
-async function doShredAll(): Promise<void> {
+const quarItems = ref<{ id: string; originalPath: string; sizeBytes: number }[]>([])
+const quarSel = ref(new Set<string>())
+const quarLoading = ref(false)
+
+async function loadQuarantine(): Promise<void> {
+  quarLoading.value = true
+  try {
+    quarItems.value = await window.api.quarantineList()
+    quarSel.value = new Set()
+  } finally {
+    quarLoading.value = false
+  }
+}
+
+function toggleQuarSel(id: string): void {
+  const next = new Set(quarSel.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  quarSel.value = next
+}
+
+async function doShredSelected(): Promise<void> {
   shredBusy.value = true
   try {
-    const list = await window.api.quarantineList()
-    const r = await window.api.quarantineShred(list.map((x) => x.id))
+    const ids = [...quarSel.value]
+    const r = await window.api.quarantineShred(ids)
     shredOk.value = r.failed.length === 0
     shredText.value = `粉碎完成：${r.ok} 项 / 释放 ${formatBytes(r.freed)}${r.failed.length ? `，失败 ${r.failed.length} 项` : ''}`
     shredConfirm.value = false
+    await loadQuarantine()
   } catch (e) {
     shredOk.value = false
     shredText.value = `粉碎失败：${(e as Error).message}`
@@ -69,7 +101,7 @@ async function doShredAll(): Promise<void> {
 }
 
 // ── 软件升级管家（winget） ──
-const upgrades = ref<{ id: string; name: string; version: string; available: string }[]>([])
+const upgrades = ref<{ id: string; name: string; version: string; available: string; needsElevation?: boolean }[]>([])
 const wingetBusy = ref(false)
 const wingetUpgrading = ref(false)
 const wingetText = ref('')
@@ -96,7 +128,22 @@ async function upgradeOne(id: string): Promise<void> {
   try {
     const r = await window.api.wingetUpgrade(id)
     wingetOk.value = r.ok
-    wingetText.value = r.ok ? `${id} 升级完成` : `${id} 升级失败：${r.output ?? ''}`
+    wingetText.value = r.ok
+      ? `${id} 升级完成`
+      : `${id} 升级失败${r.needsElevation ? '（需要管理员权限，可点「提权重试」）' : ''}：${r.output ?? ''}`
+    await loadUpgrades()
+  } finally {
+    wingetUpgrading.value = false
+  }
+}
+
+async function upgradeOneElevated(id: string): Promise<void> {
+  wingetUpgrading.value = true
+  wingetText.value = `正在以管理员权限升级 ${id} …（请在 UAC 弹窗确认）`
+  try {
+    const r = await window.api.wingetUpgradeElevated(id)
+    wingetOk.value = r.ok
+    wingetText.value = r.ok ? `${id} 提权升级完成` : `${id} 提权升级失败：${r.output ?? ''}`
     await loadUpgrades()
   } finally {
     wingetUpgrading.value = false
@@ -192,7 +239,18 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <div v-if="scheduleText" class="mc-hint">{{ scheduleText }}</div>
+          <div v-if="schedInfo" class="mc-hint">上次自动清理：{{ new Date(schedInfo.lastRunAt).toLocaleString() }} · 清理 {{ schedInfo.lastCleaned }} 项 · 释放 {{ formatBytes(schedInfo.lastFreedBytes) }}</div>
           <div class="mc-hint dim">清理范围 = 「一键清理」相同的安全白名单项（GC 低风险默认勾选类）。应用运行期间每 15 分钟检查一次是否到期。</div>
+
+          <h4 style="margin:8px 0 0;font-size:13px">重复 / 超大文件额外扫描目录（GC-11 / GC-12）</h4>
+          <div class="mc-hint dim">每行一个绝对路径；默认只扫用户库，加了目录后重新扫描即生效。</div>
+          <textarea
+            class="mono"
+            rows="3"
+            style="width:100%;background:transparent;border:1px solid var(--border,#3a3a3a);border-radius:8px;color:inherit;padding:6px;font-size:12px"
+            :value="settings.extraScanDirs?.join('\n') ?? ''"
+            @change="patch({ extraScanDirs: ($event.target as HTMLTextAreaElement).value.split(/\n/).map((x) => x.trim()).filter(Boolean) })"
+          />
         </section>
 
         <!-- 软件升级 -->
@@ -206,8 +264,9 @@ onBeforeUnmount(() => {
           <div v-if="wingetText" class="mc-hint" :class="wingetOk ? '' : 'warn'">{{ wingetText }}</div>
           <ul v-if="upgrades.length" class="mc-list">
             <li v-for="u in upgrades" :key="u.id">
-              <span class="name">{{ u.name }}</span>
+              <span class="name">{{ u.name }}<span v-if="u.needsElevation" class="mc-hint warn">（需管理员）</span></span>
               <span class="ver mono">{{ u.version }} → {{ u.available }}</span>
+              <button v-if="u.needsElevation" class="ghost" :disabled="wingetUpgrading" @click="upgradeOneElevated(u.id)">提权重试</button>
               <button class="ghost" :disabled="wingetUpgrading" @click="upgradeOne(u.id)">升级</button>
             </li>
           </ul>
@@ -217,14 +276,22 @@ onBeforeUnmount(() => {
         <!-- 隔离区管理 -->
         <section v-if="tab === 'quarantine'" class="mc-sec">
           <div class="mc-row">
-            <button class="ghost" :disabled="shredBusy || shredConfirm" @click="shredConfirm = true">彻底粉碎隔离区</button>
-            <button v-if="shredConfirm" class="danger" @click="doShredAll">确认粉碎（不可恢复）</button>
+            <button class="ghost" :disabled="quarLoading" @click="loadQuarantine">{{ quarLoading ? '加载中…' : '刷新隔离区列表' }}</button>
+            <button class="ghost" :disabled="!quarItems.length || shredBusy || shredConfirm" @click="shredConfirm = true">粉碎选中（{{ quarSel.size }}）</button>
+            <button v-if="shredConfirm" class="danger" @click="doShredSelected">确认粉碎（不可恢复）</button>
             <button v-if="shredConfirm" class="ghost" @click="shredConfirm = false">取消</button>
           </div>
           <div v-if="shredText" class="mc-hint" :class="shredOk ? '' : 'warn'">{{ shredText }}</div>
+          <ul v-if="quarItems.length" class="mc-list">
+            <li v-for="q in quarItems" :key="q.id">
+              <input type="checkbox" :checked="quarSel.has(q.id)" @change="toggleQuarSel(q.id)" />
+              <span class="name" :title="q.originalPath">{{ q.originalPath }}</span>
+              <span class="ver mono">{{ formatBytes(q.sizeBytes) }}</span>
+            </li>
+          </ul>
+          <div v-else class="mc-hint dim">隔离区为空。</div>
           <div class="mc-hint dim">
-            对隔离区全部内容先单遍随机覆写再删除（不可恢复）。还原请在垃圾扫描页的隔离区列表操作；
-            原文件删除后的隔离副本通常已无敏感价值，确认粉碎前请三思。
+            粉碎 = 单遍随机覆写后删除（不可恢复）；还原请在垃圾扫描页的隔离区入口操作。
           </div>
         </section>
 

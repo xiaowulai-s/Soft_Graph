@@ -232,6 +232,12 @@ function installAppUpdate(): void {
   window.api.appUpdateInstall()
 }
 
+const skipText = ref('')
+async function skipAppUpdate(version: string): Promise<void> {
+  await window.api.appUpdateSkip(version)
+  skipText.value = `已跳过 v${version}，之后的版本仍会正常提示`
+}
+
 function openPluginDir(): void {
   void window.api.floatOpenPluginDir()
 }
@@ -764,7 +770,12 @@ function daysLeft(r: QuarantineRecord): string {
               <div v-else-if="appUpdate?.phase === 'not-available'" class="sd-hint">已是最新版本（v{{ appUpdate.version }}）</div>
               <div v-else-if="appUpdate?.phase === 'downloaded'" class="sd-hint">下载完成，点「重启并安装」完成更新</div>
               <div v-else-if="appUpdate?.phase === 'error'" class="sd-hint warn">更新失败：{{ appUpdate.message }}</div>
-              <div v-else-if="appUpdate?.phase === 'available'" class="sd-hint">发现新版本 v{{ appUpdate.version }}，点「下载」获取</div>
+              <template v-else-if="appUpdate?.phase === 'available'">
+                <div class="sd-hint">发现新版本 v{{ appUpdate.version }}，点「下载」获取</div>
+                <div v-if="appUpdate.releaseNotes" class="sd-hint dim" style="max-height:120px;overflow:auto">{{ appUpdate.releaseNotes.slice(0, 400) }}</div>
+                <button class="ghost" @click="skipAppUpdate(appUpdate.version)">跳过此版本</button>
+                <div v-if="skipText" class="sd-hint">{{ skipText }}</div>
+              </template>
               <div class="sd-hint sd-inline">
                 启动后自动检查（每 24h 一次），下载需手动确认；下载走系统代理。
               </div>

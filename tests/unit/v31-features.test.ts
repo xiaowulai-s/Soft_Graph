@@ -92,3 +92,37 @@ RegKey1=Software\\Foo
     }
   })
 })
+
+describe('v3.2 改进项', () => {
+  it('B1 浏览器运行时跳过 GC-17（纯函数）', async () => {
+    const { pickBrowserBlockedItems } = await import('../../packages/shared/clean-guard')
+    const items = [
+      { id: 'a', categoryId: 'GC-17' },
+      { id: 'b', categoryId: 'GC-17' },
+      { id: 'c', categoryId: 'GC-01' }
+    ]
+    assert.deepEqual(pickBrowserBlockedItems(items, []).map((x) => x.id), [])
+    const blocked = pickBrowserBlockedItems(items, ['chrome.exe'])
+    assert.deepEqual(blocked.map((x) => x.id), ['a', 'b'])
+    assert.ok(blocked[0].reason.includes('浏览器正在运行'))
+  })
+
+  it('A2 语义哈希：换行/键序不敏感，内容变则哈希变', async () => {
+    const { semHash } = await import('../../packages/junk/rules-update')
+    const a = '{"a":1,"b":2}'
+    const a2 = '{\r\n  "b": 2,\r\n  "a": 1\r\n}\r\n'
+    assert.equal(semHash(a), semHash(a2), '键序与换行不应影响语义哈希')
+    assert.notEqual(semHash(a), semHash('{"a":1,"b":3}'))
+  })
+
+  it('B2 引擎编译含用户目录注入（GC-11 扩根后仍安全）', async () => {
+    const { loadRulesSync } = await import('@junk/engine')
+    const rule = {
+      id: 'GC-11', name: '重复文件', description: '', risk: 'medium', defaultSelected: true,
+      algorithm: 'duplicate',
+      match: { roots: ['%SG_DOWNLOADS%', 'D://Custom//Photos'], patterns: ['*'], maxDepth: 8 }
+    }
+    const rs = loadRulesSync({ schemaVersion: 1, updatedAt: '', rules: [rule] } as never)
+    assert.equal(rs.rules.length, 1)
+  })
+})

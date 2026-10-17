@@ -71,6 +71,11 @@ const categories = computed<JunkCategorySummary[]>(() => {
   const filtered = focusedSector.value ? list.filter((c) => c.id === focusedSector.value) : list
   return [...filtered].sort((a, b) => b.sizeBytes - a.sizeBytes)
 })
+// v3.2 B4：社区规则（Winapp2 导入，名称以 [社区] 开头）折叠为独立分组
+const builtinCategories = computed<JunkCategorySummary[]>(() => categories.value.filter((c) => !c.name.startsWith('[社区]')))
+const communityCategories = computed<JunkCategorySummary[]>(() => categories.value.filter((c) => c.name.startsWith('[社区]')))
+const communityOpen = ref(false)
+
 
 const selectedBytes = computed(() => {
   const s = props.summary
@@ -329,7 +334,7 @@ const RISK_TIP: Record<RiskLevel, string> = {
 
       <!-- 分类列表 -->
       <div class="js-list">
-        <div v-for="c in categories" :key="c.id" class="js-cat" :class="{ open: expandedId === c.id }">
+        <div v-for="c in builtinCategories" :key="c.id" class="js-cat" :class="{ open: expandedId === c.id }">
           <div class="js-cat-row">
             <input
               type="checkbox"
@@ -428,6 +433,28 @@ const RISK_TIP: Record<RiskLevel, string> = {
             一键删除
           </button>
         </div>
+        <!-- v3.2 B4：社区规则折叠分组 -->
+        <div v-if="communityCategories.length" class="js-cat" :class="{ open: communityOpen }">
+          <div class="js-cat-row" @click="communityOpen = !communityOpen">
+            <span class="js-cat-name">社区规则（Winapp2）</span>
+            <span class="dim">{{ communityCategories.length }} 类 · 共 {{ formatBytes(communityCategories.reduce((n, c) => n + c.sizeBytes, 0)) }}</span>
+            <span class="js-caret">{{ communityOpen ? '▾' : '▸' }}</span>
+          </div>
+          <div v-if="communityOpen" style="display:flex;flex-direction:column;gap:2px">
+            <div v-for="c in communityCategories" :key="c.id" class="js-cat-row" style="padding-left:14px">
+              <input
+                type="checkbox"
+                :checked="checked.has(c.id)"
+                :disabled="c.count === 0"
+                @change="toggle(c.id)"
+                @click.stop
+              />
+              <span class="js-cat-name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="c.name">{{ c.name }}</span>
+              <span class="js-cat-size">{{ formatBytes(c.sizeBytes) }} · {{ c.count }} 项</span>
+            </div>
+          </div>
+        </div>
+
         <div class="js-foot-tip dim">
           一键删除仅作用于低风险且默认勾选的分类（可释放 {{ formatBytes(summary.oneClickBytes) }}）；
           中高风险分类必须单独确认，此规则不可在设置中关闭。

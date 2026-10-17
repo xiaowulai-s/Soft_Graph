@@ -116,6 +116,10 @@ export const CH = {
   APP_UPDATE_DOWNLOAD: 'app:updateDownload',
   APP_UPDATE_INSTALL: 'app:updateInstall',
   APP_UPDATE_STATE: 'app:updateState',
+  APP_UPDATE_SKIP: 'app:updateSkip',
+  APP_UPDATE_SKIP_GET: 'app:updateSkipGet',
+  JUNK_SCHEDULE_INFO: 'junk:scheduleInfo',
+  WINGET_UPGRADE_ELEVATED: 'winget:upgradeElevated',
   /** v3.1：定时清理调度 + winget 升级管家 */
   JUNK_SCHEDULE_RUN: 'junk:scheduleRun',
   WINGET_LIST: 'winget:list',
@@ -241,12 +245,16 @@ export interface SoftGraphApi {
   appUpdateCheck(): Promise<{ available: boolean; version?: string }>
   appUpdateDownload(): Promise<void>
   appUpdateInstall(): void
+  appUpdateSkip(version: string): void
+  appUpdateSkipGet(): Promise<string | null>
+  junkScheduleInfo(): Promise<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>
+  wingetUpgradeElevated(id: string): Promise<{ ok: boolean; needsElevation?: boolean; output?: string }>
   onAppUpdateState(cb: (state: import('./types').AppUpdateState) => void): () => void
   /** 定时清理：立即执行一次调度清理（诊断用）；返回 cleaned 项数 */
   junkScheduleRun(): Promise<{ cleaned: number; freedBytes: number }>
   /** winget 升级管家 */
   wingetList(): Promise<import('./types').WingetUpgrade[]>
-  wingetUpgrade(id: string): Promise<{ ok: boolean; output?: string }>
+  wingetUpgrade(id: string): Promise<{ ok: boolean; needsElevation?: boolean; output?: string }>
   floatDrag(payload: { dx: number; dy: number }): Promise<void>
   floatDragEnd(): Promise<void>
   floatPeek(entered: boolean): Promise<void>

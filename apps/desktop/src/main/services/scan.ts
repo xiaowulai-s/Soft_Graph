@@ -84,12 +84,29 @@ export class ScanService {
   async rules(): Promise<RuleSet> {
     if (this.ruleSet) return this.ruleSet
     await this.resolveShellFolders()
-    try {
-      this.ruleSet = await loadRules(this.paths.rulesFile)
-    } catch {
-      // 用户目录规则文件缺失/损坏 → 用打包内置规则兜底
-      this.ruleSet = loadRulesSync(builtinRules as never)
+    // v3.2 A1 分区模型：内置（随应用）⊕ 社区区 ⊕ 用户区，按 id 去重、内置优先
+    const base = loadRulesSync(builtinRules as never)
+    const byId = new Map(base.rules.map((r) => [r.id, r]))
+    for (const zone of [this.paths.communityRulesFile, this.paths.userRulesFile]) {
+      try {
+        const text = await (await import('node:fs/promises')).readFile(zone, 'utf8')
+        const rs = loadRulesSync(JSON.parse(text) as never)
+        for (const r of rs.rules) if (!byId.has(r.id)) byId.set(r.id, r)
+      } catch {
+        /* 区文件缺失/损坏按空处理 */
+      }
     }
+    // v3.2 B2：用户自定义扫描目录注入 GC-11（重复）/GC-12（超大文件）
+    const extra = this.settings.get().extraScanDirs ?? []
+    if (extra.length) {
+      for (const target of ['GC-11', 'GC-12']) {
+        const rule = byId.get(target)
+        if (!rule) continue
+        const mergedRoots = [...new Set([...rule.roots, ...extra])]
+        byId.set(target, { ...rule, roots: mergedRoots })
+      }
+    }
+    this.ruleSet = { ...base, rules: [...byId.values()] }
     return this.ruleSet
   }
 
@@ -757,7 +774,20 @@ export class ScanService {
   }
 
   async clean(itemIds: string[], useQuarantine: boolean): Promise<CleanResult> {
-    const items = this.store.junkByIds(itemIds)
+    let pendingIds = itemIds
+    let items = this.store.junkByIds(pendingIds)
+    // v3.2 B1：浏览器运行中 → GC-17 隐私项跳过（防止损坏 Cookie/会话）
+    let browserBlocked: { id: string; reason: string }[] = []
+    if (items.some((i) => i.categoryId === 'GC-17')) {
+      const browsers = await browsersRunning()
+      const { pickBrowserBlockedItems } = await import('@shared/clean-guard')
+      browserBlocked = pickBrowserBlockedItems(items, browsers)
+      if (browserBlocked.length) {
+        const blockedIds = new Set(browserBlocked.map((b) => b.id))
+        items = items.filter((i) => !blockedIds.has(i.id))
+        pendingIds = pendingIds.filter((id) => !blockedIds.has(id))
+      }
+    }
     const plan = await buildPlan(items, useQuarantine)
     const st = this.settings.get()
 
@@ -790,10 +820,16 @@ export class ScanService {
       taskId: plan.taskId,
       batchId: result.quarantineId,
       freedBytes: result.freedBytes,
-      results: plan.items.map((i) => {
-        const f = result.failed.find((x) => x.path === i.fullPath)
-        return { path: i.fullPath, sizeBytes: i.sizeBytes, ok: !f, reason: f?.reason }
-      })
+      results: [
+        ...plan.items.map((i) => {
+          const f = result.failed.find((x) => x.path === i.fullPath)
+          return { path: i.fullPath, sizeBytes: i.sizeBytes, ok: !f, reason: f?.reason }
+        }),
+        ...browserBlocked.map((b) => {
+          const hit = (this.store.junkByIds([b.id])[0] ?? null) as { fullPath?: string; sizeBytes?: number } | null
+          return { path: hit?.fullPath ?? b.id, sizeBytes: hit?.sizeBytes ?? 0, ok: false, reason: b.reason }
+        })
+      ]
     })
     void logger().flushNow()
     return result
@@ -901,12 +937,19 @@ export class ScanService {
     const r = await applyRulesUpdate({
       currentVersion: current,
       publicKeyHex: RULES_SIGNING_PUBKEY || process.env.SG_RULES_PUBKEY || '',
-      rulesFile: this.paths.rulesFile,
+      rulesFile: this.paths.communityRulesFile, // v3.2 A1：在线更新写入社区区
       baseUrl: url,
-      fallbackUrls
+      fallbackUrls,
+      expectedContentHash: this.store.getKv('rules:contentHash') ?? undefined // A2 哈希即真相
     })
+    if (r.skippedSame) {
+      // A2：内容一致 → 视为已最新（不写盘不推进版本）
+      log.info('rules', '规则内容一致，无需更新', { hash: r.contentHash?.slice(0, 12) })
+      return { ok: false, reason: '已是最新内容' }
+    }
     if (r.ok && r.version) {
       this.store.setKv('rules:version', JSON.stringify(r.version))
+      if (r.contentHash) this.store.setKv('rules:contentHash', r.contentHash)
       this.invalidateRules()
       await this.rules() // 立即重载进内存
       log.info('rules', '规则库已更新', { from: current, to: r.version, count: r.ruleCount })
@@ -1086,7 +1129,7 @@ export class ScanService {
     const text = await fs.readFile(r.filePaths[0], 'utf8')
     const sections = parseWinapp2(text)
     const converted = convertSections(sections)
-    const local = JSON.parse(await fs.readFile(this.paths.rulesFile, 'utf8')) as {
+    const local = JSON.parse(await fs.readFile(this.paths.communityRulesFile, 'utf8')) as {
       rules: { id: string; name?: string }[]
       _version?: number
       updatedAt?: string
@@ -1110,15 +1153,30 @@ export class ScanService {
     if (fresh.length) {
       local.rules = [...(local.rules ?? []), ...fresh]
       local.updatedAt = new Date().toISOString().slice(0, 10)
-      const tmp = this.paths.rulesFile + '.importing'
+      const tmp = this.paths.communityRulesFile + '.importing'
       await fs.writeFile(tmp, JSON.stringify(local, null, 2), 'utf8')
-      await fs.rename(tmp, this.paths.rulesFile)
+      await fs.rename(tmp, this.paths.communityRulesFile)
       this.invalidateRules()
       await this.rules() // 立即重载
     }
     await import('./logger').then((m) => m.logger().info('rules', 'Winapp2 导入完成', { imported: fresh.length, skipped }))
     void logger().flushNow()
     return { imported: fresh.length, skipped }
+  }
+
+  /** E2：定时清理可观测性 */
+  scheduleLastRunAt(): string {
+    return this.store.getKv('junk:schedule:lastRunAt') ?? '0'
+  }
+
+  scheduleLastResult(): { cleaned: number; freedBytes: number } | null {
+    const raw = this.store.getKv('junk:schedule:lastResult')
+    if (!raw) return null
+    try {
+      return JSON.parse(raw) as { cleaned: number; freedBytes: number }
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -1138,6 +1196,7 @@ export class ScanService {
     }
     const r = await this.clean(ids, true)
     this.store.setKv('junk:schedule:lastRunAt', String(Date.now()))
+    this.store.setKv('junk:schedule:lastResult', JSON.stringify({ cleaned: r.ok, freedBytes: r.freedBytes, at: Date.now() }))
     await import('./logger').then((m) => m.logger().info('schedule', '定时静默清理完成', { cleaned: r.ok, freedBytes: r.freedBytes }))
     void logger().flushNow()
     return { cleaned: r.ok, freedBytes: r.freedBytes }
@@ -1167,12 +1226,38 @@ export class ScanService {
   }
 
   /** winget 升级管家（v3.1 P0-2）：静默升级单个软件 */
-  async wingetUpgrade(id: string): Promise<{ ok: boolean; output?: string }> {
+  async wingetUpgrade(id: string): Promise<{ ok: boolean; needsElevation?: boolean; output?: string }> {
     const { spawn } = await import('node:child_process')
     return new Promise((resolve) => {
       // id 来自我们自己的解析结果（winget Id 格式白名单字符），防注入
       if (!/^[A-Za-z0-9.\-_]+$/.test(id)) return resolve({ ok: false, output: '非法软件 Id' })
       const child = spawn('winget', ['upgrade', '--id', id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'], { windowsHide: true })
+      let raw = Buffer.alloc(0)
+      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
+      child.on('error', (e) => resolve({ ok: false, output: e.message }))
+      child.on('close', async (code) => {
+        const u = await import('node:util')
+        const output = new u.TextDecoder('gbk').decode(raw).slice(-4000)
+        // C1：需要管理员权限的包静默失败 → 标记 needsElevation 供 UI 提供提权重试
+        const needsElevation = code !== 0 && /(管理员|administrator|elevation|0x8a15)/i.test(output)
+        resolve({ ok: code === 0, needsElevation, output })
+      })
+    })
+  }
+
+  /** C1：以管理员权限静默升级单个软件（触发 UAC，等待完成） */
+  async wingetUpgradeElevated(id: string): Promise<{ ok: boolean; output?: string }> {
+    const { spawn } = await import('node:child_process')
+    return new Promise((resolve) => {
+      if (!/^[A-Za-z0-9.\-_]+$/.test(id)) return resolve({ ok: false, output: '非法软件 Id' })
+      // Start-Process -Verb RunAs 触发 UAC；-Wait 等待升级完成
+      const args = id.replace(/'/g, "''")
+      const child = spawn(
+        'powershell',
+        ['-NoProfile', '-Command', `Start-Process winget -ArgumentList 'upgrade','--id','${args}','--exact','--silent','--accept-package-agreements','--accept-source-agreements','--disable-interactivity' -Verb RunAs -Wait; exit $LASTEXITCODE`],
+        { windowsHide: true }
+      )
       let raw = Buffer.alloc(0)
       child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
       child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
@@ -1583,3 +1668,19 @@ ${rows
 
 // graphHtml（静态表格）已被 graphInteractiveHtml（M4/D5 交互式 SVG 快照）取代，
 // 如需回归纯表格导出可从 git 历史（≤ 9a84bf9）恢复。
+
+/** v3.2 B1：检测常见浏览器是否正在运行（tasklist 全量一次，避免多次进程查询） */
+export async function browsersRunning(): Promise<string[]> {
+  const { execFile } = await import('node:child_process')
+  return new Promise((resolve) => {
+    execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve([])
+      const lower = stdout.toLowerCase()
+      const found: string[] = []
+      for (const b of ['chrome.exe', 'msedge.exe', 'firefox.exe']) {
+        if (lower.includes(`"${b}"`)) found.push(b)
+      }
+      resolve(found)
+    })
+  })
+}

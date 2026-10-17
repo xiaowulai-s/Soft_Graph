@@ -309,6 +309,8 @@ export async function downloadUpdate(
 export interface ApplyOptions {
   /** 当前已安装规则的版本（kv 里存的） */
   currentVersion: number
+  /** 当前内容哈希（语义哈希）；与下载内容一致时跳过应用（A2：哈希即真相） */
+  expectedContentHash?: string
   /** 备用更新源：主源下载失败时按序尝试（raw → jsDelivr 镜像） */
   fallbackUrls?: string[]
   /** 内置公钥（hex）；为空则拒绝一切在线更新 */
@@ -327,6 +329,10 @@ export interface ApplyResult {
   reason?: string
   /** 更新前后规则数（供日志） */
   ruleCount?: number
+  /** 下载内容与当前一致而跳过（A2） */
+  skippedSame?: boolean
+  /** 下载内容的语义哈希（A2：成功/跳过时都返回） */
+  contentHash?: string
 }
 
 /**
@@ -363,6 +369,12 @@ export async function applyRulesUpdate(opts: ApplyOptions): Promise<ApplyResult>
   }
   if (!manifest || rulesText === null) {
     return { ok: false, reason: `下载失败：${lastErr?.message ?? '全部更新源不可达'}（已尝试 ${urls.length} 个源）` }
+  }
+
+  // A2：语义哈希一致 → 内容没变，跳过（不写盘、不推进版本）
+  const contentHash = semHash(rulesText)
+  if (opts.expectedContentHash && contentHash === opts.expectedContentHash) {
+    return { ok: false, skippedSame: true, contentHash, reason: '内容与当前一致，无需更新' }
   }
 
   if (typeof manifest.version !== 'number' || manifest.version <= 0) {
@@ -407,7 +419,7 @@ export async function applyRulesUpdate(opts: ApplyOptions): Promise<ApplyResult>
   await fs.writeFile(tmp, rulesText, 'utf8')
   await fs.rename(tmp, opts.rulesFile)
 
-  return { ok: true, version: manifest.version, ruleCount: ruleSet.rules.length }
+  return { ok: true, version: manifest.version, ruleCount: ruleSet.rules.length, contentHash }
 }
 
 /** 当前规则版本（kv），无记录或值损坏视为内置版本 0 */
@@ -419,4 +431,25 @@ export function parseStoredVersion(raw: string | null): number {
   } catch {
     return 0
   }
+}
+
+/** A2 语义哈希：排序键稳定序列化 + SHA-256（对键序/换行/空白不敏感；非法 JSON 退化为原文哈希） */
+export function semHash(text: string): string {
+  const { createHash } = require('node:crypto') as typeof import('node:crypto')
+  let norm: string
+  try {
+    norm = stableStringify(JSON.parse(text))
+  } catch {
+    norm = text
+  }
+  return createHash('sha256').update(norm).digest('hex')
+}
+
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map((x) => stableStringify(x)).join(',') + ']'
+  if (v !== null && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    return '{' + Object.keys(o).sort().map((k) => JSON.stringify(k) + ':' + stableStringify(o[k])).join(',') + '}'
+  }
+  return JSON.stringify(v)
 }

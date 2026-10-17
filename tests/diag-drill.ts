@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     enabledJunkCategories: [],
     advancedMode: false,
     allowDirectDelete: false,
-    rulesUpdateUrl: '', junkSchedule: { enabled: false, intervalHours: 168 },
+    rulesUpdateUrl: '', junkSchedule: { enabled: false, intervalHours: 168 }, extraScanDirs: [],
     float: {
       enabled: false,
       plugins: [],

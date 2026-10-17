@@ -19,6 +19,10 @@ export interface AppPaths {
   dbFile: string
   settingsFile: string
   rulesFile: string
+  /** v3.2 规则分区：社区区（Winapp2 导入 + 在线更新扩展区） */
+  communityRulesFile: string
+  /** v3.2 规则分区：用户自定义区（预留，永不覆盖） */
+  userRulesFile: string
   reportDir: string
   /** 垃圾扫描增量缓存（M2/A5：目录签名水位） */
   junkCacheFile: string
@@ -48,6 +52,8 @@ export function resolvePaths(): AppPaths {
     dbFile: join(root, 'data', 'softgraph.db'),
     settingsFile: join(root, 'settings.json'),
     rulesFile: join(root, 'rules', 'junk-rules.json'),
+    communityRulesFile: join(root, 'rules', 'community-rules.json'),
+    userRulesFile: join(root, 'rules', 'user-rules.json'),
     reportDir: join(root, 'reports'),
     junkCacheFile: join(root, 'cache', 'junk-incremental.json'),
     comIndexFile: join(root, 'cache', 'com-index.json'),
@@ -90,6 +96,7 @@ export function defaultSettings(): AppSettings {
     allowDirectDelete: false,
     rulesUpdateUrl: '',
     junkSchedule: { enabled: false, intervalHours: 168 },
+    extraScanDirs: [],
     float: defaultFloatSettings()
   }
 }
@@ -163,40 +170,54 @@ export class SettingsStore {
 }
 
 /**
- * 规则库落地：首次运行把内置规则复制到用户目录，
- * 之后优先读用户目录（支持用户自行增改，对应「规则热更新」）。
+ * 规则库落地（v3.2 分区模型）：
+ *   - 运行时规则 = 内置（随应用打包）⊕ 社区区 ⊕ 用户区，按 id 去重、内置优先
+ *   - 内置规则不再落盘（随应用更新走，A1 根除「本地遮蔽内置」问题）
+ *   - 社区区文件承载 Winapp2 导入与在线更新扩展规则（A1 可整体重导更新）
+ *   - 迁移：旧版合并式 junk-rules.json 里的「[社区]」规则迁入社区区（一次性）
  */
 export async function ensureRules(p: AppPaths, builtinJson: unknown): Promise<string> {
-  if (!existsSync(p.rulesFile)) {
-    try {
-      await fs.mkdir(join(p.root, 'rules'), { recursive: true })
-      await fs.writeFile(p.rulesFile, JSON.stringify(builtinJson, null, 2), 'utf8')
-    } catch {
-      return ''
-    }
-    return p.rulesFile
-  }
-
-  // 升级合并：老版本安装的规则文件会遮蔽内置新规则（例如 v3.0.1 新增的
-  // GC-14/GC-15）。只**追加**本地缺失的规则 id，绝不覆盖/删除用户已有内容，
-  // 用户对既有规则的自定义得以保留；无缺失时不写盘（幂等）。
   try {
-    const local = JSON.parse(await fs.readFile(p.rulesFile, 'utf8')) as { rules?: { id?: string }[]; updatedAt?: string }
-    const localIds = new Set((local.rules ?? []).map((r) => r.id).filter(Boolean))
-    const builtin = builtinJson as { rules?: { id?: string }[]; updatedAt?: string }
-    const missing = (builtin.rules ?? []).filter((r) => r.id && !localIds.has(r.id))
-    if (missing.length > 0) {
-      const merged = {
-        ...local,
-        rules: [...(local.rules ?? []), ...missing],
-        updatedAt: new Date().toISOString().slice(0, 10)
+    await fs.mkdir(join(p.root, 'rules'), { recursive: true })
+
+    const communitySkeleton = JSON.stringify({ schemaVersion: 1, updatedAt: '', rules: [] }, null, 2)
+    if (!existsSync(p.communityRulesFile)) {
+      await fs.writeFile(p.communityRulesFile, communitySkeleton, 'utf8')
+    }
+    if (!existsSync(p.userRulesFile)) {
+      await fs.writeFile(p.userRulesFile, JSON.stringify({ schemaVersion: 1, updatedAt: '', rules: [] }, null, 2), 'utf8')
+    }
+
+    // 一次性迁移：旧合并文件中的社区规则（Winapp2 导入）→ 社区区
+    if (existsSync(p.rulesFile)) {
+      const community = JSON.parse(await fs.readFile(p.communityRulesFile, 'utf8')) as {
+        rules?: { id?: string; name?: string }[]
+        updatedAt?: string
       }
-      await fs.writeFile(p.rulesFile, JSON.stringify(merged, null, 2), 'utf8')
+      const known = new Set((community.rules ?? []).map((r) => `${r.id}\u0000${r.name ?? ''}`))
+      const local = JSON.parse(await fs.readFile(p.rulesFile, 'utf8')) as {
+        rules?: { id?: string; name?: string }[]
+      }
+      const legacyCommunity = (local.rules ?? []).filter(
+        (r) => typeof r.name === 'string' && r.name.startsWith('[社区]')
+      )
+      const toMove = legacyCommunity.filter((r) => !known.has(`${r.id}\u0000${r.name ?? ''}`))
+      if (toMove.length > 0) {
+        community.rules = [...(community.rules ?? []), ...toMove]
+        community.updatedAt = new Date().toISOString().slice(0, 10)
+        await fs.writeFile(p.communityRulesFile, JSON.stringify(community, null, 2), 'utf8')
+      }
+      // 旧合并文件改名为 legacy 备份（运行时不再读取），只做一次
+      const legacyMarker = p.rulesFile + '.legacy'
+      if (!existsSync(legacyMarker)) {
+        await fs.rename(p.rulesFile, legacyMarker).catch(() => {})
+        await fs.writeFile(legacyMarker, 'migrated', 'utf8').catch(() => {})
+      }
     }
   } catch {
-    /* 本地文件损坏时不合并 —— 交由在线更新（E2）兜底，不阻塞启动 */
+    /* 迁移失败不阻塞启动；社区区/用户区缺失时运行时按空处理 */
   }
-  return p.rulesFile
+  return p.communityRulesFile
 }
 
 /** 是否以管理员权限运行（影响系统目录清理能力提示） */

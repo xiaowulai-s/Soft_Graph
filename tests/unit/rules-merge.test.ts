@@ -4,6 +4,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureRules, type AppPaths } from '../../apps/desktop/src/main/services/env'
@@ -12,6 +13,8 @@ function fakePaths(root: string): AppPaths {
   return {
     root,
     rulesFile: join(root, 'rules', 'junk-rules.json'),
+    communityRulesFile: join(root, 'rules', 'community-rules.json'),
+    userRulesFile: join(root, 'rules', 'user-rules.json'),
     settingsFile: join(root, 'settings.json'),
     dbFile: join(root, 'monitor.db'),
     quarantineDir: join(root, 'Quarantine'),
@@ -40,75 +43,58 @@ async function readIds(file: string): Promise<string[]> {
   return j.rules.map((r) => r.id)
 }
 
-describe('ensureRules 升级合并', () => {
-  it('全新安装：直接落盘内置规则', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'sg-rules-'))
-    try {
-      const f = await ensureRules(fakePaths(root), builtin15())
-      assert.ok(f)
-      assert.deepEqual(await readIds(f), ['GC-01', 'GC-14', 'GC-15'])
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+describe('ensureRules 分区模型（v3.2 A1）', () => {
+  it('首次运行：内置不落盘，创建社区区/用户区骨架', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sg-merge-'))
+    const paths = fakePaths(dir)
+    const out = await ensureRules(paths, builtin15())
+    assert.equal(out, paths.communityRulesFile)
+    const community = JSON.parse(await readFile(paths.communityRulesFile, 'utf8')) as { rules: unknown[] }
+    assert.equal(community.rules.length, 0)
+    await rm(dir, { recursive: true, force: true })
   })
 
-  it('老版本文件（13 类遮蔽）：只追加缺失的 GC-14/15，保留用户自定义', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'sg-rules-'))
-    try {
-      const p = fakePaths(root)
-      const oldRules = {
-        schemaVersion: 1,
-        updatedAt: '2026-09-11',
-        rules: [
-          // 用户自定义过的 GC-01（改了名字，模拟用户编辑）
-          { id: 'GC-01', name: '我的临时文件（自定义）', description: 'x', risk: 'low', defaultSelected: true, match: { roots: ['%TEMP%'], patterns: ['*'] } },
-          { id: 'GC-02', name: '回收站', description: 'x', risk: 'low', defaultSelected: true, match: { roots: ['%SG_DRIVES%\\$Recycle.Bin'], patterns: ['*'] } }
-        ]
-      }
-      await mkdir(join(root, 'rules'), { recursive: true })
-      await writeFile(p.rulesFile, JSON.stringify(oldRules, null, 2), 'utf8')
-
-      await ensureRules(p, builtin15())
-      const ids = await readIds(p.rulesFile)
-      assert.equal(ids.length, 4, `应为 2 旧 + 2 新 = 4，实际 ${ids.length}`)
-      assert.ok(ids.includes('GC-14') && ids.includes('GC-15'), '应追加缺失规则')
-
-      // 用户自定义内容原样保留
-      const j = JSON.parse(await readFile(p.rulesFile, 'utf8')) as { rules: { id: string; name: string }[] }
-      const g1 = j.rules.find((r) => r.id === 'GC-01')
-      assert.equal(g1?.name, '我的临时文件（自定义）', '用户自定义不得被覆盖')
-    } finally {
-      await rm(root, { recursive: true, force: true })
+  it('旧合并文件迁移：[社区] 规则迁入社区区，旧文件改名 .legacy', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sg-merge-'))
+    const paths = fakePaths(dir)
+    await mkdir(join(paths.root, 'rules'), { recursive: true })
+    const legacy = {
+      schemaVersion: 1,
+      rules: [
+        { id: 'GC-01', name: '回收站' },
+        { id: 'GC-101', name: '[社区] Trae Cache' },
+        { id: 'GC-102', name: '[社区] Foo Bar' }
+      ]
     }
+    await writeFile(paths.rulesFile, JSON.stringify(legacy), 'utf8')
+    await ensureRules(paths, builtin15())
+    const community = JSON.parse(await readFile(paths.communityRulesFile, 'utf8')) as { rules: { name?: string }[] }
+    assert.equal(community.rules.length, 2)
+    assert.ok(community.rules.every((r) => r.name?.startsWith('[社区]')))
+    await rm(dir, { recursive: true, force: true })
   })
 
-  it('幂等：重复调用不再追加', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'sg-rules-'))
-    try {
-      const p = fakePaths(root)
-      await ensureRules(p, builtin15())
-      const after1 = await readIds(p.rulesFile)
-      await ensureRules(p, builtin15())
-      const after2 = await readIds(p.rulesFile)
-      assert.deepEqual(after1, after2)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+  it('幂等：重复调用不重复迁移', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sg-merge-'))
+    const paths = fakePaths(dir)
+    await mkdir(join(paths.root, 'rules'), { recursive: true })
+    const legacy = { schemaVersion: 1, rules: [{ id: 'GC-101', name: '[社区] Trae Cache' }] }
+    await writeFile(paths.rulesFile, JSON.stringify(legacy), 'utf8')
+    await ensureRules(paths, builtin15())
+    const before = await readFile(paths.communityRulesFile, 'utf8')
+    await ensureRules(paths, builtin15())
+    const after = await readFile(paths.communityRulesFile, 'utf8')
+    assert.equal(before, after)
+    await rm(dir, { recursive: true, force: true })
   })
 
-  it('本地文件损坏：不合并也不崩溃（返回原路径）', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'sg-rules-'))
-    try {
-      const p = fakePaths(root)
-      await mkdir(join(root, 'rules'), { recursive: true })
-      await writeFile(p.rulesFile, '{ 残缺 JSON', 'utf8')
-      const f = await ensureRules(p, builtin15())
-      assert.ok(f)
-      // 残缺文件保持原样（交由在线更新兜底）
-      const raw = await readFile(p.rulesFile, 'utf8')
-      assert.match(raw, /残缺/)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+  it('旧文件损坏：迁移失败不崩溃，骨架照常创建', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sg-merge-'))
+    const paths = fakePaths(dir)
+    await mkdir(join(paths.root, 'rules'), { recursive: true })
+    await writeFile(paths.rulesFile, '{{{ broken', 'utf8')
+    await ensureRules(paths, builtin15())
+    assert.ok(existsSync(paths.communityRulesFile))
+    await rm(dir, { recursive: true, force: true })
   })
 })

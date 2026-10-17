@@ -67,7 +67,31 @@ export function lastAppUpdateError(): string {
   return lastError
 }
 
+/** D1：备用更新源（Gitee 镜像，tag 固定为 stable；需维护者同步 latest.yml+安装包，缺失时自动回退官方源） */
+const FALLBACK_FEED = 'https://gitee.com/xiaowulai-s/softgraph-mirror/releases/download/stable'
+
+let usedFallback = false
+
 export async function checkForAppUpdate(): Promise<{ available: boolean; version?: string }> {
+  try {
+    return await checkOnce()
+  } catch (e) {
+    if (usedFallback) throw e
+    // 主源（GitHub）失败 → 切 Gitee 镜像重试一次
+    usedFallback = true
+    autoUpdater.setFeedURL({ provider: 'generic', url: FALLBACK_FEED })
+    try {
+      return await checkOnce()
+    } catch (e2) {
+      // 镜像也失败 → 还原官方源，下次检查重新走主源
+      usedFallback = false
+      autoUpdater.setFeedURL({ provider: 'github', owner: 'xiaowulai-s', repo: 'Soft_Graph' })
+      throw e2
+    }
+  }
+}
+
+async function checkOnce(): Promise<{ available: boolean; version?: string }> {
   const r = await autoUpdater.checkForUpdates()
   const v = r?.updateInfo?.version
   return { available: v ? v !== app.getVersion() : false, version: v }

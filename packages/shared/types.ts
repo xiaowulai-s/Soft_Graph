@@ -594,6 +594,8 @@ export interface AppSettings {
   rulesUpdateUrl: string
   /** v3.1 定时静默清理：到期自动扫描 defaultSelected 分类并隔离清理 */
   junkSchedule: { enabled: boolean; intervalHours: number }
+  /** v3.2 B2：重复文件(GC-11)/超大文件(GC-12)的额外扫描目录 */
+  extraScanDirs: string[]
   float: FloatSettings
 }
 
@@ -603,6 +605,8 @@ export interface WingetUpgrade {
   name: string
   version: string
   available: string
+  /** C1：上次升级失败因需要管理员权限 */
+  needsElevation?: boolean
 }
 
 export interface FileDetail {

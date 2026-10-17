@@ -82,6 +82,8 @@ const signText = computed(() => {
   if (!f) return '—'
   if (f.signStatus === 'signed') return '已签名'
   if (f.signStatus === 'unsigned') return '未签名'
+  return '签名异常'
+  return '签名异常'
   return '未查询'
 })
 
