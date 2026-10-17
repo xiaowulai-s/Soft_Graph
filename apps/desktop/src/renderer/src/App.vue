@@ -23,6 +23,7 @@ import GraphCanvas from './components/GraphCanvas.vue'
 import JunkSidebar from './components/JunkSidebar.vue'
 import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
+import MaintenanceCenter from './components/MaintenanceCenter.vue'
 
 // ───────────────── 状态 ─────────────────
 
@@ -67,6 +68,7 @@ const layoutMode = ref<'radial' | 'force' | 'cluster'>('radial')
 
 // 面板折叠 / 画布全屏
 const leftOpen = ref(true)
+const maintOpen = ref(false)
 const rightOpen = ref(true)
 const canvasFull = ref(false)
 
@@ -751,6 +753,7 @@ const statusText = computed(() => {
         ⤢
       </button>
       <button class="ghost" title="桌面浮窗" @click="openDrawer('float')">浮窗</button>
+      <button class="ghost" title="维护中心（定时清理 / 软件升级 / 隔离区 / 社区规则）" @click="maintOpen = true">🧰</button>
       <button class="ghost" title="设置" @click="openDrawer('settings')">⚙</button>
     </header>
 
@@ -953,6 +956,7 @@ const statusText = computed(() => {
       @toast="showToast"
       @theme="onThemeChange"
     />
+    <MaintenanceCenter :open="maintOpen" @close="maintOpen = false" />
 
     <Transition name="fade">
       <div v-if="toast" class="toast">{{ toast }}</div>
