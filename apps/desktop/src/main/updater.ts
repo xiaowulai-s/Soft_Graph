@@ -8,7 +8,7 @@
  *  - 下载走 electron net（系统代理生效）；GitHub 限流用公仓库匿名额度
  *  - dev 环境不启用（app.isPackaged 守卫）
  */
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { autoUpdater, type UpdateInfo } from 'electron-updater'
 
 export type AppUpdateState =
@@ -78,5 +78,14 @@ export async function downloadAppUpdate(): Promise<void> {
 }
 
 export function quitAndInstallAppUpdate(): void {
-  autoUpdater.quitAndInstall(false, true) // 不强制静默运行参数；安装后重启应用
+  // 兜底：先销毁所有窗口（含桌面浮窗），防止任何窗口阻塞退出流程导致安装器不启动
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      w.destroy()
+    } catch {
+      /* ignore */
+    }
+  }
+  // setImmediate：让 IPC 应答先完成，再退出进入安装
+  setImmediate(() => autoUpdater.quitAndInstall(false, true))
 }
