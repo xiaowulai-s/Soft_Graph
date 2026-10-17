@@ -157,7 +157,7 @@ async function main() {
       req(`/repos/${OWNER}/${REPO}/releases`, {
         method: 'POST',
         token,
-        body: { tag_name: tag, name: `SoftGraph ${tag}`, body: notes, draft: false, prerelease: false }
+        body: { tag_name: tag, name: `SoftGraph ${tag}`, body: notes, draft: true, prerelease: false }
       })
     )
     }
@@ -213,6 +213,17 @@ async function main() {
       })
     )
     log(`  ✓ ${name} sha256=${sha}`)
+  }
+
+  if (!dry && release.id) {
+    log('  公开 Release（draft → published）…')
+    await withRetry('publish release', () =>
+      req(`/repos/${OWNER}/${REPO}/releases/${release.id}`, {
+        method: 'PATCH',
+        token,
+        body: { draft: false }
+      })
+    )
   }
 
   log(dry ? `\n✅ dry-run 结束：未创建 tag / Release / 附件（本地 SHA256SUMS.txt 已生成）` : `\n✅ 发布完成：https://github.com/${OWNER}/${REPO}/releases/tag/${tag}`)
