@@ -18,10 +18,10 @@ import { fileId } from '@scanner/deps'
 const ruleSet = loadRulesSync(rulesJson as never)
 
 describe('规则库完整性', () => {
-  it('恰好 15 类，编号连续且唯一', () => {
+  it('恰好 16 类，编号连续且唯一', () => {
     const ids = ruleSet.rules.map((r) => r.id)
-    assert.equal(ids.length, 15)
-    assert.equal(new Set(ids).size, 15, '存在重复编号')
+    assert.equal(ids.length, 16)
+    assert.equal(new Set(ids).size, 16, '存在重复编号')
     ids.forEach((id, i) => assert.equal(id, `GC-${String(i + 1).padStart(2, '0')}`))
   })
 
@@ -34,7 +34,7 @@ describe('规则库完整性', () => {
     }
   })
 
-  it('15 类中低风险直清项数量在合理区间（默认勾选）', () => {
+  it('16 类中低风险直清项数量在合理区间（默认勾选）', () => {
     const on = ruleSet.rules.filter((r) => r.defaultSelected)
     assert.ok(on.length >= 4 && on.length <= 8, `默认勾选数量异常: ${on.length}`)
   })
@@ -48,9 +48,9 @@ describe('规则库完整性', () => {
     assert.equal(map.get('GC-15')?.algorithm, 'bigfile')
   })
 
-  it('AI 专项规则（GC-14/15）：默认不勾选、GC-15 仅盘点', () => {
+  it('AI 专项规则（GC-14/15/16）：默认不勾选、GC-15 仅盘点、GC-16 只指缓存族', () => {
     const map = new Map(ruleSet.rules.map((r) => [r.id, r]))
-    for (const id of ['GC-14', 'GC-15']) {
+    for (const id of ['GC-14', 'GC-15', 'GC-16']) {
       const r = map.get(id)
       assert.ok(r, `缺少 ${id}`)
       assert.equal(r.defaultSelected, false, `${id} 必须默认不勾选（模型不可自动删）`)
@@ -59,6 +59,29 @@ describe('规则库完整性', () => {
     // 盘点规则只允许指向模型目录，不允许扩散到整个用户目录
     const roots = (map.get('GC-15')?.roots ?? []).join('|').toLowerCase()
     assert.ok(roots.includes('.ollama') && roots.includes('.lmstudio'), 'GC-15 根目录应指向模型库')
+    // GC-16 必须全部指向 AI IDE 缓存族（应用目录 + 缓存子目录 / .<app>\logs）
+    const cacheFamilies = [
+      '\\cache', '\\code cache', '\\gpucache', '\\dawncache', '\\dawngraphitecache',
+      '\\dawnwebgpucache', '\\shadercache', '\\cacheddata', '\\cachedextensionvsixs',
+      '\\cachedprofilesdata', '\\crashpad', '\\service worker\\cachestorage', '\\logs'
+    ]
+    const forbiddenSegments = new Set([
+      'extensions', 'user data', 'webstorage', 'session storage', 'binaries', 'plugins'
+    ])
+    const g16 = (map.get('GC-16')?.roots ?? []).map((r) => r.toLowerCase())
+    assert.ok(g16.length > 0, 'GC-16 应有根目录')
+    assert.ok(
+      g16.every((r) => cacheFamilies.some((f) => r.includes(f))),
+      'GC-16 根必须全部是缓存族子目录'
+    )
+    assert.ok(
+      g16.every((r) => {
+        const segs = r.split('\\').map((s) => s.trim()).filter(Boolean)
+        // \Users\ 是系统用户主目录前缀（展开产物），不算功能目录
+        return !segs.some((seg) => forbiddenSegments.has(seg))
+      }),
+      'GC-16 不得指向功能与数据目录'
+    )
   })
 
   it('每个规则至少解析出一个存在的根目录', () => {

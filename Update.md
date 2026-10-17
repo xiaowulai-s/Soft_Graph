@@ -735,3 +735,29 @@ Usn               : 22712337088
 ### 测试
 
 468/468 全绿（新增毒丸防线 v2 六用例：白名单根放行 / AI 缓存根放行 / %USERPROFILE% 整树拒绝 / 用户文档拒绝 / bigfile 豁免 / 具体模式不受限）。
+
+---
+
+## v3.0.2 —— 「AI 工具缓存仍为 0」排查与修复（GC-16）
+
+### 根因
+
+用户本机 `%LOCALAPPDATA%\SoftGraph\rules\junk-rules.json` 是旧版规则（GC-14 仅 7 个模型工具根）。而 `ensureRules` 合并**只追加缺失的规则 id，不更新已有 id 的内容** —— AI IDE 缓存根挂在了已存在的 GC-14 上，升级后内容永远停留在旧版，重新扫描自然为 0。
+
+### 修复：规则拆分（GC-14 / GC-16 分离）
+
+| 规则 | 定位 | 根数 |
+|---|---|---|
+| **GC-14 AI 工具缓存** | 回归本位：本地模型工具缓存（HF / ModelScope / LM Studio / ComfyUI / conda） | 7 |
+| **GC-16 AI IDE 缓存**（新 id） | Trae / Cursor / Windsurf / WorkBuddy / Qoder / ZCode / Codeium 的 Electron 缓存族 + 应用日志 | 182 |
+
+新 id 才能被 ensureRules 合并送达 —— 老用户升级应用后 GC-16 **自动出现**；在线更新（规则包 v4）同步覆盖。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 本机实测 | **GC-16 命中 556 项 / 411.58 MB**（Trae CachedData 56MB、WorkBuddy logs 264MB 等）；GC-14/15 为 0 属正常（本机无对应目录） |
+| 契约测试 | 16 类、编号连续、GC-16 全部根为缓存族子目录且不指向 extensions / workspaceStorage / 会话 / binaries / plugins（按路径段精确判定，\Users\ 主目录前缀不误报） |
+| 规则包 v4 | 已签发；E2 四项防线（应用 / 防重放 / 防篡改 / 防毒丸）全过 |
+| 全量 | 468/468 绿 · typecheck / build 通过 |

@@ -12,8 +12,8 @@ async function main(): Promise<void> {
     excludes: []
   }
   const t0 = Date.now()
-  const out = await scanJunk(rs, ctx, { categoryIds: ['GC-11', 'GC-14', 'GC-15'], force: true })
-  for (const id of ['GC-11', 'GC-14', 'GC-15']) {
+  const out = await scanJunk(rs, ctx, { categoryIds: ['GC-11', 'GC-14', 'GC-15', 'GC-16'], force: true })
+  for (const id of ['GC-11', 'GC-14', 'GC-15', 'GC-16']) {
     const items = out.items.filter((i) => i.categoryId === id)
     const bytes = items.reduce((s, i) => s + i.sizeBytes, 0)
     console.log(`${id}: ${items.length} 项 · ${(bytes / 1024 / 1024).toFixed(2)} MB`)

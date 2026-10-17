@@ -309,7 +309,52 @@
     {
       "id": "GC-14",
       "name": "AI 工具缓存",
-      "description": "AI 工具与 AI IDE 的可再生缓存（HuggingFace/ModelScope/LM Studio/ComfyUI/conda 模型缓存 + Trae/Cursor/Windsurf/WorkBuddy/Qoder/ZCode/Codeium 的 Electron 缓存族与应用日志；不动 extensions / 会话 / 用户数据）",
+      "description": "本地模型工具的可再生缓存（HuggingFace / ModelScope / LM Studio / ComfyUI / conda；模型删除后可重新下载，故默认不勾选）",
+      "risk": "medium",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%APPDATA%\\ComfyUI\\temp",
+          "%USERPROFILE%\\.cache\\huggingface\\hub",
+          "%USERPROFILE%\\.cache\\lm-studio",
+          "%USERPROFILE%\\.cache\\modelscope\\hub",
+          "%USERPROFILE%\\.conda\\pkgs",
+          "%USERPROFILE%\\anaconda3\\pkgs",
+          "%USERPROFILE%\\miniconda3\\pkgs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 6
+      }
+    },
+    {
+      "id": "GC-15",
+      "name": "AI 模型库盘点",
+      "description": "Ollama / LM Studio 本地模型文件盘点（仅提示占用，不自动清理——是否删除由用户决定）",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "bigfile",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\.ollama\\models",
+          "%USERPROFILE%\\.lmstudio\\models",
+          "%USERPROFILE%\\.ollama\\models\\blobs"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "minSizeBytes": 52428800,
+        "maxDepth": 8
+      },
+      "options": {
+        "topN": 100
+      }
+    },
+    {
+      "id": "GC-16",
+      "name": "AI IDE 缓存",
+      "description": "Trae / Cursor / Windsurf / WorkBuddy / Qoder / ZCode / Codeium 等 AI IDE 的 Electron 缓存族与应用日志（Cache / Code Cache / GPUCache / Dawn* / ShaderCache / CachedData / CachedExtensionVSIXs / Crashpad / Service Worker 缓存 / logs）；不触碰 extensions、workspaceStorage、会话与用户数据",
       "risk": "medium",
       "defaultSelected": false,
       "match": {
@@ -327,7 +372,6 @@
           "%APPDATA%\\Codeium\\Service Worker\\CacheStorage",
           "%APPDATA%\\Codeium\\ShaderCache",
           "%APPDATA%\\Codeium\\logs",
-          "%APPDATA%\\ComfyUI\\temp",
           "%APPDATA%\\Cursor\\Cache",
           "%APPDATA%\\Cursor\\CachedData",
           "%APPDATA%\\Cursor\\CachedExtensionVSIXs",
@@ -490,49 +534,20 @@
           "%LOCALAPPDATA%\\ZCode\\GPUCache",
           "%LOCALAPPDATA%\\ZCode\\Service Worker\\CacheStorage",
           "%LOCALAPPDATA%\\ZCode\\ShaderCache",
-          "%USERPROFILE%\\.cache\\huggingface\\hub",
-          "%USERPROFILE%\\.cache\\lm-studio",
-          "%USERPROFILE%\\.cache\\modelscope\\hub",
           "%USERPROFILE%\\.codeium\\logs",
-          "%USERPROFILE%\\.conda\\pkgs",
           "%USERPROFILE%\\.cursor\\logs",
           "%USERPROFILE%\\.qoder\\logs",
           "%USERPROFILE%\\.trae\\logs",
           "%USERPROFILE%\\.windsurf\\logs",
           "%USERPROFILE%\\.workbuddy\\logs",
-          "%USERPROFILE%\\.zcode\\logs",
-          "%USERPROFILE%\\anaconda3\\pkgs",
-          "%USERPROFILE%\\miniconda3\\pkgs"
+          "%USERPROFILE%\\.zcode\\logs"
         ],
         "patterns": [
           "*"
         ],
         "maxDepth": 6
       }
-    },
-    {
-      "id": "GC-15",
-      "name": "AI 模型库盘点",
-      "description": "Ollama / LM Studio 本地模型文件盘点（仅提示占用，不自动清理——是否删除由用户决定）",
-      "risk": "hint",
-      "defaultSelected": false,
-      "algorithm": "bigfile",
-      "match": {
-        "roots": [
-          "%USERPROFILE%\\.ollama\\models",
-          "%USERPROFILE%\\.lmstudio\\models",
-          "%USERPROFILE%\\.ollama\\models\\blobs"
-        ],
-        "patterns": [
-          "*"
-        ],
-        "minSizeBytes": 52428800,
-        "maxDepth": 8
-      },
-      "options": {
-        "topN": 100
-      }
     }
   ],
-  "_version": 3
+  "_version": 4
 }
