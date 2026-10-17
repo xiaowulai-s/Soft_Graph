@@ -38,6 +38,12 @@ export interface UpdateVerdict {
   reason?: string
 }
 
+/** 官方规则更新源与镜像（v3.0.2 起：更新源留空即自动使用，raw 失败自动切镜像） */
+export const RULES_UPDATE_FALLBACKS = [
+  'https://raw.githubusercontent.com/xiaowulai-s/Soft_Graph/main/packages/rules/dist',
+  'https://cdn.jsdelivr.net/gh/xiaowulai-s/Soft_Graph@main/packages/rules/dist'
+]
+
 /**
  * 内置公钥（hex）。
  *
@@ -303,6 +309,8 @@ export async function downloadUpdate(
 export interface ApplyOptions {
   /** 当前已安装规则的版本（kv 里存的） */
   currentVersion: number
+  /** 备用更新源：主源下载失败时按序尝试（raw → jsDelivr 镜像） */
+  fallbackUrls?: string[]
   /** 内置公钥（hex）；为空则拒绝一切在线更新 */
   publicKeyHex?: string
   rulesFile: string
@@ -334,17 +342,27 @@ export async function applyRulesUpdate(opts: ApplyOptions): Promise<ApplyResult>
     return { ok: false, reason: '更新源必须是 HTTPS' }
   }
 
-  let manifest: DownloadedManifest
-  let rulesText: string
-  try {
-    const dl = await downloadUpdate(opts.baseUrl, {
-      allowFileUrl: opts.allowFileUrl,
-      timeoutMs: opts.timeoutMs
-    })
-    manifest = dl.manifest
-    rulesText = dl.rulesText
-  } catch (e) {
-    return { ok: false, reason: `下载失败：${(e as Error).message}` }
+  const urls = [opts.baseUrl, ...(opts.fallbackUrls ?? [])].filter(
+    (u, i, a) => u && a.indexOf(u) === i
+  )
+  let manifest: DownloadedManifest | null = null
+  let rulesText: string | null = null
+  let lastErr: Error | null = null
+  for (const u of urls) {
+    try {
+      const dl = await downloadUpdate(u, {
+        allowFileUrl: opts.allowFileUrl,
+        timeoutMs: opts.timeoutMs
+      })
+      manifest = dl.manifest
+      rulesText = dl.rulesText
+      break
+    } catch (e) {
+      lastErr = e as Error
+    }
+  }
+  if (!manifest || rulesText === null) {
+    return { ok: false, reason: `下载失败：${lastErr?.message ?? '全部更新源不可达'}（已尝试 ${urls.length} 个源）` }
   }
 
   if (typeof manifest.version !== 'number' || manifest.version <= 0) {

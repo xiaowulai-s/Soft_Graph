@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import {
@@ -302,5 +303,39 @@ describe('E2 裸 * 模式与根目录联合判定（毒丸防线 v2）', () => {
 
   it('具体模式（*.tmp）+ 任意根 → 不受白名单约束（由盘根/Windows 检查兜底）', () => {
     assert.equal(verifyRulesStructure(mk('GC-86', undefined, ['%USERPROFILE%\\Documents'], ['*.tmp'])).ok, true)
+  })
+})
+
+describe('E2 镜像自动回退（v3.0.2）', () => {
+  it('主源下载失败 → 自动切换备源成功', async () => {
+    const dir = join(tmpdir(), 'sg-e2-mirror-' + randomBytes(3).toString('hex'))
+    const good = await setupSite(dir, makePackage(5, goodRules()))
+    const bad = join(dir, 'empty-source') // 空目录 = 主源必失败
+    const target = join(dir, 'rules-out.json')
+    const r = await applyRulesUpdate({
+      currentVersion: 1,
+      publicKeyHex,
+      rulesFile: target,
+      baseUrl: pathToFileURL(join(bad, 'x')).href.replace(/x$/, ''),
+      fallbackUrls: [good],
+      allowFileUrl: true
+    })
+    assert.equal(r.ok, true, `备源应成功: ${r.reason}`)
+    assert.equal(r.version, 5)
+  })
+
+  it('全部源失败 → 汇总原因', async () => {
+    const dir = join(tmpdir(), 'sg-e2-mirror2-' + randomBytes(3).toString('hex'))
+    const bad1 = join(dir, 'e1')
+    const bad2 = join(dir, 'e2')
+    const r = await applyRulesUpdate({
+      currentVersion: 1,
+      rulesFile: join(dir, 'out.json'),
+      baseUrl: pathToFileURL(join(bad1, 'x')).href.replace(/x$/, ''),
+      fallbackUrls: [pathToFileURL(join(bad2, 'x')).href.replace(/x$/, '')],
+      allowFileUrl: true
+    })
+    assert.equal(r.ok, false)
+    assert.match(r.reason ?? '', /已尝试 2 个源/)
   })
 })

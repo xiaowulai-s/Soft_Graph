@@ -891,15 +891,18 @@ export class ScanService {
     reason?: string
     ruleCount?: number
   }> {
-    const url = this.settings.get().rulesUpdateUrl
-    if (!url) return { ok: false, reason: '未配置规则更新源（设置 → 清理与安全）' }
-    const { applyRulesUpdate, parseStoredVersion, RULES_SIGNING_PUBKEY } = await import('@junk/rules-update')
+    // v3.0.2：更新源留空 = 自动使用官方源，raw 失败自动切 jsDelivr 镜像
+    const { applyRulesUpdate, parseStoredVersion, RULES_SIGNING_PUBKEY, RULES_UPDATE_FALLBACKS } =
+      await import('@junk/rules-update')
+    const url = this.settings.get().rulesUpdateUrl || RULES_UPDATE_FALLBACKS[0]
+    const fallbackUrls = RULES_UPDATE_FALLBACKS.filter((u) => u !== url)
     const current = parseStoredVersion(this.store.getKv('rules:version'))
     const r = await applyRulesUpdate({
       currentVersion: current,
       publicKeyHex: RULES_SIGNING_PUBKEY || process.env.SG_RULES_PUBKEY || '',
       rulesFile: this.paths.rulesFile,
-      baseUrl: url
+      baseUrl: url,
+      fallbackUrls
     })
     if (r.ok && r.version) {
       this.store.setKv('rules:version', JSON.stringify(r.version))
