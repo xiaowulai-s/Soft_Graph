@@ -667,14 +667,6 @@ function daysLeft(r: QuarantineRecord): string {
               无论如何设置，系统关键路径（System32 / SysWOW64 / WinSxS / Program Files 等）的白名单硬拦截始终生效，
               该规则以纯函数固化在代码中，不读取配置文件。
             </div>
-            <!-- 规则库在线更新（E2）：签名 + 哈希 + 版本单调 + 结构校验 -->
-
-            <!-- 应用自更新（v3.0.3，electron-updater） -->
-            </div>
-
-
-
-
           </section>
         </template>
 
