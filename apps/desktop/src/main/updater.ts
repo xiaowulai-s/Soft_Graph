@@ -105,6 +105,9 @@ export async function checkForAppUpdate(): Promise<{ available: boolean; version
       // 镜像也失败 → 还原官方源，下次检查重新走主源
       usedFallback = false
       autoUpdater.setFeedURL({ provider: 'github', owner: 'xiaowulai-s', repo: 'Soft_Graph' })
+      // 镜像未同步（404）属于配置缺失而非真故障：对外只报主源的网络错误，避免误导
+      const msg2 = (e2 as Error).message ?? ''
+      if (/404/.test(msg2)) throw e
       throw e2
     }
   }
