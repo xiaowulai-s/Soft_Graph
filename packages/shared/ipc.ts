@@ -126,6 +126,10 @@ export const CH = {
   WINGET_UPGRADE: 'winget:upgrade',
   QUARANTINE_SHRED: 'quarantine:shred',
   RULES_IMPORT_WINAPP2: 'rules:importWinapp2',
+  IMAGES_SIMILAR: 'images:similar',
+  IMAGE_TRASH: 'images:trash',
+  REG_LEFTOVERS: 'registry:leftovers',
+  REG_DELETE: 'registry:delete',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -205,6 +209,12 @@ export interface SoftGraphApi {
   quarantineShred(ids: string[]): Promise<{ ok: number; freed: number; failed: string[] }>
   /** Winapp2.ini 社区规则导入（弹文件选择框）；返回导入的规则数 */
   rulesImportWinapp2(): Promise<{ imported: number; skipped: number }>
+  /** v3.3 相似图片盘点（aHash 分组，hint 级） */
+  imagesSimilar(): Promise<{ hash: string; images: { path: string; sizeBytes: number }[] }[]>
+  imageTrash(path: string): Promise<{ ok: boolean; error?: string }>
+  /** v3.3 注册表残留 */
+  registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
+  registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>
   quarantineRestore(payload: { ids: string[] }): Promise<{ ok: number; failed: string[] }>
   quarantinePurge(payload: { ids?: string[]; expiredOnly?: boolean }): Promise<{ ok: number; freed: number }>
 

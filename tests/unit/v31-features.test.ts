@@ -126,3 +126,32 @@ describe('v3.2 改进项', () => {
     assert.equal(rs.rules.length, 1)
   })
 })
+
+describe('v3.3 空目录检测', () => {
+  it('GC-18：命中整树为空的目录，跳过含文件的目录', async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'sg-empty-'))
+    // empty/with-sub/empty-sub 全空；full/sub 含文件
+    await mkdir(join(dir, 'empty', 'with-sub', 'empty-sub'), { recursive: true })
+    await mkdir(join(dir, 'full', 'sub'), { recursive: true })
+    await writeFile(join(dir, 'full', 'sub', 'f.txt'), 'x')
+    const rule = {
+      id: 'GC-18', name: '空目录', description: '', risk: 'hint', defaultSelected: false,
+      algorithm: 'emptydir',
+      match: { roots: [dir], patterns: ['*'], maxDepth: 8 }
+    }
+    const { scanJunk } = await import('@junk/scanner')
+    const rs = loadRulesSync({ schemaVersion: 1, updatedAt: '', rules: [rule] } as never)
+    const out = await scanJunk(rs, {
+      knownNames: new Set(), knownPublishers: new Set(), knownDirs: new Set(), excludes: []
+    }, { categoryIds: ['GC-18'], force: true })
+    const paths = out.items.map((i) => i.fullPath.toLowerCase())
+    // 只报告「最浅层空树根」：整树删除一次带走，不重复报告树内深层空目录
+    assert.equal(paths.length, 1, `应只命中最浅层空树根，实际: ${paths.join(', ')}`)
+    assert.ok(paths[0].endsWith('empty'), '应命中空树根 empty')
+    assert.ok(!paths.some((x) => x.includes('full')), '含文件的目录不应命中')
+    await rm(dir, { recursive: true, force: true })
+  })
+})

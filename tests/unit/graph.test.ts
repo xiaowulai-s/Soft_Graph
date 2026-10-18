@@ -18,10 +18,10 @@ import { fileId } from '@scanner/deps'
 const ruleSet = loadRulesSync(rulesJson as never)
 
 describe('规则库完整性', () => {
-  it('恰好 17 类，编号连续且唯一', () => {
+  it('恰好 18 类，编号连续且唯一', () => {
     const ids = ruleSet.rules.map((r) => r.id)
-    assert.equal(ids.length, 17)
-    assert.equal(new Set(ids).size, 17, '存在重复编号')
+    assert.equal(ids.length, 18)
+    assert.equal(new Set(ids).size, 18, '存在重复编号')
     ids.forEach((id, i) => assert.equal(id, `GC-${String(i + 1).padStart(2, '0')}`))
   })
 
@@ -34,7 +34,7 @@ describe('规则库完整性', () => {
     }
   })
 
-  it('17 类中低风险直清项数量在合理区间（默认勾选）', () => {
+  it('18 类中低风险直清项数量在合理区间（默认勾选）', () => {
     const on = ruleSet.rules.filter((r) => r.defaultSelected)
     assert.ok(on.length >= 4 && on.length <= 8, `默认勾选数量异常: ${on.length}`)
   })
@@ -50,7 +50,7 @@ describe('规则库完整性', () => {
 
   it('AI 专项规则（GC-14/15/16）：默认不勾选、GC-15 仅盘点、GC-16 只指缓存族', () => {
     const map = new Map(ruleSet.rules.map((r) => [r.id, r]))
-    for (const id of ['GC-14', 'GC-15', 'GC-16', 'GC-17']) {
+    for (const id of ['GC-14', 'GC-15', 'GC-16', 'GC-17', 'GC-18']) {
       const r = map.get(id)
       assert.ok(r, `缺少 ${id}`)
       assert.equal(r.defaultSelected, false, `${id} 必须默认不勾选（模型不可自动删）`)

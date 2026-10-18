@@ -573,7 +573,29 @@
         ],
         "maxDepth": 4
       }
+    },
+    {
+      "id": "GC-18",
+      "name": "空目录",
+      "description": "用户库下整棵子树无任何文件的空目录（hint 级盘点：删除空目录无害但可能打断某些软件的目录结构，是否清理由用户决定）",
+      "risk": "hint",
+      "defaultSelected": false,
+      "algorithm": "emptydir",
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\\\Documents",
+          "%USERPROFILE%\\\\Downloads",
+          "%USERPROFILE%\\\\Pictures",
+          "%USERPROFILE%\\\\Videos",
+          "%USERPROFILE%\\\\Music",
+          "%USERPROFILE%\\\\Desktop"
+        ],
+        "patterns": [
+          "*"
+        ],
+        "maxDepth": 8
+      }
     }
   ],
-  "_version": 5
+  "_version": 6
 }

@@ -11,6 +11,7 @@ import type { JunkCategorySummary, JunkItem, JunkSummary, RiskLevel } from '../s
 import { baseName, normKey, normPath, uid, mapPool } from '../shared/util'
 import { isOneClickEligible } from '../shared/safety'
 import { walkRule, quickDirSize, looksOrphan, type CompiledRule, type RuleSet, type WalkStats } from './engine'
+import { isScannable } from '@shared/safety'
 import {
   collectSignatures,
   collectVolumeUsns,
@@ -290,6 +291,86 @@ async function findBigFiles(
 }
 
 // ───────────────── 失效快捷方式（GC-13） ─────────────────
+
+/**
+ * v3.3 P2-3：空目录检测 —— 递归判定「整棵子树无任何文件」的目录。
+ * 注意：walkRule 只对文件发射命中（目录仅遍历），因此这里自建目录遍历。
+ * 命中策略：只报告「最浅层的空树」——整棵子树都是空的时报其根，避免同树重复。
+ */
+async function findEmptyDirs(
+  rule: CompiledRule,
+  signal?: { cancelled: boolean },
+  onTick?: (phase: string, cur: string, n: number) => void
+): Promise<JunkItem[]> {
+  const out: JunkItem[] = []
+  const seen = new Set<string>()
+  let n = 0
+  const SKIP = new Set(['$recycle.bin', 'system volume information', 'node_modules'])
+  const fsp = await import('node:fs/promises')
+
+  async function isEmptyDir(dir: string, depth: number): Promise<boolean> {
+    if (signal?.cancelled || depth > 12) return false
+    let entries
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true })
+    } catch {
+      return false
+    }
+    if (entries.length === 0) return true
+    for (const e of entries) {
+      if (signal?.cancelled) return false
+      if (!e.isDirectory()) return false
+      if (!(await isEmptyDir(join(dir, e.name), depth + 1))) return false
+    }
+    return true
+  }
+
+  async function walkDirs(dir: string, depth: number): Promise<void> {
+    if (signal?.cancelled || depth > (rule.maxDepth ?? 8)) return
+    let entries
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (signal?.cancelled) return
+      if (!e.isDirectory()) continue
+      const full = normPath(join(dir, e.name))
+      if (!isScannable(full) || SKIP.has(e.name.toLowerCase())) continue
+      n++
+      onTick?.('空目录检测', full, n)
+      const empty = await isEmptyDir(full, depth + 1)
+      if (empty) {
+        const key = full.toLowerCase()
+        if (!seen.has(key)) {
+          seen.add(key)
+          let mtime = 0
+          try {
+            mtime = (await fsp.stat(full)).mtimeMs
+          } catch {
+            /* ignore */
+          }
+          out.push({
+            id: itemId(full, rule.id),
+            categoryId: rule.id,
+            fullPath: full,
+            name: baseName(full) || full,
+            sizeBytes: 0,
+            mtime,
+            risk: rule.risk,
+            isDir: true
+          })
+        }
+        continue // 空树内不再下钻（避免同树重复报告）
+      }
+      await walkDirs(full, depth + 1)
+    }
+  }
+
+  for (const root of rule.roots) await walkDirs(root, 0)
+  return out
+}
 
 async function findDeadLinks(
   rule: CompiledRule,
@@ -595,6 +676,9 @@ export async function scanJunk(
             break
           case 'deadlink':
             items = await findDeadLinks(rule, signal, tick)
+            break
+          case 'emptydir':
+            items = await findEmptyDirs(rule, signal, tick)
             break
           case 'orphan':
             items = await findOrphans(rule, ctx, signal, tick)

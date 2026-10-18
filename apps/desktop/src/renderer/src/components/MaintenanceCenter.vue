@@ -10,7 +10,7 @@ import type { AppSettings } from '@shared/types'
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
-const tab = ref<'schedule' | 'upgrades' | 'quarantine' | 'community'>('schedule')
+const tab = ref<'schedule' | 'upgrades' | 'quarantine' | 'community' | 'images' | 'registry'>('schedule')
 const settings = ref<AppSettings>({
   portableRoots: [], portableThreshold: 55, excludePaths: [],
   quarantineKeepDaysLow: 7, quarantineKeepDaysHigh: 14, theme: 'dark',
@@ -189,6 +189,81 @@ async function importWinapp2(): Promise<void> {
   }
 }
 
+// ── 相似图片盘点（v3.3 P2-1） ──
+const imgBusy = ref(false)
+const imgText = ref('')
+const imgOk = ref(false)
+const similarGroups = ref<{ hash: string; images: { path: string; sizeBytes: number }[] }[]>([])
+async function scanSimilarImages(): Promise<void> {
+  imgBusy.value = true
+  imgText.value = ''
+  try {
+    similarGroups.value = await window.api.imagesSimilar()
+    imgOk.value = true
+    imgText.value = similarGroups.value.length
+      ? `发现 ${similarGroups.value.length} 组相似图片`
+      : '未发现相似图片'
+  } catch (e) {
+    imgOk.value = false
+    imgText.value = `扫描失败：${(e as Error).message}`
+  } finally {
+    imgBusy.value = false
+  }
+}
+
+async function trashImage(path: string, gi: number): Promise<void> {
+  try {
+    const r = await window.api.imageTrash(path)
+    if (r.ok) {
+      similarGroups.value[gi].images = similarGroups.value[gi].images.filter((x) => x.path !== path)
+      if (similarGroups.value[gi].images.length < 2) similarGroups.value.splice(gi, 1)
+    } else {
+      imgText.value = `送回收站失败`
+    }
+  } catch (e) {
+    imgText.value = `送回收站失败：${(e as Error).message}`
+  }
+}
+
+// ── 注册表残留（v3.3 P2-2） ──
+const regBusy = ref(false)
+const regText = ref('')
+const regOk = ref(false)
+const leftovers = ref<{ hive: string; keyPath: string; displayName: string; reason: string }[]>([])
+async function scanRegistry(): Promise<void> {
+  regBusy.value = true
+  regText.value = ''
+  try {
+    leftovers.value = await window.api.registryLeftovers()
+    regOk.value = true
+    regText.value = leftovers.value.length
+      ? `发现 ${leftovers.value.length} 个残留卸载项`
+      : '未发现残留卸载项'
+  } catch (e) {
+    regOk.value = false
+    regText.value = `扫描失败：${(e as Error).message}`
+  } finally {
+    regBusy.value = false
+  }
+}
+
+async function deleteLeftover(l: { hive: string; keyPath: string; displayName: string }): Promise<void> {
+  regBusy.value = true
+  try {
+    const r = await window.api.registryDelete(l.hive, l.keyPath)
+    if (r.ok) {
+      leftovers.value = leftovers.value.filter((x) => x.keyPath !== l.keyPath)
+      regText.value = `已删除「${l.displayName}」的残留条目`
+    } else {
+      regText.value = `删除失败：${r.output ?? ''}`
+    }
+  } catch (e) {
+    regText.value = `删除失败：${(e as Error).message}`
+  } finally {
+    regBusy.value = false
+  }
+}
+
 onBeforeUnmount(() => {
   /* 预留 */
 })
@@ -208,6 +283,8 @@ onBeforeUnmount(() => {
           <button :class="tab === 'upgrades' ? 'active' : ''" @click="tab = 'upgrades'">软件升级</button>
           <button :class="tab === 'quarantine' ? 'active' : ''" @click="tab = 'quarantine'">隔离区管理</button>
           <button :class="tab === 'community' ? 'active' : ''" @click="tab = 'community'">社区规则</button>
+          <button :class="tab === 'images' ? 'active' : ''" @click="tab = 'images'">相似图片</button>
+          <button :class="tab === 'registry' ? 'active' : ''" @click="tab = 'registry'">注册表清理</button>
         </nav>
 
         <!-- 定时清理 -->
@@ -305,6 +382,41 @@ onBeforeUnmount(() => {
             Winapp2 是社区维护的清理规则合集（数千条）。导入后每节生成一条独立规则
             （GC-101 起），全部「默认不勾选」，按节出现在垃圾扫描分类里，请逐项审阅后再勾选。
             支持重复导入（自动跳过已导入的节）。
+          </div>
+        </section>
+
+        <!-- 相似图片 -->
+        <section v-if="tab === 'images'" class="mc-sec">
+          <div class="mc-row">
+            <button class="ghost" :disabled="imgBusy" @click="scanSimilarImages">{{ imgBusy ? '扫描中…（图片较多时需一两分钟）' : '扫描相似图片' }}</button>
+          </div>
+          <div v-if="imgText" class="mc-hint" :class="imgOk ? '' : 'warn'">{{ imgText }}</div>
+          <div v-for="(g, gi) in similarGroups" :key="gi" class="mc-hint" style="border:1px solid var(--border,#3a3a3a);border-radius:8px;padding:8px">
+            <div class="dim" style="margin-bottom:4px">相似组 {{ gi + 1 }}（{{ g.images.length }} 张，建议保留一张，其余送回收站）</div>
+            <div v-for="img in g.images" :key="img.path" style="display:flex;align-items:center;gap:8px;padding:2px 0">
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="img.path">{{ img.path }}</span>
+              <span class="mono dim">{{ formatBytes(img.sizeBytes) }}</span>
+              <button class="ghost" :disabled="imgBusy" @click="trashImage(img.path, gi)">送回收站</button>
+            </div>
+          </div>
+          <div class="mc-hint dim">感知哈希（aHash）+ 汉明距离分组；扫描范围为图片/下载/文档目录；删除走系统回收站，可还原。</div>
+        </section>
+
+        <!-- 注册表清理 -->
+        <section v-if="tab === 'registry'" class="mc-sec">
+          <div class="mc-row">
+            <button class="ghost" :disabled="regBusy" @click="scanRegistry">{{ regBusy ? '扫描中…（逐键查询，约需一两分钟）' : '扫描残留卸载项' }}</button>
+          </div>
+          <div v-if="regText" class="mc-hint" :class="regOk ? '' : 'warn'">{{ regText }}</div>
+          <ul v-if="leftovers.length" class="mc-list">
+            <li v-for="l in leftovers" :key="l.keyPath">
+              <span class="name" :title="l.keyPath">{{ l.displayName }}<span class="mc-hint dim">（{{ l.hive }}）</span></span>
+              <button class="ghost" :disabled="regBusy" @click="deleteLeftover(l)">删除死条目</button>
+            </li>
+          </ul>
+          <div class="mc-hint dim">
+            仅列出「卸载程序已不存在且安装目录缺失」的死条目。HKCU 条目直接删除；
+            HKLM 条目删除会弹 UAC 确认。删除前请确认对应软件确实已卸载。
           </div>
         </section>
       </div>

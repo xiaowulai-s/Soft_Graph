@@ -277,7 +277,7 @@ export interface JunkRule {
   risk: RiskLevel
   defaultSelected: boolean
   /** 特殊算法类：重复文件 / 超大文件 / 失效快捷方式 */
-  algorithm?: 'duplicate' | 'bigfile' | 'deadlink' | 'orphan'
+  algorithm?: 'duplicate' | 'bigfile' | 'deadlink' | 'orphan' | 'emptydir'
   match?: {
     roots: string[]
     patterns?: string[]
@@ -633,3 +633,12 @@ export type AppUpdateState =
   | { phase: 'downloading'; percent: number; bytesPerSecond: number }
   | { phase: 'downloaded'; version: string }
   | { phase: 'error'; message: string }
+
+/** v3.3 注册表残留死条目（卸载程序+安装目录均已消失） */
+export interface RegistryLeftover {
+  hive: 'HKCU' | 'HKLM'
+  keyPath: string
+  displayName: string
+  uninstallString: string
+  reason: string
+}

@@ -566,6 +566,25 @@ function registerIpc(): void {
   })
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
+  // v3.3：相似图片盘点 / 注册表残留
+  h(CH.IMAGES_SIMILAR, async () => {
+    const { findSimilarImages } = await import('./services/similar-images')
+    const roots = [join(app.getPath('pictures')), join(app.getPath('downloads')), join(app.getPath('documents'))]
+    return findSimilarImages(roots.filter((r) => r))
+  })
+  h(CH.IMAGE_TRASH, async (payload: { path: string }) => {
+    const { shell } = await import('electron')
+    const ok = await shell.trashItem(payload.path)
+    return { ok }
+  })
+  h(CH.REG_LEFTOVERS, async () => {
+    const { findDeadEntries } = await import('./services/registry-clean')
+    return findDeadEntries()
+  })
+  h(CH.REG_DELETE, async (payload: { hive: string; keyPath: string }) => {
+    const { deleteRegistryKey } = await import('./services/registry-clean')
+    return deleteRegistryKey(payload.hive as 'HKCU' | 'HKLM', payload.keyPath)
+  })
   h(CH.WINGET_UPGRADE, async (payload: { id: string }) => scan.wingetUpgrade(payload.id))
   h(CH.WINGET_UPGRADE_ELEVATED, async (payload: { id: string }) => scan.wingetUpgradeElevated(payload.id))
   h(CH.JUNK_SCHEDULE_INFO, async () => {
