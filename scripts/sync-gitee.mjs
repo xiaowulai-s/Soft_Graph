@@ -128,6 +128,12 @@ async function ensureRepo() {
   })
   if (c.status !== 201) throw new Error(`创建仓库失败：HTTP ${c.status} ${c.text.slice(0, 200)}`)
   console.log('✓ 仓库已创建')
+  // Gitee 建仓默认私有且 private 参数不可靠 —— PATCH 转公开（私有仓库附件下载 403）
+  const pub = await req(`/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}`, {
+    method: 'PATCH',
+    body: { name: GITEE_REPO, private: false, visibility: 'public' }
+  })
+  console.log(`${pub.status === 200 ? '✓' : '✗'} 仓库转公开（HTTP ${pub.status}）`)
 }
 
 async function main() {
