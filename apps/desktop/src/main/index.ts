@@ -594,6 +594,8 @@ function registerIpc(): void {
   })
   h(CH.APP_UPDATE_SKIP, async (payload: { version: string }) => {
     store.setKv('appupdate:skipVersion', JSON.stringify(String(payload.version)))
+    const { addSkipVersion } = await import('./updater')
+    addSkipVersion(String(payload.version))
   })
   h(CH.APP_UPDATE_SKIP_GET, async () => {
     const raw = store.getKv('appupdate:skipVersion')

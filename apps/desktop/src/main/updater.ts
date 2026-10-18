@@ -24,6 +24,7 @@ type StateSink = (s: AppUpdateState) => void
 let sink: StateSink | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let lastError = ''
+const skipVersion = new Set<string>()
 
 function emit(s: AppUpdateState): void {
   sink?.(s)
@@ -44,6 +45,16 @@ export function initAppUpdater(onState: StateSink): void {
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     lastError = ''
     emit({ phase: 'available', version: info.version, releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined })
+    // v3.3.1：主动系统通知 —— 用户不必打开设置才发现有新版本
+    void import('electron').then(({ Notification }) => {
+      if (Notification.isSupported() && !skipVersion.has(info.version)) {
+        const n = new Notification({
+          title: `SoftGraph ${info.version} 可更新`,
+          body: '打开 设置 → 应用更新 即可下载安装'
+        })
+        n.show()
+      }
+    })
   })
   autoUpdater.on('update-not-available', (info: UpdateInfo) => emit({ phase: 'not-available', version: info.version }))
   autoUpdater.on('download-progress', (p) => {
@@ -53,6 +64,10 @@ export function initAppUpdater(onState: StateSink): void {
   autoUpdater.on('error', (e) => {
     lastError = e.message
     emit({ phase: 'error', message: e.message })
+    void import('./services/logger').then((m) => {
+      m.logger().warn('app-update', '检查/下载失败', { error: e.message.slice(0, 200), fallback: usedFallback })
+      void m.logger().flushNow()
+    })
   })
 
   // 启动延迟 30s 检查一次；此后每 24h
@@ -65,6 +80,10 @@ export function initAppUpdater(onState: StateSink): void {
 
 export function lastAppUpdateError(): string {
   return lastError
+}
+
+export function addSkipVersion(v: string): void {
+  skipVersion.add(v)
 }
 
 /** D1：备用更新源（Gitee 镜像，tag 固定为 stable；需维护者同步 latest.yml+安装包，缺失时自动回退官方源） */

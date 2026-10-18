@@ -19,26 +19,12 @@ const UNINSTALL_ROOTS = [
   'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
 ]
 
-export function parseRegQuery(text: string, hive: RegistryLeftover['hive'], root: string): RegistryLeftover[] {
-  const out: RegistryLeftover[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const m = new RegExp('^' + root.replace(/\\/g, '\\\\') + '\\\\(.+)$').exec(line.trim())
-    if (m) out.push({ hive, keyPath: `${root}\\${m[1]}`, displayName: '', uninstallString: '', reason: '' } as never)
-  }
-  return out
-}
 
 /** 枚举全部卸载条目（reg query 全量 + 逐条取值） */
 export async function enumerateUninstallEntries(): Promise<
   { hive: RegistryLeftover['hive']; keyPath: string; displayName: string; uninstallString: string; installLocation: string }[]
 > {
   const entries: { hive: RegistryLeftover['hive']; keyPath: string; displayName: string; uninstallString: string; installLocation: string }[] = []
-  for (const root of UNINSTALL_ROOTS) {
-    const hive = root.startsWith('HKCU') ? 'HKCU' : 'HKLM'
-    const text = await regQuery(`${root} /s /v DisplayName /f "" /e 2>nul`)
-    void text
-    // reg query /s 输出子键与值交错 —— 改为两段式：先列子键，再逐键取值
-  }
   for (const root of UNINSTALL_ROOTS) {
     const hive = root.startsWith('HKCU') ? 'HKCU' : 'HKLM'
     const subkeys = await listSubkeys(root)
