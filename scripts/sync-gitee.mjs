@@ -61,7 +61,63 @@ function req(path, { method = 'GET', body, host = 'gitee.com' } = {}) {
   })
 }
 
+/** Gitee 附件上传要求 multipart/form-data（file 字段） */
+function uploadMultipart(uploadPath, filename, fileBuf) {
+  const boundary = '----sgsync' + Date.now()
+  const pre = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+  )
+  const post = Buffer.from(`\r\n--${boundary}--\r\n`)
+  const body = Buffer.concat([pre, fileBuf, post])
+  const sep = uploadPath.includes('?') ? '&' : '?'
+  return new Promise((resolve, reject) => {
+    const r = https.request(
+      {
+        host: 'gitee.com',
+        port: 443,
+        path: `${uploadPath}${sep}access_token=${encodeURIComponent(token)}`,
+        method: 'POST',
+        timeout: 600_000,
+        headers: {
+          'User-Agent': 'sg-sync',
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length
+        }
+      },
+      (res) => {
+        let t = ''
+        res.on('data', (d) => (t += d))
+        res.on('end', () => resolve({ status: res.statusCode, text: t }))
+      }
+    )
+    r.on('error', reject)
+    r.write(body)
+    r.end()
+  })
+}
+
+async function ensureRepo() {
+  const r = await req(`/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}`)
+  if (r.status === 200) {
+    console.log('镜像仓库已存在')
+    return
+  }
+  console.log('创建镜像仓库 softgraph-mirror …')
+  const c = await req('/api/v5/user/repos', {
+    method: 'POST',
+    body: {
+      name: GITEE_REPO,
+      description: 'SoftGraph 应用自更新 Gitee 镜像（stable Release 承载 latest.yml 与安装包）',
+      private: false,
+      auto_init: false
+    }
+  })
+  if (c.status !== 201) throw new Error(`创建仓库失败：HTTP ${c.status} ${c.text.slice(0, 200)}`)
+  console.log('✓ 仓库已创建')
+}
+
 async function main() {
+  await ensureRepo()
   // 1. 找 stable release（存在则复用，不存在则创建）
   let release = null
   try {
@@ -94,9 +150,10 @@ async function main() {
       continue
     }
     const buf = readFileSync(join(assetDir, f))
-    const r = await req(
+    const r = await uploadMultipart(
       `/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files?filename=${encodeURIComponent(f)}`,
-      { method: 'POST', body: { file: buf.toString('base64') } }
+      f,
+      buf
     )
     console.log(`${r.status === 201 ? '✓' : '✗'} 上传 ${f}（HTTP ${r.status}）`)
   }

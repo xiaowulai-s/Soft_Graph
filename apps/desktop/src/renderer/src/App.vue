@@ -74,7 +74,6 @@ const mainView = ref<string>('graph')
 const isGraph = computed(() => mainView.value === 'graph')
 const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
 /** v3.5 二级导航：激活模块声明 children 时渲染顶栏下的子项行（横向位不足的扩容机制） */
-const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
 const rightOpen = ref(true)
 const canvasFull = ref(false)
 
