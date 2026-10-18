@@ -5,12 +5,13 @@
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
-import type { AppSettings } from '@shared/types'
+import type { AppSettings, AppUpdateState } from '@shared/types'
 
 const props = defineProps<{ open?: boolean; page?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
-const tab = ref<'schedule' | 'upgrades' | 'quarantine' | 'community' | 'images' | 'registry'>('schedule')
+// v3.6 合并同类 → 4 组胶囊：清理调度 / 软件资产 / 规则供给 / 扫描与更新
+const tab = ref<'cleanup' | 'software' | 'rules' | 'system'>('cleanup')
 const settings = ref<AppSettings>({
   portableRoots: [], portableThreshold: 55, excludePaths: [],
   quarantineKeepDaysLow: 7, quarantineKeepDaysHigh: 14, theme: 'dark',
@@ -225,6 +226,63 @@ async function trashImage(path: string, gi: number): Promise<void> {
   }
 }
 
+// ── 应用自更新（自设置抽屉迁入） ──
+const appUpdate = ref<AppUpdateState | null>(null)
+let appUpdateUnsub: (() => void) | null = null
+onMounted(() => {
+  appUpdateUnsub = window.api.onAppUpdateState((st) => {
+    appUpdate.value = st
+  })
+})
+onBeforeUnmount(() => {
+  appUpdateUnsub?.()
+  appUpdateUnsub = null
+})
+
+async function checkAppUpdate(): Promise<void> {
+  appUpdate.value = { phase: 'checking' }
+  try {
+    const r = await window.api.appUpdateCheck()
+    if (r.available) appUpdate.value = { phase: 'available', version: r.version ?? '' }
+    else appUpdate.value = { phase: 'not-available', version: r.version ?? '' }
+  } catch (e) {
+    appUpdate.value = { phase: 'error', message: (e as Error).message }
+  }
+}
+
+async function downloadAppUpdate(): Promise<void> {
+  await window.api.appUpdateDownload()
+}
+
+function installAppUpdate(): void {
+  window.api.appUpdateInstall()
+}
+
+const skipText = ref('')
+async function skipAppUpdate(version: string): Promise<void> {
+  await window.api.appUpdateSkip(version)
+  skipText.value = `已跳过 v${version}，之后的版本仍会正常提示`
+}
+
+// ── 签名规则在线更新（自设置抽屉迁入） ──
+const rulesBusy = ref(false)
+const rulesText = ref('')
+const rulesOk = ref(false)
+async function checkRulesUpdate(): Promise<void> {
+  rulesBusy.value = true
+  rulesText.value = ''
+  try {
+    const r = await window.api.rulesUpdate()
+    rulesOk.value = r.ok
+    rulesText.value = r.ok
+      ? `规则库已更新到 v${r.version}（${r.ruleCount ?? '?'} 类）。重新扫描即生效。`
+      : `未更新：${r.reason ?? '未知原因'}`
+  } catch (e) {
+    rulesOk.value = false
+    rulesText.value = `检查失败：${(e as Error).message}`
+  }
+}
+
 // ── 注册表残留（v3.3 P2-2） ──
 const regBusy = ref(false)
 const regText = ref('')
@@ -279,16 +337,15 @@ onBeforeUnmount(() => {
         </header>
 
         <nav class="mc-tabs">
-          <button :class="tab === 'schedule' ? 'active' : ''" @click="tab = 'schedule'">定时清理</button>
-          <button :class="tab === 'upgrades' ? 'active' : ''" @click="tab = 'upgrades'">软件升级</button>
-          <button :class="tab === 'quarantine' ? 'active' : ''" @click="tab = 'quarantine'">隔离区管理</button>
-          <button :class="tab === 'community' ? 'active' : ''" @click="tab = 'community'">社区规则</button>
-          <button :class="tab === 'images' ? 'active' : ''" @click="tab = 'images'">相似图片</button>
-          <button :class="tab === 'registry' ? 'active' : ''" @click="tab = 'registry'">注册表清理</button>
+          <button :class="tab === 'cleanup' ? 'active' : ''" @click="tab = 'cleanup'">清理调度</button>
+          <button :class="tab === 'software' ? 'active' : ''" @click="tab = 'software'">软件资产</button>
+          <button :class="tab === 'rules' ? 'active' : ''" @click="tab = 'rules'">规则供给</button>
+          <button :class="tab === 'system' ? 'active' : ''" @click="tab = 'system'">扫描与更新</button>
         </nav>
 
         <!-- 定时清理 -->
-        <section v-if="tab === 'schedule'" class="mc-sec">
+        <section v-if="tab === 'cleanup'" class="mc-sec">
+          <h4 class="mc-sub">定时静默清理</h4>
           <div class="mc-row">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input
@@ -331,7 +388,8 @@ onBeforeUnmount(() => {
         </section>
 
         <!-- 软件升级 -->
-        <section v-if="tab === 'upgrades'" class="mc-sec">
+        <section v-if="tab === 'software'" class="mc-sec">
+          <h4 class="mc-sub">软件升级（winget）</h4>
           <div class="mc-row">
             <button class="ghost" :disabled="wingetBusy" @click="loadUpgrades">{{ wingetBusy ? '检查中…' : '检查可升级软件' }}</button>
             <button v-if="upgrades.length" class="ghost" :disabled="wingetUpgrading" @click="upgradeAll">
@@ -351,7 +409,8 @@ onBeforeUnmount(() => {
         </section>
 
         <!-- 隔离区管理 -->
-        <section v-if="tab === 'quarantine'" class="mc-sec">
+        <section v-if="tab === 'cleanup'" class="mc-sec" style="margin-top:14px">
+          <h4 class="mc-sub">隔离区管理</h4>
           <div class="mc-row">
             <button class="ghost" :disabled="quarLoading" @click="loadQuarantine">{{ quarLoading ? '加载中…' : '刷新隔离区列表' }}</button>
             <button class="ghost" :disabled="!quarItems.length || shredBusy || shredConfirm" @click="shredConfirm = true">粉碎选中（{{ quarSel.size }}）</button>
@@ -373,7 +432,8 @@ onBeforeUnmount(() => {
         </section>
 
         <!-- 社区规则 -->
-        <section v-if="tab === 'community'" class="mc-sec">
+        <section v-if="tab === 'rules'" class="mc-sec">
+          <h4 class="mc-sub">社区清理规则（Winapp2.ini）</h4>
           <div class="mc-row">
             <button class="ghost" :disabled="winapp2Busy" @click="importWinapp2">{{ winapp2Busy ? '导入中…' : '导入 Winapp2.ini' }}</button>
           </div>
@@ -385,8 +445,31 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <section v-if="tab === 'rules'" class="mc-sec" style="margin-top:14px">
+          <h4 class="mc-sub">签名规则在线更新</h4>
+          <div class="mc-row">
+            <label>更新源（留空 = 自动使用官方源 + 镜像回退）</label>
+            <input
+              class="mono"
+              type="url"
+              style="flex:1;background:transparent;border:1px solid var(--border);border-radius:8px;color:inherit;padding:5px 10px;font-size:12px"
+              :value="settings.rulesUpdateUrl"
+              @change="patch({ rulesUpdateUrl: ($event.target as HTMLInputElement).value.trim() })"
+            />
+            <button class="ghost" :disabled="rulesBusy" @click="checkRulesUpdate">
+              {{ rulesBusy ? '检查中…' : '检查规则更新' }}
+            </button>
+          </div>
+          <div v-if="rulesText" class="mc-hint" :class="rulesOk ? '' : 'warn'">{{ rulesText }}</div>
+          <div class="mc-hint dim">
+            更新包必须通过 Ed25519 签名（公钥内置）、SHA-256 校验、版本单调与安全结构检查，
+            任何一步失败都不会改动本机规则。
+          </div>
+        </section>
+
         <!-- 相似图片 -->
-        <section v-if="tab === 'images'" class="mc-sec">
+        <section v-if="tab === 'system'" class="mc-sec">
+          <h4 class="mc-sub">相似图片盘点</h4>
           <div class="mc-row">
             <button class="ghost" :disabled="imgBusy" @click="scanSimilarImages">{{ imgBusy ? '扫描中…（图片较多时需一两分钟）' : '扫描相似图片' }}</button>
           </div>
@@ -402,8 +485,37 @@ onBeforeUnmount(() => {
           <div class="mc-hint dim">感知哈希（aHash）+ 汉明距离分组；扫描范围为图片/下载/文档目录；删除走系统回收站，可还原。</div>
         </section>
 
+        <section v-if="tab === 'system'" class="mc-sec" style="margin-top:14px">
+          <h4 class="mc-sub">应用自更新</h4>
+          <div class="mc-row">
+            <button class="ghost" :disabled="appUpdate?.phase === 'checking' || appUpdate?.phase === 'downloading'" @click="checkAppUpdate">
+              {{ appUpdate?.phase === 'checking' ? '检查中…' : '检查应用更新' }}
+            </button>
+            <button v-if="appUpdate?.phase === 'available'" class="ghost" @click="downloadAppUpdate">
+              下载 v{{ appUpdate.version }}
+            </button>
+            <button v-if="appUpdate?.phase === 'downloaded'" class="ghost" @click="installAppUpdate">
+              重启并安装 v{{ appUpdate.version }}
+            </button>
+          </div>
+          <div v-if="appUpdate?.phase === 'downloading'" class="mc-hint">
+            下载中 {{ appUpdate.percent }}%（{{ (appUpdate.bytesPerSecond / 1048576).toFixed(1) }} MB/s）
+          </div>
+          <div v-else-if="appUpdate?.phase === 'not-available'" class="mc-hint">已是最新版本（v{{ appUpdate.version }}）</div>
+          <div v-else-if="appUpdate?.phase === 'downloaded'" class="mc-hint">下载完成，点「重启并安装」完成更新</div>
+          <div v-else-if="appUpdate?.phase === 'error'" class="mc-hint warn">更新失败：{{ appUpdate.message }}</div>
+          <div v-else-if="appUpdate?.phase === 'available'" class="mc-hint">
+            发现新版本 v{{ appUpdate.version }}，点「下载」获取
+            <div v-if="appUpdate.releaseNotes" class="mc-hint dim" style="max-height:100px;overflow:auto;margin-top:4px">{{ appUpdate.releaseNotes.slice(0, 400) }}</div>
+            <button class="ghost" style="margin-top:4px" @click="skipAppUpdate(appUpdate.version)">跳过此版本</button>
+            <div v-if="skipText" class="mc-hint">{{ skipText }}</div>
+          </div>
+          <div class="mc-hint dim">启动后自动检查（每 24h 一次），下载需手动确认；失败会写入日志（scope app-update）。</div>
+        </section>
+
         <!-- 注册表清理 -->
-        <section v-if="tab === 'registry'" class="mc-sec">
+        <section v-if="tab === 'software'" class="mc-sec" style="margin-top:14px">
+          <h4 class="mc-sub">注册表残留清理</h4>
           <div class="mc-row">
             <button class="ghost" :disabled="regBusy" @click="scanRegistry">{{ regBusy ? '扫描中…（逐键查询，约需一两分钟）' : '扫描残留卸载项' }}</button>
           </div>
@@ -453,6 +565,7 @@ onBeforeUnmount(() => {
 }
 .mc-tabs button.active { border-color: var(--accent, #0891b2); color: var(--accent, #22d3ee); }
 .mc-sec { display: flex; flex-direction: column; gap: 10px; }
+.mc-sub { margin: 0; font-size: 13px; font-weight: 500; color: var(--accent-2, #22d3ee); }
 .mc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .mc-row span { font-size: 13px; }
 .mc-row select, .mc-row button, .mc-list button {

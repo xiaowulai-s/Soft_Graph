@@ -200,44 +200,6 @@ const instOrderedPlugins = computed(() => {
   return [...on, ...off]
 })
 
-// ── 应用自更新（v3.0.3） ──
-const appUpdate = ref<AppUpdateState | null>(null)
-let appUpdateUnsub: (() => void) | null = null
-onMounted(() => {
-  appUpdateUnsub = window.api.onAppUpdateState((st) => {
-    appUpdate.value = st
-  })
-})
-onBeforeUnmount(() => {
-  appUpdateUnsub?.()
-  appUpdateUnsub = null
-})
-
-async function checkAppUpdate(): Promise<void> {
-  appUpdate.value = { phase: 'checking' }
-  try {
-    const r = await window.api.appUpdateCheck()
-    if (r.available) appUpdate.value = { phase: 'available', version: r.version ?? '' }
-    else appUpdate.value = { phase: 'not-available', version: r.version ?? '' }
-  } catch (e) {
-    appUpdate.value = { phase: 'error', message: (e as Error).message }
-  }
-}
-
-async function downloadAppUpdate(): Promise<void> {
-  await window.api.appUpdateDownload()
-}
-
-function installAppUpdate(): void {
-  window.api.appUpdateInstall()
-}
-
-const skipText = ref('')
-async function skipAppUpdate(version: string): Promise<void> {
-  await window.api.appUpdateSkip(version)
-  skipText.value = `已跳过 v${version}，之后的版本仍会正常提示`
-}
-
 function openPluginDir(): void {
   void window.api.floatOpenPluginDir()
 }
@@ -544,30 +506,7 @@ const AUDIT_LABEL: Record<string, string> = {
 }
 
 /** 规则库在线更新（E2） */
-const rulesBusy = ref(false)
-const rulesText = ref('')
-const rulesOk = ref(false)
 
-async function checkRulesUpdate(): Promise<void> {
-  rulesBusy.value = true
-  rulesText.value = ''
-  try {
-    const r = await window.api.rulesUpdate()
-    rulesOk.value = r.ok
-    if (r.ok) {
-      rulesText.value = `✅ 规则库已更新到 v${r.version}（${r.ruleCount ?? '?'} 类）。重新扫描即生效。`
-      emit('toast', `规则库已更新到 v${r.version}`)
-      rules.value = await window.api.junkRules()
-    } else {
-      rulesText.value = `未更新：${r.reason ?? '未知原因'}`
-    }
-  } catch (e) {
-    rulesOk.value = false
-    rulesText.value = `检查失败：${(e as Error).message}`
-  } finally {
-    rulesBusy.value = false
-  }
-}
 
 /** 诊断包导出（C5） */
 const diagBusy = ref(false)
@@ -729,56 +668,8 @@ function daysLeft(r: QuarantineRecord): string {
               该规则以纯函数固化在代码中，不读取配置文件。
             </div>
             <!-- 规则库在线更新（E2）：签名 + 哈希 + 版本单调 + 结构校验 -->
-            <div class="sd-row col">
-              <label>规则库更新源（HTTPS，留空禁用在线更新）</label>
-              <input
-                class="mono"
-                type="url"
-                placeholder="https://example.com/softgraph-rules/"
-                :value="settings.rulesUpdateUrl"
-                @change="patch({ rulesUpdateUrl: ($event.target as HTMLInputElement).value.trim() })"
-              />
-              <div class="sd-actions">
-                <button class="ghost" :disabled="rulesBusy" @click="checkRulesUpdate">
-                  {{ rulesBusy ? '检查中…' : '检查规则更新' }}
-                </button>
-                <span class="sd-hint sd-inline">
-                  更新包必须通过 Ed25519 签名（公钥内置）、SHA-256 校验、版本单调与安全结构检查，
-                  任何一步失败都不会改动本机规则。
-                </span>
-              </div>
-              <div v-if="rulesText" class="sd-hint" :class="rulesOk ? '' : 'warn'">{{ rulesText }}</div>
-            </div>
 
             <!-- 应用自更新（v3.0.3，electron-updater） -->
-            <div class="sd-row col">
-              <label>应用更新</label>
-              <div class="sd-actions">
-                <button class="ghost" :disabled="appUpdate?.phase === 'checking' || appUpdate?.phase === 'downloading'" @click="checkAppUpdate">
-                  {{ appUpdate?.phase === 'checking' ? '检查中…' : '检查应用更新' }}
-                </button>
-                <button v-if="appUpdate?.phase === 'available'" class="ghost" @click="downloadAppUpdate">
-                  下载 v{{ appUpdate.version }}
-                </button>
-                <button v-if="appUpdate?.phase === 'downloaded'" class="ghost" @click="installAppUpdate">
-                  重启并安装 v{{ appUpdate.version }}
-                </button>
-              </div>
-              <div v-if="appUpdate?.phase === 'downloading'" class="sd-hint">
-                下载中 {{ appUpdate.percent }}%（{{ (appUpdate.bytesPerSecond / 1048576).toFixed(1) }} MB/s）
-              </div>
-              <div v-else-if="appUpdate?.phase === 'not-available'" class="sd-hint">已是最新版本（v{{ appUpdate.version }}）</div>
-              <div v-else-if="appUpdate?.phase === 'downloaded'" class="sd-hint">下载完成，点「重启并安装」完成更新</div>
-              <div v-else-if="appUpdate?.phase === 'error'" class="sd-hint warn">更新失败：{{ appUpdate.message }}</div>
-              <template v-else-if="appUpdate?.phase === 'available'">
-                <div class="sd-hint">发现新版本 v{{ appUpdate.version }}，点「下载」获取</div>
-                <div v-if="appUpdate.releaseNotes" class="sd-hint dim" style="max-height:120px;overflow:auto">{{ appUpdate.releaseNotes.slice(0, 400) }}</div>
-                <button class="ghost" @click="skipAppUpdate(appUpdate.version)">跳过此版本</button>
-                <div v-if="skipText" class="sd-hint">{{ skipText }}</div>
-              </template>
-              <div class="sd-hint sd-inline">
-                启动后自动检查（每 24h 一次），下载需手动确认；下载走系统代理。
-              </div>
             </div>
 
 
@@ -1181,17 +1072,17 @@ function daysLeft(r: QuarantineRecord): string {
         <!-- ── 关于 ── -->
         <template v-else-if="tab === 'about' && info">
           <section class="sd-sec">
-            <h4>SoftGraph v{{ info.version }}</h4>
+            <h4>SoftGraph v{{ info?.version }}</h4>
             <div class="sd-hint">软件图谱与磁盘清理工具 —— 依赖关系可视化 · 便携软件识别 · 垃圾空间治理</div>
             <table class="sd-table">
               <tbody>
-                <tr><td>Electron</td><td class="mono">{{ info.electron }}</td></tr>
-                <tr><td>Chromium</td><td class="mono">{{ info.chrome }}</td></tr>
-                <tr><td>Node</td><td class="mono">{{ info.node }}</td></tr>
-                <tr><td>平台</td><td class="mono">{{ info.platform }} / {{ info.arch }}</td></tr>
-                <tr><td>数据库驱动</td><td class="mono">{{ info.dbDriver }}</td></tr>
-                <tr><td>运行权限</td><td>{{ info.elevated ? '管理员' : '标准用户（推荐）' }}</td></tr>
-                <tr><td>数据目录</td><td class="mono sel">{{ info.userData }}</td></tr>
+                <tr><td>Electron</td><td class="mono">{{ info?.electron }}</td></tr>
+                <tr><td>Chromium</td><td class="mono">{{ info?.chrome }}</td></tr>
+                <tr><td>Node</td><td class="mono">{{ info?.node }}</td></tr>
+                <tr><td>平台</td><td class="mono">{{ info?.platform }} / {{ info?.arch }}</td></tr>
+                <tr><td>数据库驱动</td><td class="mono">{{ info?.dbDriver }}</td></tr>
+                <tr><td>运行权限</td><td>{{ info?.elevated ? '管理员' : '标准用户（推荐）' }}</td></tr>
+                <tr><td>数据目录</td><td class="mono sel">{{ info?.userData }}</td></tr>
               </tbody>
             </table>
             <div class="sd-hint">
