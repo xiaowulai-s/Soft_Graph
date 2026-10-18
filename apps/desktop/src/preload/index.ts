@@ -95,6 +95,7 @@ const api: SoftGraphApi = {
   imageTrash: (path: string) => ipcRenderer.invoke(CH.IMAGE_TRASH, { path }),
   registryLeftovers: () => ipcRenderer.invoke(CH.REG_LEFTOVERS),
   registryDelete: (hive: string, keyPath: string) => ipcRenderer.invoke(CH.REG_DELETE, { hive, keyPath }),
+  quarantineCount: () => ipcRenderer.invoke(CH.QUARANTINE_COUNT),
   junkScheduleRun: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_RUN),
   wingetList: () => ipcRenderer.invoke(CH.WINGET_LIST),
   wingetUpgrade: (id: string) => ipcRenderer.invoke(CH.WINGET_UPGRADE, { id }),

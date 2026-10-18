@@ -566,6 +566,7 @@ function registerIpc(): void {
   })
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
+  h(CH.QUARANTINE_COUNT, async () => Number(store.getKv('quarantine:count') ?? '0'))
   // v3.3：相似图片盘点 / 注册表残留
   h(CH.IMAGES_SIMILAR, async () => {
     const { findSimilarImages } = await import('./services/similar-images')

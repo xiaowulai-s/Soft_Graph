@@ -72,6 +72,9 @@ const leftOpen = ref(true)
 // v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
 const mainView = ref<string>('graph')
 const isGraph = computed(() => mainView.value === 'graph')
+const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
+/** v3.5 二级导航：激活模块声明 children 时渲染顶栏下的子项行（横向位不足的扩容机制） */
+const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
 const rightOpen = ref(true)
 const canvasFull = ref(false)
 
@@ -773,6 +776,24 @@ const statusText = computed(() => {
       <button class="ghost" title="设置" @click="openDrawer('settings')">⚙</button>
     </header>
 
+    <nav v-if="activeChildren.length" class="tb-subnav">
+      <button v-for="c in activeChildren" :key="c.id" class="ghost" @click="mainView = c.id">
+        <span>{{ c.icon }}</span> {{ c.title }}
+      </button>
+    </nav>
+
+    <!-- v3.5 二级导航：激活模块有 children 时渲染 -->
+    <nav v-if="activeChildren.length" class="tb-subnav">
+      <button
+        v-for="c in activeChildren"
+        :key="c.id"
+        class="ghost"
+        @click="mainView = c.id"
+      >
+        <span>{{ c.icon }}</span> {{ c.title }}
+      </button>
+    </nav>
+
     <!-- 三栏主体 -->
     <main v-show="isGraph" class="body">
       <div v-if="leftOpen && !canvasFull" class="col-left">
@@ -878,6 +899,7 @@ const statusText = computed(() => {
       </div>
       <div class="junk-page-body">
         <JunkSidebar
+          dashboard
           :summary="junkSummary"
           :scanning="junkScanning"
           :progress="junkProgress"
@@ -1347,6 +1369,11 @@ const statusText = computed(() => {
 }
 .tb-nav-btn:hover { border-color: var(--border); }
 .tb-nav-btn.active { border-color: var(--accent, #0891b2); color: var(--accent, #22d3ee); }
+.tb-subnav {
+  display: flex; gap: 8px; padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.tb-subnav { display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); }
 .junk-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .junk-page-head {
   display: flex; align-items: baseline; gap: 12px; padding: 10px 16px;

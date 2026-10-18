@@ -7,6 +7,8 @@ export interface NavModule {
   title: string
   icon: string
   desc: string
+  /** 二级导航（可选）：模块激活时在顶栏下方渲染子项（横向位不足时的扩容机制） */
+  children?: NavModule[]
 }
 
 export const NAV_MODULES: NavModule[] = [

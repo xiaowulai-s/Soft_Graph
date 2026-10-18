@@ -17,6 +17,8 @@ const props = defineProps<{
   summary: JunkSummary | null
   scanning: boolean
   progress: ScanProgress | null
+  /** v3.5 仪表盘模式：垃圾清理主视图下显示统计卡头部 */
+  dashboard?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -71,6 +73,12 @@ const categories = computed<JunkCategorySummary[]>(() => {
   const filtered = focusedSector.value ? list.filter((c) => c.id === focusedSector.value) : list
   return [...filtered].sort((a, b) => b.sizeBytes - a.sizeBytes)
 })
+// v3.5 仪表盘：隔离区保留计数
+const quarCount = ref(0)
+if (props.dashboard) {
+  void window.api.quarantineCount().then((n) => (quarCount.value = n)).catch(() => {})
+}
+
 // v3.2 B4：社区规则（Winapp2 导入，名称以 [社区] 开头）折叠为独立分组
 const builtinCategories = computed<JunkCategorySummary[]>(() => categories.value.filter((c) => !c.name.startsWith('[社区]')))
 const communityCategories = computed<JunkCategorySummary[]>(() => categories.value.filter((c) => c.name.startsWith('[社区]')))
@@ -326,6 +334,22 @@ const RISK_TIP: Record<RiskLevel, string> = {
         <button class="ghost" @click="focusedSector = null">显示全部</button>
       </div>
 
+      <!-- v3.5 仪表盘统计卡（仅主视图模式） -->
+      <div v-if="dashboard" class="js-dash">
+        <div class="js-stat teal">
+          <span class="js-stat-label">可释放</span>
+          <span class="js-stat-val">{{ formatBytes(summary?.totalBytes ?? 0) }}</span>
+        </div>
+        <div class="js-stat blue">
+          <span class="js-stat-label">已选 {{ selectedCount }} 项</span>
+          <span class="js-stat-val">{{ formatBytes(selectedBytes) }}</span>
+        </div>
+        <div class="js-stat amber">
+          <span class="js-stat-label">隔离区保留</span>
+          <span class="js-stat-val">{{ quarCount }} 项 · 可还原</span>
+        </div>
+      </div>
+
       <div class="js-toolbar">
         <button class="ghost" @click="selectAll(true)">全选</button>
         <button class="ghost" @click="selectAll(false)">全不选</button>
@@ -466,6 +490,22 @@ const RISK_TIP: Record<RiskLevel, string> = {
 </template>
 
 <style scoped>
+.js-dash { display: flex; gap: 10px; margin-bottom: 10px; }
+.js-stat {
+  flex: 1; border-radius: 8px; padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.js-stat.teal { background: #E1F5EE; }
+.js-stat.teal .js-stat-label { color: #085041; }
+.js-stat.teal .js-stat-val { color: #04342C; }
+.js-stat.blue { background: #E6F1FB; }
+.js-stat.blue .js-stat-label { color: #0C447C; }
+.js-stat.blue .js-stat-val { color: #042C53; }
+.js-stat.amber { background: #FAEEDA; }
+.js-stat.amber .js-stat-label { color: #633806; }
+.js-stat.amber .js-stat-val { color: #412402; }
+.js-stat-label { font-size: 12px; }
+.js-stat-val { font-size: 14px; font-weight: 500; }
 .js {
   display: flex;
   flex-direction: column;

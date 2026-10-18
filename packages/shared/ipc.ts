@@ -130,6 +130,7 @@ export const CH = {
   IMAGE_TRASH: 'images:trash',
   REG_LEFTOVERS: 'registry:leftovers',
   REG_DELETE: 'registry:delete',
+  QUARANTINE_COUNT: 'quarantine:count',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -212,6 +213,7 @@ export interface SoftGraphApi {
   /** v3.3 相似图片盘点（aHash 分组，hint 级） */
   imagesSimilar(): Promise<{ hash: string; images: { path: string; sizeBytes: number }[] }[]>
   imageTrash(path: string): Promise<{ ok: boolean; error?: string }>
+  quarantineCount(): Promise<number>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
   registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>

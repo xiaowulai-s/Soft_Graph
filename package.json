@@ -1,6 +1,6 @@
 {
   "name": "softgraph",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "description": "SoftGraph — 软件图谱与磁盘清理工具",
   "main": "./out/main/index.js",
   "author": "SoftGraph Team",
