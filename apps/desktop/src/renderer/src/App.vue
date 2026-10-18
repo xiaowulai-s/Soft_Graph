@@ -24,6 +24,7 @@ import JunkSidebar from './components/JunkSidebar.vue'
 import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import MaintenanceCenter from './components/MaintenanceCenter.vue'
+import { NAV_MODULES } from './nav'
 
 // ───────────────── 状态 ─────────────────
 
@@ -68,7 +69,9 @@ const layoutMode = ref<'radial' | 'force' | 'cluster'>('radial')
 
 // 面板折叠 / 画布全屏
 const leftOpen = ref(true)
-const maintOpen = ref(false)
+// v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
+const mainView = ref<string>('graph')
+const isGraph = computed(() => mainView.value === 'graph')
 const rightOpen = ref(true)
 const canvasFull = ref(false)
 
@@ -670,13 +673,27 @@ const statusText = computed(() => {
         <span class="tb-name">SoftGraph</span>
       </div>
 
-      <button :disabled="swScanning" @click="scanSoftware">{{ software.length ? '重新扫描' : '扫描软件' }}</button>
-      <button :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
+      <!-- v3.4 模块化导航：由 nav.ts 注册表驱动 -->
+      <nav class="tb-nav">
+        <button
+          v-for="m in NAV_MODULES"
+          :key="m.id"
+          class="tb-nav-btn"
+          :class="{ active: mainView === m.id }"
+          :title="m.desc"
+          @click="mainView = m.id"
+        >
+          <span>{{ m.icon }}</span><span>{{ m.title }}</span>
+        </button>
+      </nav>
 
-      <input v-model="searchTerm" class="tb-search" type="search" placeholder="在图谱中搜索文件名或路径…" />
+      <button v-show="isGraph" :disabled="swScanning" @click="scanSoftware">{{ software.length ? '重新扫描' : '扫描软件' }}</button>
+      <button v-show="isGraph" :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
+
+      <input v-show="isGraph" v-model="searchTerm" class="tb-search" type="search" placeholder="在图谱中搜索文件名或路径…" />
 
       <!-- 全库文件检索（I-11）：覆盖整个 file_index，不限于当前图谱已加载的节点 -->
-      <div class="tb-fsearch" @click.stop>
+      <div v-show="isGraph" class="tb-fsearch" @click.stop>
         <input
           v-model="fileQuery"
           class="tb-fsearch-input"
@@ -727,13 +744,13 @@ const statusText = computed(() => {
         </div>
       </div>
 
-      <div class="tb-group">
+      <div v-show="isGraph" class="tb-group">
         <span class="dim">置信度 ≥</span>
         <input v-model.number="minConfidence" type="range" min="0" max="0.95" step="0.05" class="tb-range" />
         <span class="tb-range-val mono">{{ minConfidence.toFixed(2) }}</span>
       </div>
 
-      <select v-model="layoutMode" title="布局方式">
+      <select v-show="isGraph" v-model="layoutMode" title="布局方式">
         <option value="radial">径向分层</option>
         <option value="force">力导向</option>
         <option value="cluster">环形聚类</option>
@@ -741,24 +758,23 @@ const statusText = computed(() => {
 
       <span class="tb-sp" />
 
-      <button class="ghost" :disabled="!graph" title="导出 PNG" @click="exportGraphPng">导出图</button>
-      <button class="ghost" :disabled="!graph" title="导出依赖清单" @click="exportGraphReport">依赖清单</button>
-      <button class="ghost" :title="leftOpen ? '收起软件列表' : '展开软件列表'" @click="leftOpen = !leftOpen">
+      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出 PNG" @click="exportGraphPng">导出图</button>
+      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出依赖清单" @click="exportGraphReport">依赖清单</button>
+      <button v-show="isGraph" class="ghost" :title="leftOpen ? '收起软件列表' : '展开软件列表'" @click="leftOpen = !leftOpen">
         {{ leftOpen ? '◧' : '▢' }}
       </button>
-      <button class="ghost" :title="rightOpen ? '收起垃圾侧栏' : '展开垃圾侧栏'" @click="rightOpen = !rightOpen">
+      <button v-show="isGraph" class="ghost" :title="rightOpen ? '收起垃圾侧栏' : '展开垃圾侧栏'" @click="rightOpen = !rightOpen">
         {{ rightOpen ? '◨' : '▢' }}
       </button>
-      <button class="ghost" :title="canvasFull ? '退出全屏 (Esc)' : '画布全屏 (F11)'" @click="canvasFull = !canvasFull">
+      <button v-show="isGraph" class="ghost" :title="canvasFull ? '退出全屏 (Esc)' : '画布全屏 (F11)'" @click="canvasFull = !canvasFull">
         ⤢
       </button>
       <button class="ghost" title="桌面浮窗" @click="openDrawer('float')">浮窗</button>
-      <button class="ghost" title="维护中心（定时清理 / 软件升级 / 隔离区 / 社区规则）" @click="maintOpen = true">🧰</button>
       <button class="ghost" title="设置" @click="openDrawer('settings')">⚙</button>
     </header>
 
     <!-- 三栏主体 -->
-    <main class="body">
+    <main v-show="isGraph" class="body">
       <div v-if="leftOpen && !canvasFull" class="col-left">
         <SoftwareList
           :items="software"
@@ -852,6 +868,36 @@ const statusText = computed(() => {
           @export="exportJunkReport"
         />
       </div>
+    </main>
+
+    <!-- v3.4 垃圾清理主视图 -->
+    <main v-if="mainView === 'junk'" class="junk-page">
+      <div class="junk-page-head">
+        <span class="mid-title">垃圾清理</span>
+        <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
+      </div>
+      <div class="junk-page-body">
+        <JunkSidebar
+          :summary="junkSummary"
+          :scanning="junkScanning"
+          :progress="junkProgress"
+          @scan="scanJunk"
+          @scan-force="scanJunk(true)"
+          @cancel="cancelJunk"
+          @delete-categories="planCategories"
+          @delete-items="planItems"
+          @delete-one-click="planOneClick"
+          @reveal="reveal"
+          @copy="copy"
+          @open-quarantine="openDrawer('quarantine')"
+          @export="exportJunkReport"
+        />
+      </div>
+    </main>
+
+    <!-- v3.4 维护中心主视图 -->
+    <main v-if="mainView === 'maintenance'" class="maint-page">
+      <MaintenanceCenter :page="true" />
     </main>
 
     <!-- 状态栏 -->
@@ -956,7 +1002,6 @@ const statusText = computed(() => {
       @toast="showToast"
       @theme="onThemeChange"
     />
-    <MaintenanceCenter :open="maintOpen" @close="maintOpen = false" />
 
     <Transition name="fade">
       <div v-if="toast" class="toast">{{ toast }}</div>
@@ -1293,4 +1338,21 @@ const statusText = computed(() => {
   max-width: 72vw;
   text-align: center;
 }
+/* v3.4 模块化导航 */
+.tb-nav { display: flex; gap: 4px; margin: 0 10px; }
+.tb-nav-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  padding: 4px 10px; cursor: pointer; color: inherit; font-size: 13px;
+}
+.tb-nav-btn:hover { border-color: var(--border); }
+.tb-nav-btn.active { border-color: var(--accent, #0891b2); color: var(--accent, #22d3ee); }
+.junk-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.junk-page-head {
+  display: flex; align-items: baseline; gap: 12px; padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.junk-page-body { flex: 1; overflow: auto; }
+.junk-page-body :deep(.js) { width: 100%; max-width: none; border-left: none; }
+.maint-page { height: 100%; overflow: auto; padding: 16px 0; }
 </style>

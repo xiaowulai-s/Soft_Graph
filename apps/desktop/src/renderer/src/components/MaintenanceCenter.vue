@@ -7,7 +7,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
 import type { AppSettings } from '@shared/types'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open?: boolean; page?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const tab = ref<'schedule' | 'upgrades' | 'quarantine' | 'community' | 'images' | 'registry'>('schedule')
@@ -270,12 +270,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="mc-mask" @click.self="emit('close')">
-      <div class="mc-panel">
+  <Teleport to="body" :disabled="page">
+    <div v-if="page || open" :class="page ? 'mc-page' : 'mc-mask'" @click.self="!page && emit('close')">
+      <div class="mc-panel" :class="{ full: page }">
         <header class="mc-head">
           <h3>维护中心</h3>
-          <button class="ghost" title="关闭" @click="emit('close')">✕</button>
+          <button v-if="!page" class="ghost" title="关闭" @click="emit('close')">✕</button>
         </header>
 
         <nav class="mc-tabs">
@@ -430,11 +430,19 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.45);
   display: flex; align-items: center; justify-content: center;
 }
+.mc-page {
+  width: 100%; height: 100%; overflow: auto;
+  display: flex; justify-content: center;
+  background: transparent;
+}
 .mc-panel {
   width: min(720px, 92vw); max-height: 82vh; overflow: auto;
   background: var(--panel, #1e1e1e); color: var(--text, #ddd);
   border: 1px solid var(--border, #3a3a3a); border-radius: 12px;
   padding: 18px 22px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.mc-panel.full {
+  width: 100%; max-width: 1200px; max-height: none; height: fit-content; min-height: 100%;
 }
 .mc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .mc-head h3 { margin: 0; font-size: 16px; }
