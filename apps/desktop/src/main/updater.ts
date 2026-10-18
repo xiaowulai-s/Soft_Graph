@@ -87,7 +87,7 @@ export function addSkipVersion(v: string): void {
 }
 
 /** D1：备用更新源（Gitee 镜像，tag 固定为 stable；需维护者同步 latest.yml+安装包，缺失时自动回退官方源） */
-const FALLBACK_FEED = 'https://gitee.com/xiaowulai-s/softgraph-mirror/releases/download/stable'
+const FALLBACK_FEED = 'https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable'
 
 let usedFallback = false
 

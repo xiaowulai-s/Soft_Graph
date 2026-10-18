@@ -14,11 +14,12 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import https from 'node:https'
 
-const GITEE_OWNER = 'xiaowulai-s'
+let GITEE_OWNER = 'xiaowulai-s' // 实际登录名在启动时动态获取覆盖
 const GITEE_REPO = 'softgraph-mirror'
 const TAG = 'stable'
 const root = process.cwd()
 const version = process.argv[2] ?? JSON.parse(readFileSync('package.json', 'utf8')).version
+const FRESH = process.argv.includes('--fresh') // 删除现有 stable Release 重建（版本更替用）
 const token = process.env.GITEE_TOKEN
 
 if (!token) {
@@ -26,7 +27,11 @@ if (!token) {
   process.exit(1)
 }
 const assetDir = join(root, 'release', version)
-const files = ['latest.yml', `SoftGraph-Setup-${version}.exe`].filter((f) => existsSync(join(assetDir, f)))
+// 本地产物名带空格（SoftGraph Setup x.y.z.exe），Gitee/latest.yml 用横线规范名
+const setupLocal = existsSync(join(assetDir, `SoftGraph-Setup-${version}.exe`))
+  ? `SoftGraph-Setup-${version}.exe`
+  : `SoftGraph Setup ${version}.exe`
+const files = ['latest.yml', setupLocal].filter((f) => existsSync(join(assetDir, f)))
 if (!files.includes('latest.yml')) {
   console.error(`latest.yml 不存在：${join(assetDir, 'latest.yml')}（先 npm run pack:win）`)
   process.exit(1)
@@ -96,10 +101,19 @@ function uploadMultipart(uploadPath, filename, fileBuf) {
   })
 }
 
+async function ensureOwner() {
+  const r = await req('/api/v5/user')
+  if (r.status !== 200) throw new Error(`获取 Gitee 身份失败：HTTP ${r.status} ${r.text.slice(0, 200)}`)
+  GITEE_OWNER = JSON.parse(r.text).login
+  console.log(`Gitee 身份：${GITEE_OWNER}`)
+}
+
+let DEFAULT_BRANCH = 'master'
 async function ensureRepo() {
   const r = await req(`/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}`)
   if (r.status === 200) {
-    console.log('镜像仓库已存在')
+    DEFAULT_BRANCH = JSON.parse(r.text).default_branch ?? 'master'
+    console.log(`镜像仓库已存在（默认分支 ${DEFAULT_BRANCH}）`)
     return
   }
   console.log('创建镜像仓库 softgraph-mirror …')
@@ -109,7 +123,7 @@ async function ensureRepo() {
       name: GITEE_REPO,
       description: 'SoftGraph 应用自更新 Gitee 镜像（stable Release 承载 latest.yml 与安装包）',
       private: false,
-      auto_init: false
+      auto_init: true
     }
   })
   if (c.status !== 201) throw new Error(`创建仓库失败：HTTP ${c.status} ${c.text.slice(0, 200)}`)
@@ -117,6 +131,7 @@ async function ensureRepo() {
 }
 
 async function main() {
+  await ensureOwner()
   await ensureRepo()
   // 1. 找 stable release（存在则复用，不存在则创建）
   let release = null
@@ -126,6 +141,11 @@ async function main() {
   } catch {
     /* ignore */
   }
+  if (release?.id && FRESH) {
+    const d = await req(`/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}`, { method: 'DELETE' })
+    console.log(`删除旧 stable Release（HTTP ${d.status}）—— 附件随删`)
+    release = null
+  }
   if (!release?.id) {
     const r = await req(`/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases`, {
       method: 'POST',
@@ -133,7 +153,7 @@ async function main() {
         tag_name: TAG,
         name: 'stable（自动更新镜像）',
         body: `SoftGraph ${version} 自更新镜像。latest.yml 指向本 Release 附件。`,
-        target_commitish: 'master',
+        target_commitish: DEFAULT_BRANCH,
         prerelease: false
       }
     })
@@ -144,18 +164,19 @@ async function main() {
 
   // 2. 逐个上传附件（同名跳过 —— Gitee 不支持覆盖，需先手工删除）
   for (const f of files) {
-    const exists = release.assets?.some((a) => a.name === f)
+    const remoteName = f.replace(/\s+/g, '-') // 与 latest.yml 内 url 及 GitHub 规范一致
+    const exists = release.assets?.some((a) => a.name === remoteName)
     if (exists) {
-      console.log(`跳过（已存在）：${f} —— Gitee 不支持覆盖，如需更新请先到 Gitee 删除该附件`)
+      console.log(`跳过（已存在）：${remoteName} —— Gitee 不支持覆盖，如需更新请先到 Gitee 删除该附件`)
       continue
     }
     const buf = readFileSync(join(assetDir, f))
     const r = await uploadMultipart(
-      `/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files?filename=${encodeURIComponent(f)}`,
-      f,
+      `/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files?filename=${encodeURIComponent(remoteName)}`,
+      remoteName,
       buf
     )
-    console.log(`${r.status === 201 ? '✓' : '✗'} 上传 ${f}（HTTP ${r.status}）`)
+    console.log(`${r.status === 201 ? '✓' : '✗'} 上传 ${remoteName}（HTTP ${r.status}）`)
   }
   console.log(`\n完成。应用备用源：${'https://gitee.com'}/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${TAG}`)
 }
