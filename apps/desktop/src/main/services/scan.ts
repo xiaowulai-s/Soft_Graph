@@ -1187,8 +1187,19 @@ export class ScanService {
     const st = this.settings.get()
     const lastRunAt = Number(this.store.getKv('junk:schedule:lastRunAt') ?? '0')
     const { isScheduleDue } = await import('@shared/schedule')
-    const chk = isScheduleDue(st.junkSchedule ?? { enabled: false, intervalHours: 168 }, lastRunAt)
+    const cfg = st.junkSchedule ?? { enabled: false, intervalHours: 168, idleOnly: true }
+    const chk = isScheduleDue(cfg, lastRunAt)
     if (!chk.due) return null
+    // v3.7 空闲窗口：idleOnly 时要求系统空闲 ≥15 分钟，不满足则顺延到下次轮询（不推进 lastRunAt）
+    if (cfg.idleOnly !== false) {
+      const { powerMonitor } = await import('electron')
+      const { isIdleEnough } = await import('@shared/schedule')
+      const idleSec = powerMonitor.getSystemIdleTime()
+      if (!isIdleEnough(idleSec, true)) {
+        await import('./logger').then((m) => m.logger().info('schedule', '未达空闲阈值，顺延', { idleSec }))
+        return null
+      }
+    }
     const ids = await this.oneClickItems()
     if (!ids.length) {
       this.store.setKv('junk:schedule:lastRunAt', String(Date.now()))

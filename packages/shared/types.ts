@@ -593,7 +593,7 @@ export interface AppSettings {
   /** 规则库在线更新源（HTTPS，需签名匹配才生效；空 = 禁用在线更新） */
   rulesUpdateUrl: string
   /** v3.1 定时静默清理：到期自动扫描 defaultSelected 分类并隔离清理 */
-  junkSchedule: { enabled: boolean; intervalHours: number }
+  junkSchedule: { enabled: boolean; intervalHours: number; idleOnly?: boolean }
   /** v3.2 B2：重复文件(GC-11)/超大文件(GC-12)的额外扫描目录 */
   extraScanDirs: string[]
   float: FloatSettings

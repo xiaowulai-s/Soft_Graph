@@ -42,3 +42,11 @@ export function parseWingetUpgradeOutput(text: string): { id: string; name: stri
   }
   return out
 }
+
+/** v3.7 空闲窗口：系统空闲 ≥15 分钟才允许静默清理执行（idleOnly 开启时） */
+export const IDLE_THRESHOLD_SEC = 15 * 60
+
+export function isIdleEnough(idleSeconds: number, idleOnly: boolean): boolean {
+  if (!idleOnly) return true
+  return idleSeconds >= IDLE_THRESHOLD_SEC
+}

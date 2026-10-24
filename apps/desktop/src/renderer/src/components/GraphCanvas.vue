@@ -212,6 +212,11 @@ function nodeColor(n: GraphNode): string {
   if (f.missing) return 'var(--node-missing)'
   if (isSharedRuntime(f.name)) return 'var(--node-runtime)'
   if (isSystemPath(f.fullPath)) return 'var(--node-system)'
+  // v3.7 E1：签名状态色标（仅常规文件节点，不覆盖语义分组配色）
+  if (f.kind === 'exe' || f.kind === 'dll' || f.kind === 'ocx' || f.kind === 'plugin') {
+    if (f.signStatus === 'signed') return 'var(--success)'
+    if (f.signStatus === 'unknown') return 'var(--warning)'
+  }
   if (f.kind === 'exe') return 'var(--node-exe)'
   if (f.kind === 'dll' || f.kind === 'ocx') return 'var(--node-dll)'
   if (f.kind === 'plugin') return 'var(--node-plugin)'

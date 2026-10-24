@@ -355,6 +355,15 @@ onBeforeUnmount(() => {
               />
               启用定时静默清理（自动隔离清理，可在隔离区还原）
             </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input
+                type="checkbox"
+                :checked="settings.junkSchedule?.idleOnly !== false"
+                :disabled="!settings.junkSchedule?.enabled"
+                @change="patch({ junkSchedule: { enabled: settings.junkSchedule?.enabled ?? false, intervalHours: settings.junkSchedule?.intervalHours ?? 168, idleOnly: ($event.target as HTMLInputElement).checked } })"
+              />
+              仅空闲时执行（系统无输入 ≥15 分钟，不满足则自动顺延）
+            </label>
           </div>
           <div class="mc-row">
             <span>执行周期</span>
