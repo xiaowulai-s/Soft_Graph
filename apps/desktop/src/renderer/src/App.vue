@@ -72,6 +72,24 @@ const leftOpen = ref(true)
 // v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
 const mainView = ref<string>('graph')
 const isGraph = computed(() => mainView.value === 'graph')
+// v3.8.1：顶栏更新入口 —— 常驻 ⟳，有更新时角标点亮；点击直达维护中心「扫描与更新」并自动检查
+const mcTab = ref('system')
+const appUpdatePhase = ref<string>('')
+const updateDot = computed(() => ['available', 'downloading', 'downloaded'].includes(appUpdatePhase.value))
+let updateUnsub: (() => void) | null = null
+onMounted(() => {
+  updateUnsub = window.api.onAppUpdateState((st) => {
+    appUpdatePhase.value = st.phase
+  })
+})
+onBeforeUnmount(() => {
+  updateUnsub?.()
+  updateUnsub = null
+})
+function openUpdateCenter(): void {
+  mcTab.value = 'system'
+  mainView.value = 'maintenance'
+}
 const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
 /** v3.5 二级导航：激活模块声明 children 时渲染顶栏下的子项行（横向位不足的扩容机制） */
 const rightOpen = ref(true)
@@ -771,6 +789,7 @@ const statusText = computed(() => {
       <button v-show="isGraph" class="ghost" :title="canvasFull ? '退出全屏 (Esc)' : '画布全屏 (F11)'" @click="canvasFull = !canvasFull">
         ⤢
       </button>
+      <button class="ghost tb-update" :class="{ dot: updateDot }" title="检查应用更新" @click="openUpdateCenter">⟳</button>
       <button class="ghost" title="桌面浮窗" @click="openDrawer('float')">浮窗</button>
       <button class="ghost" title="设置" @click="openDrawer('settings')">⚙</button>
     </header>
@@ -918,7 +937,7 @@ const statusText = computed(() => {
 
     <!-- v3.4 维护中心主视图 -->
     <main v-if="mainView === 'maintenance'" class="maint-page">
-      <MaintenanceCenter :page="true" />
+      <MaintenanceCenter :page="true" :initial-tab="mcTab" />
     </main>
 
     <!-- 状态栏 -->
@@ -1358,6 +1377,13 @@ const statusText = computed(() => {
   z-index: 300;
   max-width: 72vw;
   text-align: center;
+}
+/* v3.8.1 更新入口 */
+.tb-update { position: relative; }
+.tb-update.dot::after {
+  content: ''; position: absolute; top: 2px; right: 2px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-2, #22d3ee);
 }
 /* v3.4 模块化导航 */
 .tb-nav { display: flex; gap: 4px; margin: 0 10px; }

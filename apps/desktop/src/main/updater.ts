@@ -50,7 +50,7 @@ export function initAppUpdater(onState: StateSink): void {
       if (Notification.isSupported() && !skipVersion.has(info.version)) {
         const n = new Notification({
           title: `SoftGraph ${info.version} 可更新`,
-          body: '打开 设置 → 应用更新 即可下载安装'
+          body: '打开 顶栏 ⟳ 或 维护中心 → 扫描与更新 下载安装'
         })
         n.show()
       }

@@ -7,11 +7,20 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
 import type { AppSettings, AppUpdateState } from '@shared/types'
 
-const props = defineProps<{ open?: boolean; page?: boolean }>()
+const props = defineProps<{ open?: boolean; page?: boolean; initialTab?: string }>()
 const emit = defineEmits<{ close: [] }>()
 
 // v3.6 合并同类 → 4 组胶囊：清理调度 / 软件资产 / 规则供给 / 扫描与更新
 const tab = ref<'cleanup' | 'software' | 'rules' | 'system'>('cleanup')
+// v3.8.1：外部（顶栏 ⟳）可指定初始组；首次进入「扫描与更新」自动检查应用更新
+const autoChecked = ref(false)
+function enterSystemAndCheck(): void {
+  tab.value = 'system'
+  if (!autoChecked.value) {
+    autoChecked.value = true
+    void checkAppUpdate()
+  }
+}
 const settings = ref<AppSettings>({
   portableRoots: [], portableThreshold: 55, excludePaths: [],
   quarantineKeepDaysLow: 7, quarantineKeepDaysHigh: 14, theme: 'dark',
