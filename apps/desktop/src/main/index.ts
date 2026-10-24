@@ -567,6 +567,15 @@ function registerIpc(): void {
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
   h(CH.QUARANTINE_COUNT, async () => Number(store.getKv('quarantine:count') ?? '0'))
+  h(CH.FLOAT_PLUGIN_UPDATE, async (payload: { url: string }) => registry.updateFromUrl(payload.url))
+  h(CH.STARTUP_LIST, async () => {
+    const { StartupService } = await import('./services/startup')
+    return new StartupService().list()
+  })
+  h(CH.STARTUP_TOGGLE, async (payload: { source: string; name: string; enable: boolean }) => {
+    const { StartupService } = await import('./services/startup')
+    return new StartupService().toggle(payload.source as never, payload.name, payload.enable)
+  })
   // v3.9 A2：设置导出/导入（JSON 备份）
   h(CH.SETTINGS_EXPORT, async () => {
     const { dialog } = await import('electron')

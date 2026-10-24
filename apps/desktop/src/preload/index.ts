@@ -94,6 +94,8 @@ const api: SoftGraphApi = {
     return () => ipcRenderer.removeListener(CH.UPDATE_CENTER_OPEN, l)
   },
   appUpdateSkipGet: () => ipcRenderer.invoke(CH.APP_UPDATE_SKIP_GET),
+  startupList: () => ipcRenderer.invoke(CH.STARTUP_LIST),
+  startupToggle: (payload) => ipcRenderer.invoke(CH.STARTUP_TOGGLE, payload),
   settingsExport: () => ipcRenderer.invoke(CH.SETTINGS_EXPORT),
   settingsImport: () => ipcRenderer.invoke(CH.SETTINGS_IMPORT),
   junkScheduleInfo: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_INFO),

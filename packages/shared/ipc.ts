@@ -136,6 +136,8 @@ export const CH = {
   QUARANTINE_COUNT: 'quarantine:count',
   FLOAT_MARKET: 'float:market',
   FLOAT_PLUGIN_UPDATE: 'float:pluginUpdate',
+  STARTUP_LIST: 'startup:list',
+  STARTUP_TOGGLE: 'startup:toggle',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -222,6 +224,8 @@ export interface SoftGraphApi {
   /** v3.8 插件市场：拉取索引（indexUrl 空 = 官方源，Gitee 主 + GitHub 回退） */
   floatMarket(indexUrl?: string): Promise<{ ok: boolean; plugins?: import('./types').MarketEntry[]; error?: string }>
   floatPluginUpdate(payload: { url: string }): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }>
+  startupList(): Promise<import('./startup').StartupEntry[]>
+  startupToggle(payload: { source: string; name: string; enable: boolean }): Promise<{ ok: boolean; error?: string }>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
   registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>
