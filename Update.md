@@ -785,11 +785,49 @@ Usn               : 22712337088
 - **P2-3 空目录检测（GC-18，hint）**：emptydir 新算法（walkRule 只发射文件，目录自建遍历）；只报最浅层空树根；规则包 v6 已签
 - 契约 17→18 类 · 测试 483/483 绿 · tag=2fc4fa9
 
-## 排期重整（截至 v3.3.0）
+## v3.4.0 ~ v3.6.1 —— 导航外壳 / 驾驶舱布局 / 设计系统（2026-10-18）
+- **v3.4.0 模块化导航外壳**：`nav.ts` 注册表驱动三视图（软件图谱 / 垃圾清理 / 维护中心），未来加功能 = 追加注册表条目；图谱 v-show 保画布状态
+- **v3.5.0 驾驶舱布局**：垃圾清理主视图仪表盘化（可释放 / 已选 / 隔离区统计卡）；`NavModule.children` 二级导航扩容机制预留
+- **v3.6.0 深空工业 Teal 设计系统**：theme.css 双主题令牌（--accent-2/--success/--warning/--danger/--text-3），全组件自动换装；维护中心合并同类 → 4 组胶囊（清理调度/软件资产/规则供给/扫描与更新）
+- **v3.6.1 回退源修正**：FALLBACK_FEED 指向实际 Gitee 路径（ABCHikS/softgraph-mirror）
+- 测试 483/483 绿
+
+## v3.7.0 —— E1 签名色标 + 空闲窗口（2026-10-18）
+- 图谱节点描边按 signStatus 着色（signed=绿 / unknown=amber / unsigned 保持 kind 色）
+- 定时清理空闲窗口：junkSchedule.idleOnly（默认开），powerMonitor.getSystemIdleTime() ≥15 分钟才执行，不满足顺延
+- 测试 485/485 绿 · tag=abde40e
+
+## v3.8.x —— 浮窗插件生态 + 更新入口（2026-10-18/24）
+- **v3.8.0**：索引协议（parseMarketIndex/compareVersions/marketStatus，https 白名单）+ FLOAT_MARKET 通道（官方 Gitee 主源 + GitHub 回退）+ 市场 UI（安装/更新/权限预览/自定义索引 URL）+ 3 个官方插件（时钟/磁盘治理概览/升级脉搏）；sync-gitee 同步插件附件
+- **v3.8.1**：顶栏常驻 ⟳ 更新入口（角标提示 + 点击直达维护中心并自动检查）；系统通知文案修正
+- 测试 488/488 绿
+
+## v3.9.x —— 第二轮优化清单 + 截图排查修复（2026-10-24）
+- **v3.9.0（13 项）**：F1 插件更新保授权（registry.updateSource 原子覆盖+回滚）；F2 浅色主题 token 化；F3 psbridge 空闲会话回收 + 超时重试；E1 图例签名色标说明；E2 勾选状态 Pinia 共享；E3 更新通知可点击直达；E4 releaseNotes Markdown 渲染（mdLite）；E5 维护中心卡片首屏（7 卡直达）；A2 设置导出/导入；A3 NSIS 卸载数据勾选；A4 手测清单加 bench
+- **v3.9.1（截图排查）**：顶栏 nowrap + 横向滚动兜底（根除文字竖排）；prettyDisplayName 清洗卸载表脏名（GUID/纯版本/%路径%/ProductVersion 拼接 → 安装目录尾段兜底）；图例防挤行
+- 测试 490/490 绿
+
+## v4.0.0 —— S1 自启动管理（生命周期闭环，2026-10-24）
+- 多源枚举：Run/RunOnce 四键（含 AutorunsDisabled 已禁用项）+ 启动文件夹双源（lnk COM 解析）
+- 签名状态色点复用 querySignatures；可逆启停；HKLM 走 UAC
+- 维护中心第 5 组胶囊「自启动」；shared/startup.ts 纯函数 + 3 组单测
+- 测试 494/494 绿 · tag=8dc1ea1
+
+## v4.1.0 —— S2~S5 组合 C 收官（2026-10-25）
+- **S2 磁盘空间树图**：squarify.ts（Squarified Treemap 纯函数）+ disk-tree.ts（目录聚合，节点 2000/深度 4 上限）+ DiskTreemap.vue（下钻/面包屑/回收站/打开位置）
+- **S3a/c 一键启动**：软件列表 ▶ + 菜单「启动应用」+ 图谱右键启动；全局热键 Alt+G 聚焦搜索（设置可关）
+- **S4 硬件脉搏插件**（hw.pulse）：CIM 查 CPU/内存/系统盘，bars 视图
+- **S5 装机清单**：CSV / PS1（winget 批量安装脚本）一键导出
+- 官方插件增至 4 个；S3b（浮窗应用卡）待插件 API v2（点击动作能力）
+- 测试 494/494 绿 · tag=e2b60e6
+
+## 排期（截至 v4.1.0）
 
 | 待办 | 状态 |
 |---|---|
-| D1 Gitee 镜像同步 | 机制已就绪；需维护者建 Gitee 仓库并跑 `scripts/sync-gitee.mjs`（需 GITEE_TOKEN） |
+| ~~D1 Gitee 镜像~~ | ✅ 已闭环（ABCHikS/softgraph-mirror，stable 承载安装包 + 4 官方插件索引） |
+| ~~E1 色标扩展~~ | ✅ v3.7.0 |
+| S3b 浮窗应用卡 | 待插件 API v2（点击动作能力），与 A1 沙箱化同批设计 |
+| A1 插件沙箱 | 观察项：第三方插件多了再评估沙箱化（现 vm 沙箱提取 manifest + 权限授权） |
 | C2 winget 模块化 | 待 Microsoft.WinGet.Client 模块成熟后迁移（现以文本解析+回归测试锁定） |
-| E1 色标扩展 | 图谱节点描边着色（详情卡已实现），随 v3.4 |
-| 下一大版本 | 浮窗插件生态 / 图谱导出格式扩展 / 定时清理执行窗口（仅空闲时段） |
+| Gitee 令牌轮换 | 维护者在 Gitee 后台吊销旧令牌 → 更新 .keys/gitee-token（脚本免改，读环境变量/文件均可） |
