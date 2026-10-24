@@ -1065,21 +1065,20 @@ const statusText = computed(() => {
   padding: 7px 11px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  flex: none;
+  -webkit-app-region: drag;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 .tb::-webkit-scrollbar { display: none; }
-/* v3.9.1：顶栏文字禁换行 —— 空间不足横向滚动而非竖排 */
-.tb button, .tb .tb-nav-btn, .tb input, .tb select {
-  white-space: nowrap;
+.tb > * {
+  -webkit-app-region: no-drag;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .tb .tb-search { min-width: 130px; }
 .tb .tb-fsearch { min-width: 150px; }
-  flex: none;
-  -webkit-app-region: drag;
-}
 .tb > * {
   -webkit-app-region: no-drag;
 }
