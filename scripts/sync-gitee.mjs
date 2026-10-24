@@ -32,6 +32,11 @@ const setupLocal = existsSync(join(assetDir, `SoftGraph-Setup-${version}.exe`))
   ? `SoftGraph-Setup-${version}.exe`
   : `SoftGraph Setup ${version}.exe`
 const files = ['latest.yml', setupLocal].filter((f) => existsSync(join(assetDir, f)))
+// v3.8 浮窗插件市场：索引 + 官方插件一并入 stable（索引内 url 指向这些附件）
+const fpDir = join(root, 'packages', 'float-plugins')
+for (const f of ['plugins-index.json', 'plugin-system-clock.js', 'plugin-disk-guard.js', 'plugin-update-pulse.js']) {
+  if (existsSync(join(fpDir, f))) files.push(f)
+}
 if (!files.includes('latest.yml')) {
   console.error(`latest.yml 不存在：${join(assetDir, 'latest.yml')}（先 npm run pack:win）`)
   process.exit(1)
@@ -176,7 +181,7 @@ async function main() {
       console.log(`跳过（已存在）：${remoteName} —— Gitee 不支持覆盖，如需更新请先到 Gitee 删除该附件`)
       continue
     }
-    const buf = readFileSync(join(assetDir, f))
+    const buf = readFileSync(f.endsWith('.json') && f.startsWith('plugins-index') ? join(fpDir, f) : join(assetDir, f))
     const r = await uploadMultipart(
       `/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files?filename=${encodeURIComponent(remoteName)}`,
       remoteName,

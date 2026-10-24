@@ -175,3 +175,37 @@ describe('v3.7 空闲窗口', () => {
     assert.equal(isIdleEnough(10, false), true)
   })
 })
+
+describe('v3.8 插件市场', async () => {
+  const { parseMarketIndex, compareVersions, marketStatus } = await import('../../packages/shared/float-market')
+  const entry = {
+    id: 'system.clock', name: '时钟', version: '1.1.0', description: '', author: '',
+    url: 'https://gitee.com/x/p.js', permissions: []
+  }
+
+  it('索引解析：非法 JSON / 版本不符 / 缺 plugins → 拒绝；正常 → 列表', () => {
+    assert.equal(parseMarketIndex('not json').ok, false)
+    assert.equal(parseMarketIndex('{"version":2,"plugins":[]}').ok, false)
+    assert.equal(parseMarketIndex('{"version":1}').ok, false)
+    const r = parseMarketIndex(JSON.stringify({ version: 1, plugins: [entry] }))
+    assert.equal(r.ok, true)
+    assert.equal(r.index?.plugins.length, 1)
+  })
+
+  it('索引解析：非 https url 的条目被跳过', () => {
+    const r = parseMarketIndex(JSON.stringify({
+      version: 1,
+      plugins: [{ id: 'a', url: 'http://evil/x.js' }, { id: 'b', url: 'https://ok/x.js' }]
+    }))
+    assert.deepEqual(r.index?.plugins.map((x) => x.id), ['b'])
+  })
+
+  it('版本比较与安装状态判定', () => {
+    assert.equal(compareVersions('1.2.0', '1.1.9'), 1)
+    assert.equal(compareVersions('1.0.0', '1.0.0'), 0)
+    const installed = new Map([['system.clock', { version: '1.0.0' }]])
+    assert.equal(marketStatus(entry, installed).status, 'update-available')
+    assert.equal(marketStatus({ ...entry, version: '0.9.0' }, installed).status, 'up-to-date')
+    assert.equal(marketStatus({ ...entry, id: 'other' }, installed).status, 'not-installed')
+  })
+})

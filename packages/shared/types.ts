@@ -34,6 +34,8 @@ export interface SoftwareItem {
 // ───────────────────────── 文件 ─────────────────────────
 
 export type FileKind = 'exe' | 'dll' | 'ocx' | 'data' | 'config' | 'plugin' | 'resource'
+export type { MarketEntry } from './float-market'
+
 export type SignStatus = 'signed' | 'unsigned' | 'unknown'
 export type PeArch = 'x86' | 'x64' | 'arm64' | 'unknown'
 
@@ -545,6 +547,8 @@ export interface FloatInstanceSettings {
   clickThrough: boolean
   compact: boolean
   lockPosition: boolean
+  /** v3.8 插件市场索引 URL（空 = 官方源） */
+  pluginIndexUrl?: string
   autoHide: boolean
 }
 
@@ -568,6 +572,8 @@ export interface FloatSettings {
   alwaysOnTop: boolean
   compact: boolean
   lockPosition: boolean
+  /** v3.8 插件市场索引 URL（空 = 官方源） */
+  pluginIndexUrl?: string
   /**
    * 多实例（F4）。为空 / 未设置时表示「单实例」—— 由上面的顶层字段
    * 合成一个默认实例，因此老配置无需迁移即照常工作。

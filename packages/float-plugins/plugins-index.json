@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "system.clock",
+      "name": "时钟",
+      "version": "1.0.0",
+      "description": "当前时间与日期，每秒刷新",
+      "author": "SoftGraph",
+      "url": "https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable/plugin-system-clock.js",
+      "permissions": []
+    },
+    {
+      "id": "disk.guard",
+      "name": "磁盘治理概览",
+      "version": "1.0.0",
+      "description": "垃圾可释放 / 一键项 / 隔离区 / 已收录软件，四项一览",
+      "author": "SoftGraph",
+      "url": "https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable/plugin-disk-guard.js",
+      "permissions": []
+    },
+    {
+      "id": "update.pulse",
+      "name": "升级脉搏",
+      "version": "1.0.0",
+      "description": "调用 winget 检查可升级软件数量（需授权 PowerShell / 网络能力）",
+      "author": "SoftGraph",
+      "url": "https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable/plugin-update-pulse.js",
+      "permissions": ["network", "powershell"]
+    }
+  ]
+}

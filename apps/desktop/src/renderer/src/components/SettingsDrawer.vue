@@ -4,7 +4,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AppInfo } from '@shared/ipc'
-import type { AppUpdateState } from '@shared/types'
+import type { MarketEntry, AppUpdateState } from '@shared/types'
 import type {
   AppSettings,
   FloatInstanceSettings,
@@ -290,6 +290,69 @@ function handleInstallResult(r: { ok: boolean; id?: string; name?: string; permi
   emit('toast', `已安装 ${r.name}（${origin}）${r.permissions?.length ? `，含能力：${r.permissions.join(' / ')}，待授权` : ''}`)
   installUrl.value = ''
   void reloadPlugins()
+}
+
+// ── v3.8 插件市场 ──
+const marketBusy = ref(false)
+const marketOk = ref(false)
+const marketText = ref('')
+const marketList = ref<MarketEntry[]>([])
+
+async function loadMarket(): Promise<void> {
+  marketBusy.value = true
+  marketText.value = ''
+  try {
+    const r = await window.api.floatMarket(float?.value?.pluginIndexUrl || undefined)
+    if (!r.ok || !r.plugins) {
+      marketOk.value = false
+      marketText.value = r.error ?? '索引拉取失败'
+      return
+    }
+    marketOk.value = true
+    marketList.value = r.plugins
+    marketText.value = `索引共 ${r.plugins.length} 个插件`
+  } catch (e) {
+    marketOk.value = false
+    marketText.value = `拉取失败：${(e as Error).message}`
+  } finally {
+    marketBusy.value = false
+  }
+}
+
+function marketState(entry: MarketEntry): { status: 'not-installed' | 'up-to-date' | 'update-available' | 'unknown-version'; local?: string } {
+  const local = plugins.value.find((p) => p.id === entry.id)
+  if (!local) return { status: 'not-installed' }
+  const lv = local.version
+  if (!lv) return { status: 'unknown-version', local: lv }
+  const pa = entry.version.split(/[.-]/)
+  const pb = lv.split(/[.-]/)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = Number(pa[i])
+    const nb = Number(pb[i])
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) {
+      return na > nb ? { status: 'update-available', local: lv } : { status: 'up-to-date', local: lv }
+    }
+    if (pa[i] !== pb[i]) return pa[i] > pb[i] ? { status: 'update-available', local: lv } : { status: 'up-to-date', local: lv }
+  }
+  return { status: 'up-to-date', local: lv }
+}
+
+async function marketInstall(entry: MarketEntry, isUpdate: boolean): Promise<void> {
+  marketBusy.value = true
+  try {
+    if (isUpdate) {
+      const rm = await window.api.floatPluginRemove(entry.id)
+      if (!rm.ok) {
+        emit('toast', `更新失败（卸载旧版）：${rm.error}`)
+        return
+      }
+    }
+    const r = await window.api.floatPluginInstall({ url: entry.url })
+    handleInstallResult(r, isUpdate ? '市场更新' : `市场：${entry.name}`)
+    plugins.value = await window.api.floatPlugins()
+  } finally {
+    marketBusy.value = false
+  }
 }
 
 async function reloadPlugins(): Promise<void> {
@@ -860,6 +923,46 @@ function daysLeft(r: QuarantineRecord): string {
             <div class="sd-row" style="margin-top: 6px">
               <input v-model="installUrl" type="text" placeholder="或粘贴 https:// 插件地址一键安装" style="flex: 1" @keydown.enter="installFromUrl" />
               <button class="ghost" :disabled="busy || !installUrl.trim()" @click="installFromUrl">安装</button>
+              <button class="ghost" :disabled="marketBusy" @click="loadMarket">
+                {{ marketBusy ? '拉取中…' : (marketList.length ? '刷新市场' : '插件市场') }}
+              </button>
+            </div>
+            <div v-if="marketText" class="sd-hint" :class="marketOk ? '' : 'warn'">{{ marketText }}</div>
+            <div v-if="marketList.length" class="sd-market">
+              <div v-for="e in marketList" :key="e.id" class="sd-market-item">
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-size:12px;color:var(--text)">{{ e.name }}</span>
+                    <span class="dim mono" style="font-size:10px">v{{ e.version }}</span>
+                    <span v-if="e.permissions.length" class="dim" style="font-size:10px">需授权：{{ e.permissions.join(' / ') }}</span>
+                  </div>
+                  <div class="dim" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="e.description">{{ e.description }}</div>
+                </div>
+                <template v-if="marketState(e).status === 'not-installed'">
+                  <button class="ghost" :disabled="marketBusy" @click="marketInstall(e, false)">安装</button>
+                </template>
+                <template v-else-if="marketState(e).status === 'update-available'">
+                  <span class="dim mono" style="font-size:10px">本地 v{{ marketState(e).local }}</span>
+                  <button class="ghost" :disabled="marketBusy" @click="marketInstall(e, true)">更新</button>
+                </template>
+                <template v-else-if="marketState(e).status === 'up-to-date'">
+                  <span style="font-size:11px;color:var(--risk-low)">✓ 已安装</span>
+                </template>
+                <template v-else>
+                  <span class="dim" style="font-size:11px">版本未知</span>
+                </template>
+              </div>
+            </div>
+            <div class="sd-hint dim">索引默认指向官方源（Gitee 直连 + GitHub 回退）；也可在下方填入自定义索引地址。</div>
+            <div class="sd-row col">
+              <label>插件市场索引 URL（留空 = 官方）</label>
+              <input
+                class="mono"
+                type="url"
+                :value="float?.pluginIndexUrl || ''"
+                placeholder="https://…/plugins-index.json"
+                @change="patchFloat({ pluginIndexUrl: ($event.target as HTMLInputElement).value.trim() })"
+              />
             </div>
             <div class="sd-hint">
               插件目录内已放置示例插件 <code>example-hello.js</code> 与 <code>README.md</code>。
@@ -1501,5 +1604,11 @@ function daysLeft(r: QuarantineRecord): string {
   font-size: 10px;
   margin-top: 2px;
   line-height: 1.45;
+}
+.sd-market { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.sd-market-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px;
 }
 </style>

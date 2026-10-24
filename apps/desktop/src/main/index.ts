@@ -567,6 +567,22 @@ function registerIpc(): void {
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
   h(CH.QUARANTINE_COUNT, async () => Number(store.getKv('quarantine:count') ?? '0'))
+  h(CH.FLOAT_MARKET, async (payload: { indexUrl?: string }) => {
+    const { parseMarketIndex, OFFICIAL_INDEX_URLS } = await import('@shared/float-market')
+    const urls = payload.indexUrl?.trim() ? [payload.indexUrl.trim()] : [...OFFICIAL_INDEX_URLS]
+    for (const u of urls) {
+      try {
+        const res = await fetch(u, { signal: AbortSignal.timeout(15_000) })
+        if (!res.ok) continue
+        const text = await res.text()
+        const parsed = parseMarketIndex(text)
+        if (parsed.ok) return { ok: true, plugins: parsed.index!.plugins }
+      } catch {
+        /* 尝试下一个源 */
+      }
+    }
+    return { ok: false, error: '索引拉取失败（已尝试全部源）' }
+  })
   // v3.3：相似图片盘点 / 注册表残留
   h(CH.IMAGES_SIMILAR, async () => {
     const { findSimilarImages } = await import('./services/similar-images')

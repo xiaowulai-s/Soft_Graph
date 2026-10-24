@@ -131,6 +131,7 @@ export const CH = {
   REG_LEFTOVERS: 'registry:leftovers',
   REG_DELETE: 'registry:delete',
   QUARANTINE_COUNT: 'quarantine:count',
+  FLOAT_MARKET: 'float:market',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -214,6 +215,8 @@ export interface SoftGraphApi {
   imagesSimilar(): Promise<{ hash: string; images: { path: string; sizeBytes: number }[] }[]>
   imageTrash(path: string): Promise<{ ok: boolean; error?: string }>
   quarantineCount(): Promise<number>
+  /** v3.8 插件市场：拉取索引（indexUrl 空 = 官方源，Gitee 主 + GitHub 回退） */
+  floatMarket(indexUrl?: string): Promise<{ ok: boolean; plugins?: import('./types').MarketEntry[]; error?: string }>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
   registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>
