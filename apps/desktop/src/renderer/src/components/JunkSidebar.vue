@@ -13,6 +13,8 @@ import type { JunkCategorySummary, JunkItem, JunkSummary, RiskLevel, ScanProgres
 import { RISK_LABEL } from '@shared/types'
 import { formatBytes, formatTime } from '@shared/util'
 
+import { useJunkChecked } from '../stores/junkChecked'
+
 const props = defineProps<{
   summary: JunkSummary | null
   scanning: boolean
@@ -37,7 +39,12 @@ const emit = defineEmits<{
 
 // ───────────────── 勾选状态 ─────────────────
 
-const checked = ref<Set<string>>(new Set())
+// v3.9 E2：勾选状态共享（Pinia）—— 图谱侧栏与垃圾主视图同步
+const junkChecked = useJunkChecked()
+const checked = computed({
+  get: () => junkChecked.ids,
+  set: (v) => junkChecked.replace(v)
+})
 const expandedId = ref<string | null>(null)
 const focusedSector = ref<string | null>(null)
 
@@ -495,15 +502,15 @@ const RISK_TIP: Record<RiskLevel, string> = {
   flex: 1; border-radius: 8px; padding: 8px 12px;
   display: flex; flex-direction: column; gap: 2px;
 }
-.js-stat.teal { background: #E1F5EE; }
-.js-stat.teal .js-stat-label { color: #085041; }
-.js-stat.teal .js-stat-val { color: #04342C; }
-.js-stat.blue { background: #E6F1FB; }
-.js-stat.blue .js-stat-label { color: #0C447C; }
-.js-stat.blue .js-stat-val { color: #042C53; }
-.js-stat.amber { background: #FAEEDA; }
-.js-stat.amber .js-stat-label { color: #633806; }
-.js-stat.amber .js-stat-val { color: #412402; }
+.js-stat.teal { background: var(--stat-teal-bg); border: 1px solid var(--accent); }
+.js-stat.teal .js-stat-label { color: var(--text-2); }
+.js-stat.teal .js-stat-val { color: var(--stat-teal-val); }
+.js-stat.blue { background: var(--stat-blue-bg); border: 1px solid var(--border); }
+.js-stat.blue .js-stat-label { color: var(--text-2); }
+.js-stat.blue .js-stat-val { color: var(--stat-blue-val); }
+.js-stat.amber { background: var(--stat-amber-bg); border: 1px solid var(--border); }
+.js-stat.amber .js-stat-label { color: var(--text-2); }
+.js-stat.amber .js-stat-val { color: var(--stat-amber-val); }
 .js-stat-label { font-size: 12px; }
 .js-stat-val { font-size: 14px; font-weight: 500; }
 .js {

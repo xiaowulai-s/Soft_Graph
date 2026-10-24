@@ -200,6 +200,54 @@ export class PluginRegistry {
     return { ok: true, id: manifest.id, name: manifest.name, permissions: check.permissions }
   }
 
+  /**
+   * v3.9 F1：插件更新 —— 同 id 覆盖文件并重载，**授权记录保留**。
+   */
+  async updateSource(source: string, origin?: string): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }> {
+    const got = extractManifest(source)
+    if (!got.ok) return { ok: false, error: got.reason }
+    const check = validateManifest(got.manifest)
+    if (!check.ok) return { ok: false, error: `manifest 校验失败：${check.reason}` }
+    const manifest = got.manifest as FloatPluginManifest
+    const old = this.files.get(manifest.id)
+    if (!old) return { ok: false, error: `插件未安装（请先安装）：${manifest.id}` }
+    try {
+      const banner = origin ? `// SoftGraph 已安装插件 · 来源：${origin} · 更新于 ${new Date().toISOString()}\n` : ''
+      const tmp = `${old}.updating`
+      await fs.writeFile(tmp, banner + source, 'utf8')
+      await fs.rename(tmp, old)
+    } catch (e) {
+      return { ok: false, error: `写入插件目录失败：${(e as Error).message}` }
+    }
+    await this.load()
+    const inst = this.plugins.get(manifest.id)
+    if (!inst) {
+      try {
+        await fs.rm(join(this.pluginDir, `${manifest.id.replace(/[^\w.-]/g, '_')}.js`), { force: true })
+      } catch {
+        /* ignore */
+      }
+      await this.load()
+      const err = this.loadErrors.find((e) => e.file.endsWith(manifest.id))?.error
+      return { ok: false, error: err ?? '更新后校验未通过，已回滚' }
+    }
+    return { ok: true, id: manifest.id, name: manifest.name, permissions: check.permissions }
+  }
+
+  /** v3.9 F1：从 URL 更新（下载 → 同 id 覆盖，授权保留） */
+  async updateFromUrl(url: string): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }> {
+    if (!/^https:\/\//i.test(url)) return { ok: false, error: '只允许 https:// 来源' }
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+      if (!res.ok) return { ok: false, error: `下载失败：HTTP ${res.status}` }
+      const text = await res.text()
+      if (text.length > 256 * 1024) return { ok: false, error: '插件超过 256KB 上限' }
+      return await this.updateSource(text, url)
+    } catch (e) {
+      return { ok: false, error: `下载失败：${(e as Error).message}` }
+    }
+  }
+
   /** F2：从 URL 安装（只接受 https / 本地 file 路径；上限 256KB） */
   async installFromUrl(url: string): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }> {
     if (!/^https:\/\//i.test(url)) return { ok: false, error: '只允许 https:// 来源（防止明文传输被篡改的插件）' }

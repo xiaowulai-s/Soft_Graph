@@ -340,14 +340,10 @@ function marketState(entry: MarketEntry): { status: 'not-installed' | 'up-to-dat
 async function marketInstall(entry: MarketEntry, isUpdate: boolean): Promise<void> {
   marketBusy.value = true
   try {
-    if (isUpdate) {
-      const rm = await window.api.floatPluginRemove(entry.id)
-      if (!rm.ok) {
-        emit('toast', `更新失败（卸载旧版）：${rm.error}`)
-        return
-      }
-    }
-    const r = await window.api.floatPluginInstall({ url: entry.url })
+    // v3.9 F1：更新走 updateSource 通道（同 id 覆盖，授权保留），不再卸载重装
+    const r = isUpdate
+      ? await window.api.floatPluginUpdate({ url: entry.url })
+      : await window.api.floatPluginInstall({ url: entry.url })
     handleInstallResult(r, isUpdate ? '市场更新' : `市场：${entry.name}`)
     plugins.value = await window.api.floatPlugins()
   } finally {

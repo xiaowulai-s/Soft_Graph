@@ -3,8 +3,9 @@
  * v3.1 维护中心 —— 定时清理 / 软件升级 / 隔离区管理 / 社区规则 的独立界面。
  * 功能代码自 SettingsDrawer 迁入（v3.1），设置抽屉只保留「应用更新 / 规则更新源」等全局设置。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
+import { mdLite } from '@shared/md-lite'
 import type { AppSettings, AppUpdateState } from '@shared/types'
 
 const props = defineProps<{ open?: boolean; page?: boolean; initialTab?: string }>()
@@ -37,6 +38,7 @@ onMounted(async () => {
   } catch {
     /* 保留默认值 */
   }
+  void window.api.quarantineCount().then((n) => (quarCount.value = n)).catch(() => {})
 })
 
 async function patch(p: Partial<AppSettings>): Promise<void> {
@@ -47,6 +49,7 @@ async function patch(p: Partial<AppSettings>): Promise<void> {
 const scheduleBusy = ref(false)
 const scheduleText = ref('')
 const schedInfo = ref<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>(null)
+const quarCount = ref(0)
 async function loadSchedInfo(): Promise<void> {
   try {
     schedInfo.value = await window.api.junkScheduleInfo()
@@ -237,6 +240,14 @@ async function trashImage(path: string, gi: number): Promise<void> {
 
 // ── 应用自更新（自设置抽屉迁入） ──
 const appUpdate = ref<AppUpdateState | null>(null)
+const appUpdatePhaseText = computed(() => {
+  const ph = appUpdate.value?.phase
+  if (ph === 'available') return `v${appUpdate.value?.version} 可更新`
+  if (ph === 'downloading') return '下载中…'
+  if (ph === 'downloaded') return '待安装'
+  if (ph === 'error') return '检查失败'
+  return '已是最新'
+})
 let appUpdateUnsub: (() => void) | null = null
 onMounted(() => {
   appUpdateUnsub = window.api.onAppUpdateState((st) => {
@@ -344,6 +355,38 @@ onBeforeUnmount(() => {
           <h3>维护中心</h3>
           <button v-if="!page" class="ghost" title="关闭" @click="emit('close')">✕</button>
         </header>
+
+        <!-- v3.9 E5：状态卡片首屏（点击直达对应组） -->
+        <div v-if="page" class="mc-cards">
+          <button class="mc-card" @click="tab = 'cleanup'">
+            <span class="mc-card-t">定时清理</span>
+            <span class="mc-card-s" :class="settings.junkSchedule?.enabled ? 'ok' : 'dim'">{{ settings.junkSchedule?.enabled ? '已启用' : '未启用' }}</span>
+          </button>
+          <button class="mc-card" @click="tab = 'cleanup'">
+            <span class="mc-card-t">隔离区</span>
+            <span class="mc-card-s">{{ quarCount }} 项可还原</span>
+          </button>
+          <button class="mc-card" @click="tab = 'software'">
+            <span class="mc-card-t">软件升级</span>
+            <span class="mc-card-s dim">winget 检查</span>
+          </button>
+          <button class="mc-card" @click="tab = 'software'">
+            <span class="mc-card-t">注册表残留</span>
+            <span class="mc-card-s dim">扫描死条目</span>
+          </button>
+          <button class="mc-card" @click="tab = 'rules'">
+            <span class="mc-card-t">社区规则</span>
+            <span class="mc-card-s dim">导入 / 更新</span>
+          </button>
+          <button class="mc-card" @click="tab = 'system'">
+            <span class="mc-card-t">相似图片</span>
+            <span class="mc-card-s dim">aHash 盘点</span>
+          </button>
+          <button class="mc-card" @click="tab = 'system'">
+            <span class="mc-card-t">应用更新</span>
+            <span class="mc-card-s" :class="appUpdate?.phase === 'available' ? 'ok' : 'dim'">{{ appUpdatePhaseText }}</span>
+          </button>
+        </div>
 
         <nav class="mc-tabs">
           <button :class="tab === 'cleanup' ? 'active' : ''" @click="tab = 'cleanup'">清理调度</button>
@@ -524,7 +567,7 @@ onBeforeUnmount(() => {
           <div v-else-if="appUpdate?.phase === 'error'" class="mc-hint warn">更新失败：{{ appUpdate.message }}</div>
           <div v-else-if="appUpdate?.phase === 'available'" class="mc-hint">
             发现新版本 v{{ appUpdate.version }}，点「下载」获取
-            <div v-if="appUpdate.releaseNotes" class="mc-hint dim" style="max-height:100px;overflow:auto;margin-top:4px">{{ appUpdate.releaseNotes.slice(0, 400) }}</div>
+            <div v-if="appUpdate.releaseNotes" class="mc-hint dim" style="max-height:100px;overflow:auto;margin-top:4px"><div style="font-size:11px;line-height:1.7;color:var(--text-2)" v-html="mdLite(String(appUpdate.releaseNotes).slice(0, 600))"></div></div>
             <button class="ghost" style="margin-top:4px" @click="skipAppUpdate(appUpdate.version)">跳过此版本</button>
             <div v-if="skipText" class="mc-hint">{{ skipText }}</div>
           </div>
@@ -583,6 +626,16 @@ onBeforeUnmount(() => {
 }
 .mc-tabs button.active { border-color: var(--accent, #0891b2); color: var(--accent, #22d3ee); }
 .mc-sec { display: flex; flex-direction: column; gap: 10px; }
+.mc-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.mc-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px; text-align: left; cursor: pointer; color: inherit;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.mc-card:hover { border-color: var(--accent); }
+.mc-card-t { font-size: 12px; color: var(--text); }
+.mc-card-s { font-size: 11px; color: var(--text-2); }
+.mc-card-s.ok { color: var(--accent-2, #22d3ee); }
 .mc-sub { margin: 0; font-size: 13px; font-weight: 500; color: var(--accent-2, #22d3ee); }
 .mc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .mc-row span { font-size: 13px; }
@@ -595,9 +648,9 @@ onBeforeUnmount(() => {
 .mc-list li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .mc-list .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-hint { font-size: 12px; line-height: 1.6; opacity: 0.85; }
-.mc-hint.warn { color: #f59e0b; }
+.mc-hint.warn { color: var(--warning); }
 .mc-hint.dim { opacity: 0.6; }
 .mono { font-family: Consolas, monospace; }
-button.danger { border-color: #b91c1c; color: #f87171; }
+button.danger { border-color: var(--danger); color: var(--danger); }
 button.ghost:hover, .mc-row button:hover { border-color: var(--accent, #0891b2); }
 </style>

@@ -88,7 +88,14 @@ const api: SoftGraphApi = {
     rulesImportWinapp2: () => ipcRenderer.invoke(CH.RULES_IMPORT_WINAPP2),
   quarantineShred: (ids: string[]) => ipcRenderer.invoke(CH.QUARANTINE_SHRED, { ids }),
   appUpdateSkip: (version: string) => ipcRenderer.invoke(CH.APP_UPDATE_SKIP, { version }),
+  onUpdateCenterOpen: (cb: () => void) => {
+    const l = (_e: unknown, _p: unknown) => cb()
+    ipcRenderer.on(CH.UPDATE_CENTER_OPEN, l)
+    return () => ipcRenderer.removeListener(CH.UPDATE_CENTER_OPEN, l)
+  },
   appUpdateSkipGet: () => ipcRenderer.invoke(CH.APP_UPDATE_SKIP_GET),
+  settingsExport: () => ipcRenderer.invoke(CH.SETTINGS_EXPORT),
+  settingsImport: () => ipcRenderer.invoke(CH.SETTINGS_IMPORT),
   junkScheduleInfo: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_INFO),
   wingetUpgradeElevated: (id: string) => ipcRenderer.invoke(CH.WINGET_UPGRADE_ELEVATED, { id }),
   imagesSimilar: () => ipcRenderer.invoke(CH.IMAGES_SIMILAR),
@@ -96,6 +103,7 @@ const api: SoftGraphApi = {
   registryLeftovers: () => ipcRenderer.invoke(CH.REG_LEFTOVERS),
   registryDelete: (hive: string, keyPath: string) => ipcRenderer.invoke(CH.REG_DELETE, { hive, keyPath }),
   floatMarket: (indexUrl?: string) => ipcRenderer.invoke(CH.FLOAT_MARKET, { indexUrl }),
+  floatPluginUpdate: (payload) => ipcRenderer.invoke(CH.FLOAT_PLUGIN_UPDATE, payload),
   quarantineCount: () => ipcRenderer.invoke(CH.QUARANTINE_COUNT),
   junkScheduleRun: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_RUN),
   wingetList: () => ipcRenderer.invoke(CH.WINGET_LIST),

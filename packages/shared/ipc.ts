@@ -117,6 +117,9 @@ export const CH = {
   APP_UPDATE_INSTALL: 'app:updateInstall',
   APP_UPDATE_STATE: 'app:updateState',
   APP_UPDATE_SKIP: 'app:updateSkip',
+  UPDATE_CENTER_OPEN: 'app:updateCenterOpen',
+  SETTINGS_EXPORT: 'settings:export',
+  SETTINGS_IMPORT: 'settings:import',
   APP_UPDATE_SKIP_GET: 'app:updateSkipGet',
   JUNK_SCHEDULE_INFO: 'junk:scheduleInfo',
   WINGET_UPGRADE_ELEVATED: 'winget:upgradeElevated',
@@ -132,6 +135,7 @@ export const CH = {
   REG_DELETE: 'registry:delete',
   QUARANTINE_COUNT: 'quarantine:count',
   FLOAT_MARKET: 'float:market',
+  FLOAT_PLUGIN_UPDATE: 'float:pluginUpdate',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -217,6 +221,7 @@ export interface SoftGraphApi {
   quarantineCount(): Promise<number>
   /** v3.8 插件市场：拉取索引（indexUrl 空 = 官方源，Gitee 主 + GitHub 回退） */
   floatMarket(indexUrl?: string): Promise<{ ok: boolean; plugins?: import('./types').MarketEntry[]; error?: string }>
+  floatPluginUpdate(payload: { url: string }): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
   registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>
@@ -262,6 +267,9 @@ export interface SoftGraphApi {
   appUpdateInstall(): void
   appUpdateSkip(version: string): void
   appUpdateSkipGet(): Promise<string | null>
+  onUpdateCenterOpen(cb: () => void): () => void
+  settingsExport(): Promise<{ ok: boolean; path?: string; error?: string }>
+  settingsImport(): Promise<{ ok: boolean; error?: string }>
   junkScheduleInfo(): Promise<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>
   wingetUpgradeElevated(id: string): Promise<{ ok: boolean; needsElevation?: boolean; output?: string }>
   onAppUpdateState(cb: (state: import('./types').AppUpdateState) => void): () => void

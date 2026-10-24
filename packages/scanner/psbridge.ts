@@ -163,6 +163,8 @@ class PsTimeoutError extends Error {
 }
 
 class PsSession {
+  /** v3.9：最近一次被使用的时间（空闲回收判定用） */
+  lastUsed = 0
   private proc: ChildProcessWithoutNullStreams | null = null
   private buf = ''
   private pending = new Map<string, PendingReq>()
@@ -257,6 +259,7 @@ class PsSession {
   private settle = new Map<string, (err: Error | null, value?: unknown) => void>()
 
   async run<T>(script: string, opts: PsOptions = {}): Promise<T> {
+    this.lastUsed = Date.now()
     this.ensure()
     if (!this.proc) throw new PsSessionStartError('PowerShell 会话不可用')
 
@@ -354,7 +357,18 @@ class PsSession {
 const POOL_SIZE = Number(process.env.SG_PS_POOL ?? 2)
 const pool: PsSession[] = []
 
+const IDLE_RECYCLE_MS = 10 * 60_000
+
 function pickSession(): PsSession {
+  // v3.9 F3：长序列测试/使用下，空闲过久的常驻会话可能状态劣化 —— 先回收再选
+  const now = Date.now()
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const st = pool[i]
+    if (st.load === 0 && st.lastUsed > 0 && now - st.lastUsed > IDLE_RECYCLE_MS) {
+      st.kill(new Error('空闲回收'))
+      pool.splice(i, 1)
+    }
+  }
   if (pool.length < POOL_SIZE) {
     const s = new PsSession()
     pool.push(s)
@@ -384,6 +398,10 @@ export async function psJson<T>(script: string, opts: PsOptions = {}): Promise<T
     if (isDegradeable(e)) {
       // 会话起不来（PS 被拦截 / 环境异常）→ 兜底走一次性路径，行为与 v1.0.0 一致
       return psJsonOneShot<T>(script, opts)
+    }
+    // v3.9 F3：超时已自动重建会话 —— 在全新会话上重试一次（长序列下旧会话状态劣化的自愈）
+    if (e instanceof Error && e.name === 'PsTimeoutError') {
+      return await pickSession().run<T>(script, opts)
     }
     throw e
   }

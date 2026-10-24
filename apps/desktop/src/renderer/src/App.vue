@@ -81,6 +81,8 @@ onMounted(() => {
   updateUnsub = window.api.onAppUpdateState((st) => {
     appUpdatePhase.value = st.phase
   })
+  // v3.9 E3：系统通知点击 → 直达更新中心
+  window.api.onUpdateCenterOpen(() => openUpdateCenter())
 })
 onBeforeUnmount(() => {
   updateUnsub?.()

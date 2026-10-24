@@ -50,7 +50,16 @@ export function initAppUpdater(onState: StateSink): void {
       if (Notification.isSupported() && !skipVersion.has(info.version)) {
         const n = new Notification({
           title: `SoftGraph ${info.version} 可更新`,
-          body: '打开 顶栏 ⟳ 或 维护中心 → 扫描与更新 下载安装'
+          body: '点击此处打开更新中心'
+        })
+        n.on('click', () => {
+          const { BrowserWindow } = require('electron') as typeof import('electron')
+          const w = BrowserWindow.getAllWindows()[0]
+          if (w) {
+            if (w.isMinimized()) w.restore()
+            w.focus()
+            w.webContents.send('app:updateCenterOpen')
+          }
         })
         n.show()
       }

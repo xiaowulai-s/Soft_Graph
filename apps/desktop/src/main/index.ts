@@ -567,6 +567,39 @@ function registerIpc(): void {
   h(CH.WINGET_LIST, async () => scan.wingetList())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
   h(CH.QUARANTINE_COUNT, async () => Number(store.getKv('quarantine:count') ?? '0'))
+  // v3.9 A2：设置导出/导入（JSON 备份）
+  h(CH.SETTINGS_EXPORT, async () => {
+    const { dialog } = await import('electron')
+    const w = BrowserWindow.getAllWindows()[0]
+    const r = await dialog.showSaveDialog(w, {
+      title: '导出设置',
+      defaultPath: `softgraph-settings-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (r.canceled || !r.filePath) return { ok: false }
+    const { writeFile } = await import('node:fs/promises')
+    await writeFile(r.filePath, JSON.stringify({ app: 'SoftGraph', exportedAt: new Date().toISOString(), settings: settings.get() }, null, 2), 'utf8')
+    return { ok: true, path: r.filePath }
+  })
+  h(CH.SETTINGS_IMPORT, async () => {
+    const { dialog } = await import('electron')
+    const w = BrowserWindow.getAllWindows()[0]
+    const r = await dialog.showOpenDialog(w, {
+      title: '导入设置',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile']
+    })
+    if (r.canceled || !r.filePaths[0]) return { ok: false }
+    try {
+      const { readFile } = await import('node:fs/promises')
+      const data = JSON.parse(await readFile(r.filePaths[0], 'utf8')) as { app?: string; settings?: Record<string, unknown> }
+      if (data.app !== 'SoftGraph' || !data.settings) return { ok: false, error: '不是 SoftGraph 设置备份文件' }
+      settings.patch(data.settings as Partial<AppSettings>)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
   h(CH.FLOAT_MARKET, async (payload: { indexUrl?: string }) => {
     const { parseMarketIndex, OFFICIAL_INDEX_URLS } = await import('@shared/float-market')
     const urls = payload.indexUrl?.trim() ? [payload.indexUrl.trim()] : [...OFFICIAL_INDEX_URLS]

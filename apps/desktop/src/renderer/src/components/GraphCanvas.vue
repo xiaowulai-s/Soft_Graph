@@ -702,6 +702,12 @@ const LEGEND: { kind: string; label: string; color: string }[] = [
   { kind: 'group', label: '聚合分组', color: 'var(--node-system)' }
 ]
 
+// v3.9 E1：签名色标 —— 纯展示（不参与点击筛选），叠加在常规文件节点配色之上
+const LEGEND_SIGN: { label: string; color: string }[] = [
+  { label: '已签名', color: 'var(--success)' },
+  { label: '签名未知', color: 'var(--warning)' }
+]
+
 const centerNode = computed(() => renderNodes.value.find((n) => n.type === 'software') ?? null)
 </script>
 
@@ -857,6 +863,10 @@ const centerNode = computed(() => renderNodes.value.find((n) => n.type === 'soft
       >
         <span class="dot" :style="{ background: l.color }" />
         {{ l.label }}
+      </div>
+      <div v-for="d in LEGEND_SIGN" :key="'sign-' + d.label" class="gc-legend-item" style="opacity: 0.85">
+        <span class="dot" :style="{ background: d.color }" />
+        {{ d.label }}
       </div>
     </div>
 
