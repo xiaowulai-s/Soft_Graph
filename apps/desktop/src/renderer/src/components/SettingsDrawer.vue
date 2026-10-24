@@ -622,6 +622,17 @@ function daysLeft(r: QuarantineRecord): string {
                 <option value="light">浅色</option>
               </select>
             </div>
+            <div class="sd-row">
+              <label>全局热键</label>
+              <label class="sd-check">
+                <input
+                  type="checkbox"
+                  :checked="settings.hotkeyLauncher !== false"
+                  @change="patch({ hotkeyLauncher: ($event.target as HTMLInputElement).checked })"
+                />
+                <span>启用 Alt+G 全局热键 —— 任意界面按下即聚焦主窗并定位到搜索框</span>
+              </label>
+            </div>
           </section>
 
           <section class="sd-sec">

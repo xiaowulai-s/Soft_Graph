@@ -27,6 +27,15 @@
       "author": "SoftGraph",
       "url": "https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable/plugin-update-pulse.js",
       "permissions": ["network", "powershell"]
+    },
+    {
+      "id": "hw.pulse",
+      "name": "硬件脉搏",
+      "version": "1.0.0",
+      "description": "CPU 负载 / 内存占用 / 磁盘可用空间实时卡（CIM 查询）",
+      "author": "SoftGraph",
+      "url": "https://gitee.com/ABCHikS/softgraph-mirror/releases/download/stable/plugin-hw-pulse.js",
+      "permissions": ["powershell"]
     }
   ]
 }

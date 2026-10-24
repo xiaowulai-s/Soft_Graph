@@ -118,6 +118,7 @@ export const CH = {
   APP_UPDATE_STATE: 'app:updateState',
   APP_UPDATE_SKIP: 'app:updateSkip',
   UPDATE_CENTER_OPEN: 'app:updateCenterOpen',
+  GRAPH_FOCUS_SEARCH: 'graph:focusSearch',
   SETTINGS_EXPORT: 'settings:export',
   SETTINGS_IMPORT: 'settings:import',
   APP_UPDATE_SKIP_GET: 'app:updateSkipGet',
@@ -138,6 +139,10 @@ export const CH = {
   FLOAT_PLUGIN_UPDATE: 'float:pluginUpdate',
   STARTUP_LIST: 'startup:list',
   STARTUP_TOGGLE: 'startup:toggle',
+  DISK_TREEMAP: 'disk:treemap',
+  APP_LAUNCH: 'app:launch',
+  EXPORT_MANIFEST: 'app:exportManifest',
+  LAUNCHER_TOGGLE_HOTKEY: 'app:launcherHotkey',
   FLOAT_RESIZE: 'float:resize',
   FLOAT_STATE: 'float:state'
 } as const
@@ -226,6 +231,9 @@ export interface SoftGraphApi {
   floatPluginUpdate(payload: { url: string }): Promise<{ ok: boolean; id?: string; name?: string; permissions?: string[]; error?: string }>
   startupList(): Promise<import('./startup').StartupEntry[]>
   startupToggle(payload: { source: string; name: string; enable: boolean }): Promise<{ ok: boolean; error?: string }>
+  diskTreemap(payload: { root: string; depth?: number }): Promise<{ ok: boolean; node?: import('./squarify').TreemapItem extends never ? never : unknown; error?: string }>
+  appLaunch(payload: { path: string }): Promise<{ ok: boolean; error?: string }>
+  exportManifest(payload: { format: 'csv' | 'ps1' }): Promise<{ ok: boolean; path?: string; error?: string }>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>
   registryDelete(hive: string, keyPath: string): Promise<{ ok: boolean; output?: string }>
@@ -272,6 +280,7 @@ export interface SoftGraphApi {
   appUpdateSkip(version: string): void
   appUpdateSkipGet(): Promise<string | null>
   onUpdateCenterOpen(cb: () => void): () => void
+  onGraphFocusSearch(cb: () => void): () => void
   settingsExport(): Promise<{ ok: boolean; path?: string; error?: string }>
   settingsImport(): Promise<{ ok: boolean; error?: string }>
   junkScheduleInfo(): Promise<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>

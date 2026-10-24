@@ -23,6 +23,8 @@ const emit = defineEmits<{
   (e: 'set-filter', v: 'all' | 'installed' | 'portable'): void
   (e: 'reveal', path: string): void
   (e: 'mark-portable', payload: { path: string; isPortable: boolean }): void
+  (e: 'launch', path: string): void
+  (e: 'export-manifest', format: 'csv' | 'ps1'): void
 }>()
 
 const term = ref('')
@@ -70,6 +72,7 @@ const menuFor = ref<string | null>(null)
     <header class="sl-head">
       <span class="sl-title">软件列表</span>
       <button v-if="!scanning" class="primary" @click="emit('scan')">{{ items.length ? '刷新' : '扫描' }}</button>
+      <button v-if="items.length" class="ghost" title="导出装机清单（CSV / winget 批量安装脚本）" @click="emit('export-manifest', 'csv')">⬇清单</button>
       <button v-else class="danger" @click="emit('cancel')">停止</button>
     </header>
 
@@ -126,7 +129,10 @@ const menuFor = ref<string | null>(null)
           <span v-else class="sl-icon-fb" :style="{ background: nameToHsl(it.name) }">{{ initialsOf(it.name) }}</span>
         </div>
         <div class="sl-body">
-          <div class="sl-name" :title="it.name">{{ it.name }}</div>
+          <div class="sl-name" :title="it.name">
+            {{ it.name }}
+            <button v-if="it.mainExe" class="ghost sl-run" title="启动应用" @click.stop="emit('launch', it.mainExe)">▶</button>
+          </div>
           <div class="sl-sub">
             <span class="badge">{{ SOURCE_LABEL[it.source] }}</span>
             <span v-if="it.version" class="dim">{{ it.version }}</span>
@@ -136,6 +142,9 @@ const menuFor = ref<string | null>(null)
             便携评分 {{ it.portableScore }} · {{ it.portableEvidence.slice(0, 2).join('、') }}
           </div>
           <div v-if="menuFor === it.id" class="sl-menu" @click.stop>
+            <button v-if="it.mainExe" class="ghost" @click="emit('launch', it.mainExe); menuFor = null">
+              启动应用
+            </button>
             <button class="ghost" @click="emit('reveal', it.installPath || it.mainExe); menuFor = null">
               打开安装目录
             </button>
@@ -339,4 +348,9 @@ const menuFor = ref<string | null>(null)
   word-break: break-all;
   line-height: 1.4;
 }
+.sl-run {
+  border: none; background: transparent; color: var(--accent-2, #22d3ee);
+  font-size: 10px; padding: 0 2px; cursor: pointer; opacity: 0.6;
+}
+.sl-run:hover { opacity: 1; }
 </style>

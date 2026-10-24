@@ -24,6 +24,7 @@ import JunkSidebar from './components/JunkSidebar.vue'
 import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import MaintenanceCenter from './components/MaintenanceCenter.vue'
+import DiskTreemap from './components/DiskTreemap.vue'
 import { NAV_MODULES } from './nav'
 
 // ───────────────── 状态 ─────────────────
@@ -71,6 +72,7 @@ const layoutMode = ref<'radial' | 'force' | 'cluster'>('radial')
 const leftOpen = ref(true)
 // v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
 const mainView = ref<string>('graph')
+const treemapOpen = ref(false)
 const isGraph = computed(() => mainView.value === 'graph')
 // v3.8.1：顶栏更新入口 —— 常驻 ⟳，有更新时角标点亮；点击直达维护中心「扫描与更新」并自动检查
 const mcTab = ref('system')
@@ -83,6 +85,11 @@ onMounted(() => {
   })
   // v3.9 E3：系统通知点击 → 直达更新中心
   window.api.onUpdateCenterOpen(() => openUpdateCenter())
+  // v4.1 S3c：全局热键聚焦搜索
+  window.api.onGraphFocusSearch(() => {
+    mainView.value = 'graph'
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.tb-search')?.focus())
+  })
 })
 onBeforeUnmount(() => {
   updateUnsub?.()
@@ -815,6 +822,8 @@ const statusText = computed(() => {
     </nav>
 
     <!-- 三栏主体 -->
+    <DiskTreemap :open="treemapOpen" @close="treemapOpen = false" />
+
     <main v-show="isGraph" class="body">
       <div v-if="leftOpen && !canvasFull" class="col-left">
         <SoftwareList
@@ -916,6 +925,8 @@ const statusText = computed(() => {
       <div class="junk-page-head">
         <span class="mid-title">垃圾清理</span>
         <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
+        <span style="flex:1"></span>
+        <button class="ghost" title="按目录大小可视化磁盘占用" @click="treemapOpen = true">▦ 空间树图</button>
       </div>
       <div class="junk-page-body">
         <JunkSidebar

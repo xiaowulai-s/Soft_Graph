@@ -35,7 +35,7 @@ const fpDir = join(root, 'packages', 'float-plugins')
 const localOf = new Map([
   ['latest.yml', join(assetDir, 'latest.yml')],
   [setupLocal, join(assetDir, setupLocal)],
-  ...['plugins-index.json', 'plugin-system-clock.js', 'plugin-disk-guard.js', 'plugin-update-pulse.js'].map(
+  ...['plugins-index.json', 'plugin-system-clock.js', 'plugin-disk-guard.js', 'plugin-update-pulse.js', 'plugin-hw-pulse.js'].map(
     (f) => [f, join(fpDir, f)]
   )
 ])

@@ -572,6 +572,71 @@ function registerIpc(): void {
     const { StartupService } = await import('./services/startup')
     return new StartupService().list()
   })
+  h(CH.DISK_TREEMAP, async (payload: { root: string; depth?: number }) => {
+    const { scanDirTree } = await import('./services/disk-tree')
+    return scanDirTree(payload.root, payload.depth ?? 2)
+  })
+  h(CH.APP_LAUNCH, async (payload: { path: string }) => {
+    const { shell } = await import('electron')
+    try {
+      const err = await shell.openPath(payload.path)
+      return { ok: !err, error: err || undefined }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  h(CH.EXPORT_MANIFEST, async (payload: { format: 'csv' | 'ps1' }) => {
+    const { dialog } = await import('electron')
+    const w = BrowserWindow.getAllWindows()[0]
+    const ext = payload.format === 'ps1' ? 'ps1' : 'csv'
+    const r = await dialog.showSaveDialog(w, {
+      title: '导出装机清单',
+      defaultPath: `softgraph-manifest-${new Date().toISOString().slice(0, 10)}.${ext}`,
+      filters: [{ name: payload.format === 'ps1' ? 'PowerShell 脚本' : 'CSV', extensions: [ext] }]
+    })
+    if (r.canceled || !r.filePath) return { ok: false }
+    const items = store.listSoftware()
+    const { writeFile } = await import('node:fs/promises')
+    if (payload.format === 'csv') {
+      const esc = (t: string) => '"' + String(t ?? '').replace(/"/g, '""') + '"'
+      const rows = ['Name,Version,Publisher,InstallPath,MainExe']
+      for (const it of items) rows.push([esc(it.name), esc(it.version), esc(it.publisher), esc(it.installPath), esc(it.mainExe)].join(','))
+      await writeFile(r.filePath, '\ufeff' + rows.join('\r\n'), 'utf8')
+    } else {
+      const lines = [
+        '# SoftGraph 装机清单 —— 以管理员身份运行；winget 找不到的包会跳过',
+        '# requires -Version 5.1'
+      ]
+      for (const it of items) {
+        const n = String(it.name ?? '').replace(/'/g, "''")
+        lines.push(`Write-Host '安装 ${n.replace(/'/g, "''")}' ; winget install --name '${n}' --exact --silent --accept-package-agreements --accept-source-agreements 2>$null`)
+      }
+      await writeFile(r.filePath, lines.join('\r\n'), 'utf8')
+    }
+    return { ok: true, path: r.filePath }
+  })
+  // v4.1 S3c：全局热键 Alt+G 聚焦主窗（设置可关）
+  function applyHotkey(): void {
+    try {
+      const { globalShortcut } = require('electron') as typeof import('electron')
+      globalShortcut.unregister('Alt+G')
+      if (settings.get().hotkeyLauncher !== false) {
+        globalShortcut.register('Alt+G', () => {
+          const w = BrowserWindow.getAllWindows()[0]
+          if (w) {
+            if (w.isMinimized()) w.restore()
+            w.show()
+            w.focus()
+            w.webContents.send(CH.GRAPH_FOCUS_SEARCH)
+          }
+        })
+      }
+    } catch {
+      /* 热键被占用等 —— 忽略 */
+    }
+  }
+  applyHotkey()
+
   h(CH.STARTUP_TOGGLE, async (payload: { source: string; name: string; enable: boolean }) => {
     const { StartupService } = await import('./services/startup')
     return new StartupService().toggle(payload.source as never, payload.name, payload.enable)

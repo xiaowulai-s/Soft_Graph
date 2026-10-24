@@ -88,6 +88,11 @@ const api: SoftGraphApi = {
     rulesImportWinapp2: () => ipcRenderer.invoke(CH.RULES_IMPORT_WINAPP2),
   quarantineShred: (ids: string[]) => ipcRenderer.invoke(CH.QUARANTINE_SHRED, { ids }),
   appUpdateSkip: (version: string) => ipcRenderer.invoke(CH.APP_UPDATE_SKIP, { version }),
+  onGraphFocusSearch: (cb: () => void) => {
+    const l = () => cb()
+    ipcRenderer.on(CH.GRAPH_FOCUS_SEARCH, l)
+    return () => ipcRenderer.removeListener(CH.GRAPH_FOCUS_SEARCH, l)
+  },
   onUpdateCenterOpen: (cb: () => void) => {
     const l = (_e: unknown, _p: unknown) => cb()
     ipcRenderer.on(CH.UPDATE_CENTER_OPEN, l)
@@ -96,6 +101,9 @@ const api: SoftGraphApi = {
   appUpdateSkipGet: () => ipcRenderer.invoke(CH.APP_UPDATE_SKIP_GET),
   startupList: () => ipcRenderer.invoke(CH.STARTUP_LIST),
   startupToggle: (payload) => ipcRenderer.invoke(CH.STARTUP_TOGGLE, payload),
+  diskTreemap: (payload) => ipcRenderer.invoke(CH.DISK_TREEMAP, payload),
+  appLaunch: (payload) => ipcRenderer.invoke(CH.APP_LAUNCH, payload),
+  exportManifest: (payload) => ipcRenderer.invoke(CH.EXPORT_MANIFEST, payload),
   settingsExport: () => ipcRenderer.invoke(CH.SETTINGS_EXPORT),
   settingsImport: () => ipcRenderer.invoke(CH.SETTINGS_IMPORT),
   junkScheduleInfo: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_INFO),
@@ -110,7 +118,7 @@ const api: SoftGraphApi = {
   junkScheduleRun: () => ipcRenderer.invoke(CH.JUNK_SCHEDULE_RUN),
   wingetList: () => ipcRenderer.invoke(CH.WINGET_LIST),
   wingetUpgrade: (id: string) => ipcRenderer.invoke(CH.WINGET_UPGRADE, { id }),
-onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {
+  onAppUpdateState: (cb: (state: AppUpdateState) => void): (() => void) => {
     const l = (_e: unknown, state: AppUpdateState): void => cb(state)
     ipcRenderer.on(CH.APP_UPDATE_STATE, l as never)
     return () => ipcRenderer.removeListener(CH.APP_UPDATE_STATE, l as never)
