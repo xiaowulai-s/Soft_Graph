@@ -165,3 +165,13 @@ describe('v3.7 空闲窗口', () => {
     assert.equal(isIdleEnough(10, false), true)
   })
 })
+
+describe('v3.7 空闲窗口', () => {
+  it('idleOnly 时空闲 <15 分钟不执行，≥15 分钟执行；关闭开关则忽略', async () => {
+    const { isIdleEnough, IDLE_THRESHOLD_SEC } = await import('../../packages/shared/schedule')
+    assert.equal(IDLE_THRESHOLD_SEC, 900)
+    assert.equal(isIdleEnough(600, true), false)
+    assert.equal(isIdleEnough(900, true), true)
+    assert.equal(isIdleEnough(10, false), true)
+  })
+})
