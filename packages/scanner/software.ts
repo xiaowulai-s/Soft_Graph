@@ -3,6 +3,7 @@
  * 对应技术设计方案 5.1（已安装软件来源 / 便携软件识别 / 图标提取）
  */
 
+import { prettyDisplayName } from '@shared/display-name'
 import { promises as fs } from 'node:fs'
 import { join, basename } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -679,8 +680,8 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
   // 串行 280 项约 1.5s；并发后主要等待互相重叠。进度计数按完成数推进。
   const mainExeList = await mapPool(cleaned, 8, async (u) => {
     if (signal?.cancelled) return ''
-    const name = (u.DisplayName || '').trim()
     const installPath = inferInstallPath(u)
+    const name = prettyDisplayName((u.DisplayName || '').trim(), installPath) || (u.DisplayName || '').trim()
     const hint = u.DisplayIcon ? normPath(u.DisplayIcon.split(',')[0]) : appPathByExe.get(name.toLowerCase() + '.exe')
     const mainExe = await findMainExe(installPath, name, hint && extName(hint) === 'exe' ? hint : undefined)
     done++
@@ -693,8 +694,8 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
   for (let i = 0; i < cleaned.length; i++) {
     const u = cleaned[i]
     const mainExe = mainExeList[i]
-    const name = (u.DisplayName || '').trim()
     const installPath = inferInstallPath(u)
+    const name = prettyDisplayName((u.DisplayName || '').trim(), installPath) || (u.DisplayName || '').trim()
     // 既无安装目录又无主程序 → 无法参与依赖图谱，跳过
     if (!installPath && !mainExe) continue
 
@@ -739,7 +740,7 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
     const displayName = s.Name.replace(/^[^.]*\./, '') || s.Name
     storeItems.push({
       id: softwareId(loc, s.PackageFullName),
-      name: displayName,
+      name: prettyDisplayName(displayName, loc) || displayName,
       version: s.Version,
       publisher: (s.Publisher || '').replace(/^CN=/, '').split(',')[0],
       installPath: loc,
@@ -771,7 +772,7 @@ export async function scanInstalled(raw: EnumResult, opts: ScanSoftwareOptions =
     seenSvcExe.add(low)
     serviceItems.push({
       id: softwareId(dir, s.displayName || s.name),
-      name: s.displayName || s.name,
+      name: prettyDisplayName(s.displayName || s.name, dir) || s.displayName || s.name,
       version: '',
       publisher: '',
       installPath: dir,

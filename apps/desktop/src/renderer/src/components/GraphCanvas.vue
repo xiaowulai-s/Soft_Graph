@@ -955,6 +955,7 @@ const centerNode = computed(() => renderNodes.value.find((n) => n.type === 'soft
   backdrop-filter: blur(6px);
 }
 .gc-legend-item {
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 6px;

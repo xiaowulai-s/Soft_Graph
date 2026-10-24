@@ -209,3 +209,19 @@ describe('v3.8 插件市场', async () => {
     assert.equal(marketStatus({ ...entry, id: 'other' }, installed).status, 'not-installed')
   })
 })
+
+
+describe('v3.9.1 显示名清洗', async () => {
+  const { prettyDisplayName } = await import('../../packages/shared/display-name')
+  it('GUID / 纯版本号 / 环境变量路径 → 兜底名', () => {
+    assert.equal(prettyDisplayName('1572705-839a-4832-9148-54d4a1e594d7', 'C:\\Tools\\MyApp'), 'MyApp')
+    assert.equal(prettyDisplayName('11.32.20', 'C:\\Apps\\Viewer\\viewer.exe'), 'viewer')
+    assert.equal(prettyDisplayName('%ProgramFiles%\\Windows Defender', 'C:\\x\\Defender'), 'Defender')
+    assert.equal(prettyDisplayName('', 'D:\\Portables\\Tool'), 'Tool')
+  })
+  it('ProductVersion 拼接清洗 + 正常名透传', () => {
+    assert.equal(prettyDisplayName('409ProductVersion 4.0.0.1.8.1.0.0.1.1.8.1', 'C:\\a\\b.exe'), 'b')
+    assert.equal(prettyDisplayName('Ollama'), 'Ollama')
+    assert.equal(prettyDisplayName('C:\\x\\y\\app.exe', undefined), 'app')
+  })
+})

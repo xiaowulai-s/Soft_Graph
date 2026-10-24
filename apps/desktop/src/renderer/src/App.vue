@@ -780,8 +780,8 @@ const statusText = computed(() => {
 
       <span class="tb-sp" />
 
-      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出 PNG" @click="exportGraphPng">导出图</button>
-      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出依赖清单" @click="exportGraphReport">依赖清单</button>
+      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出图谱为 PNG" @click="exportGraphPng">⬇图</button>
+      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出依赖清单（HTML 报告）" @click="exportGraphReport">⬇清单</button>
       <button v-show="isGraph" class="ghost" :title="leftOpen ? '收起软件列表' : '展开软件列表'" @click="leftOpen = !leftOpen">
         {{ leftOpen ? '◧' : '▢' }}
       </button>
@@ -1065,6 +1065,18 @@ const statusText = computed(() => {
   padding: 7px 11px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tb::-webkit-scrollbar { display: none; }
+/* v3.9.1：顶栏文字禁换行 —— 空间不足横向滚动而非竖排 */
+.tb button, .tb .tb-nav-btn, .tb input, .tb select {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tb .tb-search { min-width: 130px; }
+.tb .tb-fsearch { min-width: 150px; }
   flex: none;
   -webkit-app-region: drag;
 }
