@@ -3,12 +3,13 @@
  * v5.0 左侧活动栏：54px 图标导航，注册表驱动（nav.ts 五区）。
  * 设置项固定在底部，其余自上而下。
  */
-import { NAV_MODULES } from '../nav'
+import { NAV_MODULES, navIconSvg } from '@shared/nav'
 
 const model = defineModel<string>({ required: true })
 
 const MAIN = NAV_MODULES.filter((m) => m.id !== 'settings')
 const SETTINGS = NAV_MODULES.find((m) => m.id === 'settings')
+const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon)]))
 </script>
 
 <template>
@@ -22,7 +23,7 @@ const SETTINGS = NAV_MODULES.find((m) => m.id === 'settings')
       :title="`${m.title} — ${m.desc}`"
       @click="model = m.id"
     >
-      <span class="ab-ico">{{ m.icon }}</span>
+      <span class="ab-ico" v-html="ICONS[m.id]"></span>
       <span class="ab-tip">{{ m.title }}</span>
     </button>
     <span style="flex: 1"></span>
@@ -33,7 +34,7 @@ const SETTINGS = NAV_MODULES.find((m) => m.id === 'settings')
       :title="`${SETTINGS.title} — ${SETTINGS.desc}`"
       @click="model = SETTINGS.id"
     >
-      <span class="ab-ico">{{ SETTINGS.icon }}</span>
+      <span class="ab-ico" v-html="ICONS[SETTINGS.id]"></span>
       <span class="ab-tip">{{ SETTINGS.title }}</span>
     </button>
   </nav>
@@ -81,9 +82,14 @@ const SETTINGS = NAV_MODULES.find((m) => m.id === 'settings')
   color: #fff;
 }
 .ab-ico {
-  font-size: 16px;
-  color: var(--text-2);
   line-height: 1;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ab-ico :deep(svg) {
+  display: block;
 }
 .ab-tip {
   position: absolute;

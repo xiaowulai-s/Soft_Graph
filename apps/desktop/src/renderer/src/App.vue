@@ -1475,9 +1475,10 @@ const statusText = computed(() => {
 .junk-page-body :deep(.js) { width: 100%; max-width: none; border-left: none; }
 .maint-page { height: 100%; overflow: auto; padding: 16px 0; }
 
-/* v5.0 外壳：活动栏 + 主区 */
+/* v5.0 外壳：活动栏 + 主区（row 覆盖原 column 布局） */
 .app {
   display: flex;
+  flex-direction: row;
 }
 .sg-main {
   flex: 1;

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { NAV_MODULES, isNavId } from '../../apps/desktop/src/renderer/src/nav'
+import { NAV_MODULES, isNavId } from '../../packages/shared/nav'
 
 describe('v5.0 导航注册表', () => {
   it('恰好五区，顺序与 id 正确', () => {
