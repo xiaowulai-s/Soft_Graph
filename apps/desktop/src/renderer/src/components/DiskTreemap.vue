@@ -3,7 +3,7 @@
  * v4.1 S2：磁盘空间树图（squarified treemap，支持下钻与文件回收）。
  * 内嵌于垃圾清理主视图（覆盖层）。
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { formatBytes } from '@shared/util'
 import { squarify, type TreemapItem, type TreemapRect } from '@shared/squarify'
 
@@ -27,12 +27,6 @@ const rects = computed(() => {
   return squarify(current.value.items, W, H)
 })
 const crumbs = computed(() => stack.value.map((s) => ({ name: s.name, path: s.path })))
-
-const QUICK = ['C:\\Users\\%USERNAME%\\Downloads', 'C:\\Users\\%USERNAME%\\Documents']
-
-function expandUser(p: string): string {
-  return p.replace(/%USERNAME%/i, window.navigator.userAgent.includes('') ? '' : '').replace(/^~/, '')
-}
 
 async function scan(dir: string): Promise<void> {
   loading.value = true
@@ -65,7 +59,8 @@ async function scan(dir: string): Promise<void> {
   }
 }
 
-function open(): void {
+/** v4.1.1：原函数名 open 遮蔽了 open prop（恒真 → 遮罩启动即现且永不可关），改名解除 */
+function startScan(): void {
   const dir = pathInput.value.trim() || rootPath.value
   if (!dir) return
   stack.value = []
@@ -106,6 +101,20 @@ async function revealSel(): Promise<void> {
   if (p) await window.api.reveal({ path: p })
 }
 
+// v4.1.1：Esc 关闭（仅打开时监听）
+function onKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') emit('close')
+}
+watch(
+  () => props.open,
+  (v) => {
+    if (v) window.addEventListener('keydown', onKey)
+    else window.removeEventListener('keydown', onKey)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+
 const colorFor = (r: TreemapRect): string => {
   const hue = 187 - Math.min(r.item.sizeBytes / (current.value?.items[0]?.sizeBytes || 1), 1) * 40
   return `hsl(${hue} 70% ${r.item.isDir ? 30 : 38}%)`
@@ -123,9 +132,9 @@ const colorFor = (r: TreemapRect): string => {
             class="dt-path mono"
             type="text"
             placeholder="输入目录，如 C:\\Users\\you\\Downloads"
-            @keydown.enter="open"
+            @keydown.enter="startScan"
           />
-          <button class="ghost" :disabled="loading || !pathInput.trim()" @click="open">
+          <button class="ghost" :disabled="loading || !pathInput.trim()" @click="startScan">
             {{ loading ? '扫描中…' : '分析' }}
           </button>
           <button class="ghost" @click="emit('close')">✕</button>

@@ -5,6 +5,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { TreemapItem } from '@shared/squarify'
+import { expandEnvVars } from '@shared/util'
 
 export interface DiskTreeNode {
   name: string
@@ -18,9 +19,11 @@ const MAX_NODES = 2000
 const MAX_DEPTH = 4
 
 export async function scanDirTree(
-  root: string,
+  rawRoot: string,
   depth = 2
 ): Promise<{ ok: boolean; node?: DiskTreeNode; error?: string }> {
+  // v4.1.1：兑现 UI 承诺 —— %VAR% 环境变量占位符在主进程展开（如 %USERNAME%/%USERPROFILE%）
+  const root = expandEnvVars(rawRoot.trim())
   let nodes = 0
   const d = Math.min(depth, MAX_DEPTH)
 

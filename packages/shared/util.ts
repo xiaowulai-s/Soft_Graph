@@ -209,3 +209,11 @@ export async function mapPool<T, R>(
   await Promise.all(workers)
   return results
 }
+
+/** v4.1.1：展开 %VAR% 形式的环境变量占位符（未匹配的保持原样） */
+export function expandEnvVars(text: string, env: Record<string, string | undefined> = process.env as Record<string, string | undefined>): string {
+  return text.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (raw, name) => {
+    const v = env[name]
+    return v === undefined ? raw : v
+  })
+}
