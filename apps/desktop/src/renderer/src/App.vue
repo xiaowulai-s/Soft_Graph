@@ -88,6 +88,41 @@ function onDashNav(view: string, tool?: string): void {
   }
   mainView.value = view
 }
+// v5.1 N2：检查升级（按名称模糊匹配 winget 列表）
+async function onUpgradeSoftware(name: string): Promise<void> {
+  showToast(`正在查询 ${name} 的可用升级…`)
+  try {
+    const ups = await window.api.wingetList()
+    const hit = ups.find(
+      (u) => u.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(u.name.toLowerCase())
+    )
+    if (!hit) {
+      showToast(`未在 winget 源中找到「${name}」的升级（可能已是最新或非 winget 分发）`)
+      return
+    }
+    showToast(`正在升级 ${hit.name} ${hit.version} → ${hit.available}…`)
+    const r = await window.api.wingetUpgrade(hit.id)
+    showToast(r.ok ? `${hit.name} 升级完成（可能需要重启生效）` : `升级失败：${r.output?.slice(-80) ?? '未知原因'}`)
+  } catch (e) {
+    showToast(`升级检查失败：${(e as Error).message}`)
+  }
+}
+
+// v5.1 N2：卸载引导（拉起系统卸载程序）
+async function onUninstallSoftware(id: string): Promise<void> {
+  const r = await window.api.appUninstall(id)
+  showToast(r.ok ? '已拉起卸载程序，请在弹出的向导中确认' : `无法卸载：${r.error ?? '未知原因'}`)
+}
+
+// v5.1：软件启动 / 装机清单导出（模板作用域走 script）
+async function onLaunchSoftware(path: string): Promise<void> {
+  await window.api.appLaunch({ path })
+}
+
+async function onExportManifest(fmt: 'csv' | 'ps1'): Promise<void> {
+  await window.api.exportManifest({ format: fmt })
+}
+
 function onPaletteRun(cmd: { view: string; tool?: string; action?: string }): void {
   if (cmd.action === 'treemap') {
     mainView.value = 'junk'
@@ -854,6 +889,10 @@ const statusText = computed(() => {
           @set-filter="filter = $event"
           @reveal="reveal"
           @mark-portable="markPortable"
+          @launch="onLaunchSoftware"
+          @export-manifest="onExportManifest"
+          @upgrade="onUpgradeSoftware"
+          @uninstall="onUninstallSoftware"
         />
       </div>
 
@@ -942,6 +981,7 @@ const statusText = computed(() => {
         <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
         <span style="flex:1"></span>
         <button class="ghost" title="按目录大小可视化磁盘占用" @click="treemapOpen = true">▦ 空间树图</button>
+        <button class="ghost" title="相似图片盘点（aHash 分组查重）" @click="onDashNav('toolbox', 'system')">🖼 相似图片</button>
       </div>
       <div class="junk-page-body">
         <JunkSidebar
@@ -978,7 +1018,7 @@ const statusText = computed(() => {
     </main>
 
     <main v-if="mainView === 'toolbox'" class="toolbx-page">
-      <ToolboxView :jump-tool="toolboxJump" @open-market="openDrawer('float')" />
+      <ToolboxView :jump-tool="toolboxJump" @open-market="openDrawer('float')" @open-manifest="mainView = 'graph'" />
     </main>
 
     <main v-if="mainView === 'settings'" class="settings-page">

@@ -141,6 +141,8 @@ export const CH = {
   STARTUP_TOGGLE: 'startup:toggle',
   DISK_TREEMAP: 'disk:treemap',
   APP_LAUNCH: 'app:launch',
+  APP_UNINSTALL: 'app:uninstall',
+  DASH_RECENT: 'dash:recent',
   EXPORT_MANIFEST: 'app:exportManifest',
   LAUNCHER_TOGGLE_HOTKEY: 'app:launcherHotkey',
   FLOAT_RESIZE: 'float:resize',
@@ -233,6 +235,8 @@ export interface SoftGraphApi {
   startupToggle(payload: { source: string; name: string; enable: boolean }): Promise<{ ok: boolean; error?: string }>
   diskTreemap(payload: { root: string; depth?: number }): Promise<{ ok: boolean; node?: import('./squarify').TreemapItem extends never ? never : unknown; error?: string }>
   appLaunch(payload: { path: string }): Promise<{ ok: boolean; error?: string }>
+  appUninstall(id: string): Promise<{ ok: boolean; error?: string }>
+  dashRecent(): Promise<{ name: string; path: string; at: number }[]>
   exportManifest(payload: { format: 'csv' | 'ps1' }): Promise<{ ok: boolean; path?: string; error?: string }>
   /** v3.3 注册表残留 */
   registryLeftovers(): Promise<import('./types').RegistryLeftover[]>

@@ -139,11 +139,50 @@ export class FloatWindowManager {
     if (this.rendererUrl) void this.win.loadURL(floatInstanceTarget(this.rendererUrl, this.instanceId))
     else void this.win.loadFile(this.rendererFile, { query: { instance: this.instanceId } })
 
+    // v5.1：ready-to-show 兜底 —— 渲染挂死时 10s 强制显示并留痕
+    const readyFallback = setTimeout(() => {
+      if (this.win && !this.win.isDestroyed() && !this.win.isVisible()) {
+        this.win.showInactive()
+        void import('../services/logger').then((m) => {
+          m.logger().warn('float', 'ready-to-show 超时，已兜底显示')
+          void m.logger().flushNow()
+        })
+      }
+    }, 10000)
+    this.win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      void import('../services/logger').then((m) => {
+        m.logger().warn('float', '浮窗渲染加载失败', { code, desc: String(desc).slice(0, 120), url: String(url).slice(0, 120) })
+        void m.logger().flushNow()
+      })
+    })
+    this.win.webContents.on('render-process-gone', (_e, details) => {
+      void import('../services/logger').then((m) => {
+        m.logger().warn('float', '浮窗渲染进程退出', { reason: details.reason })
+        void m.logger().flushNow()
+      })
+    })
     this.win.once('ready-to-show', () => {
+      clearTimeout(readyFallback)
       this.win?.showInactive()
       this.applyOpacity(s.opacity)
       this.recomputeDock()
-      if (s.autoHide && this.docked !== 'none') this.scheduleHide()
+      if (s.autoHide && this.docked !== 'none') {
+        if (!s.autoHideIntroDone) {
+          // v5.1 修复「开了不显示」：默认位置距屏缘 24px < DOCK_THRESHOLD 28，
+          // 出生即被判定贴边隐藏，肉眼只见 6px 边条。首次启用改为不隐藏 + 通知引导。
+          void import('electron').then(({ Notification }) => {
+            if (Notification.isSupported()) {
+              new Notification({
+                title: '浮窗已开启',
+                body: '之后会贴边自动隐藏：把鼠标移到屏幕边缘即可唤出（可在设置关闭自动隐藏）'
+              }).show()
+            }
+          })
+          this.host.patchSettings({ autoHideIntroDone: true })
+        } else {
+          this.scheduleHide()
+        }
+      }
     })
 
     this.win.webContents.setWindowOpenHandler(({ url }) => {
@@ -584,7 +623,7 @@ export function defaultFloatSettings(): FloatSettings {
   return {
     enabled: false,
     plugins: ['sys.cpumem', 'sys.disk', 'sg.junk', 'sys.clock'],
-    x: wa.x + wa.width - 260 - 24,
+    x: wa.x + wa.width - 260 - 40,
     y: wa.y + 80,
     width: 260,
     opacity: 0.96,

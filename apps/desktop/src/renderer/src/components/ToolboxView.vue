@@ -9,7 +9,7 @@ import type { StartupEntry, StartupSource } from '@shared/startup'
 import MaintenanceCenter from './MaintenanceCenter.vue'
 
 const props = defineProps<{ /** App 侧跳转指令（`tool#序号`，序号防同值不触发） */ jumpTool?: string }>()
-const emit = defineEmits<{ 'open-market': [] }>()
+const emit = defineEmits<{ 'open-market': []; 'open-manifest': [] }>()
 
 const tool = ref<string | null>(null)
 
@@ -17,8 +17,7 @@ const ROWS: { id: string; name: string; desc: string; mcTab?: string }[] = [
   { id: 'startup', name: '自启动管理', desc: '注册表 Run / 启动文件夹，可逆启停' },
   { id: 'software', name: '软件升级管家', desc: 'winget 可升级列表 · 提权重试', mcTab: 'software' },
   { id: 'registry', name: '注册表残留', desc: '卸载表死条目检测与删除', mcTab: 'software' },
-  { id: 'system', name: '扫描与更新', desc: '相似图片盘点 · 应用自更新', mcTab: 'system' },
-  { id: 'rules', name: '规则供给', desc: 'Winapp2 导入 · 签名规则在线更新', mcTab: 'rules' },
+  { id: 'manifest', name: '装机清单', desc: '导出 CSV / winget 批量安装脚本（跳转图谱视图）' },
   { id: 'cleanup', name: '定时清理调度', desc: '周期 · 空闲窗口 · 上次执行', mcTab: 'cleanup' },
   { id: 'market', name: '插件市场', desc: '官方索引 · 一键安装浮窗插件' }
 ]
@@ -78,6 +77,11 @@ watch(
 )
 
 function open(t: string): void {
+  if (t === 'manifest') {
+    tool.value = null
+    emit('open-manifest')
+    return
+  }
   tool.value = t
   if (t === 'startup') void loadStartup()
   if (t === 'market') {

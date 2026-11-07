@@ -595,7 +595,28 @@
         ],
         "maxDepth": 8
       }
+    },
+    {
+      "id": "GC-19",
+      "name": "安装包残留",
+      "description": "下载目录中 30 天前的安装包（setup/msi/installer 等）。安装完成后通常不再需要，删除前请确认对应软件已装好；30 天内的新安装包不会命中",
+      "risk": "hint",
+      "defaultSelected": false,
+      "match": {
+        "roots": [
+          "%USERPROFILE%\\\\Downloads"
+        ],
+        "patterns": [
+          "setup*.exe",
+          "*_setup.exe",
+          "*.msi",
+          "*installer*.exe",
+          "*install_*.exe"
+        ],
+        "maxAgeMs": 2592000000,
+        "maxDepth": 2
+      }
     }
   ],
-  "_version": 6
+  "_version": 7
 }

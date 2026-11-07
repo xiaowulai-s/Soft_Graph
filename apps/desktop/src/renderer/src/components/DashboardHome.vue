@@ -20,6 +20,8 @@ const quarCount = ref(0)
 const startupCount = ref<number | null>(null)
 const startupUnsigned = ref(0)
 const schedInfo = ref<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>(null)
+const recent = ref<{ name: string; path: string; at: number }[]>([])
+const upgradeCount = ref<number | null>(null)
 
 onMounted(async () => {
   void window.api.quarantineCount().then((n) => (quarCount.value = n)).catch(() => {})
@@ -35,7 +37,22 @@ onMounted(async () => {
   } catch {
     /* ignore */
   }
+  try {
+    recent.value = await window.api.dashRecent()
+  } catch {
+    /* ignore */
+  }
+  // v5.1 N4：升级数懒加载（winget 查询较慢，后台补数）
+  void window.api
+    .wingetList()
+    .then((ups) => (upgradeCount.value = ups.length))
+    .catch(() => (upgradeCount.value = null))
 })
+
+async function launchRecent(path: string): Promise<void> {
+  await window.api.appLaunch({ path })
+  recent.value = await window.api.dashRecent().catch(() => recent.value)
+}
 
 function fmtWhen(ts: number): string {
   if (!ts) return '尚未运行'
@@ -83,8 +100,24 @@ function fmtWhen(ts: number): string {
       <button class="dh-act" @click="emit('market')">插件市场</button>
     </div>
 
+    <div v-if="recent.length" class="dh-recent">
+      <div class="dh-feed-title">常用软件</div>
+      <div class="dh-chips">
+        <button v-for="r in recent.slice(0, 6)" :key="r.path" class="dh-chip" :title="r.path" @click="launchRecent(r.path)">
+          ▶ {{ r.name }}
+        </button>
+      </div>
+    </div>
+
     <div class="dh-feed">
       <div class="dh-feed-title">系统动态</div>
+      <div v-if="upgradeCount !== null" class="dh-row">
+        <span class="dh-dot" :style="{ background: upgradeCount > 5 ? 'var(--warning)' : 'var(--accent)' }"></span>
+        <span>
+          可升级软件 {{ upgradeCount }} 个
+          <button class="ghost" style="margin-left: 8px; padding: 2px 8px" @click="emit('navigate', 'toolbox', 'software')">去升级 →</button>
+        </span>
+      </div>
       <div class="dh-row">
         <span class="dh-dot" style="background: var(--accent)"></span>
         <span>上次定时清理：{{ fmtWhen(schedInfo?.lastRunAt ?? 0) }}{{ schedInfo?.lastCleaned ? ` · 清理 ${schedInfo.lastCleaned} 项 / ${formatBytes(schedInfo.lastFreedBytes)}` : '' }}</span>
@@ -179,5 +212,28 @@ function fmtWhen(ts: number): string {
   height: 7px;
   border-radius: 50%;
   flex: none;
+}
+.dh-recent {
+  background: var(--panel);
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  padding: 6px 16px 12px;
+}
+.dh-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 6px;
+}
+.dh-chip {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 5px 13px;
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.dh-chip:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 </style>

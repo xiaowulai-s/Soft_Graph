@@ -580,9 +580,40 @@ function registerIpc(): void {
     const { shell } = await import('electron')
     try {
       const err = await shell.openPath(payload.path)
+      if (!err) {
+        // v5.1 N5：记录最近启动（仪表盘常用软件区）
+        const name = payload.path.split(/[\\/]/).pop()?.replace(/\.exe$/i, '') || payload.path
+        const raw = store.getKv('dash:recent')
+        let list: { name: string; path: string; at: number }[] = []
+        try { list = raw ? (JSON.parse(raw) as { name: string; path: string; at: number }[]) : [] } catch { list = [] }
+        list = list.filter((x) => x.path.toLowerCase() !== payload.path.toLowerCase())
+        list.unshift({ name, path: payload.path, at: Date.now() })
+        store.setKv('dash:recent', JSON.stringify(list.slice(0, 8)))
+      }
       return { ok: !err, error: err || undefined }
     } catch (e) {
       return { ok: false, error: (e as Error).message }
+    }
+  })
+  h(CH.APP_UNINSTALL, async (payload: { id: string }) => {
+    const sw = store.getSoftware(payload.id)
+    const us = sw?.uninstallString
+    if (!us) return { ok: false, error: '该软件没有登记卸载程序（可能是便携软件或 Store 应用）' }
+    const { spawn } = await import('node:child_process')
+    try {
+      const child = spawn(us, [], { detached: true, shell: true, stdio: 'ignore' })
+      child.unref()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+  h(CH.DASH_RECENT, async () => {
+    const raw = store.getKv('dash:recent')
+    try {
+      return raw ? (JSON.parse(raw) as { name: string; path: string; at: number }[]) : []
+    } catch {
+      return []
     }
   })
   h(CH.EXPORT_MANIFEST, async (payload: { format: 'csv' | 'ps1' }) => {

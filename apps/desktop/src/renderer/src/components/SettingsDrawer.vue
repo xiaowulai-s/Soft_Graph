@@ -103,6 +103,43 @@ async function removeExclude(p: string): Promise<void> {
 
 const float = computed<FloatSettings | null>(() => settings.value?.float ?? null)
 
+// ── v5.1：规则供给 + 设置备份 ──
+const rulesBusy = ref(false)
+const rulesText = ref('')
+const rulesOk = ref(false)
+async function checkRulesUpdate(): Promise<void> {
+  rulesBusy.value = true
+  rulesText.value = ''
+  try {
+    const r = await window.api.rulesUpdate()
+    rulesOk.value = r.ok
+    rulesText.value = r.ok
+      ? `规则库已更新到 v${r.version}（${r.ruleCount ?? '?'} 类）。重新扫描即生效。`
+      : `未更新：${r.reason ?? '未知原因'}`
+  } catch (e) {
+    rulesOk.value = false
+    rulesText.value = `检查失败：${(e as Error).message}`
+  }
+}
+
+const backupText = ref('')
+const backupOk = ref(false)
+async function exportSettings(): Promise<void> {
+  const r = await window.api.settingsExport()
+  backupOk.value = r.ok
+  backupText.value = r.ok ? `已导出到 ${r.path}` : `导出失败：${r.error ?? '已取消'}`
+}
+async function importSettings(): Promise<void> {
+  const r = await window.api.settingsImport()
+  backupOk.value = r.ok
+  backupText.value = r.ok ? '设置已导入并生效' : `导入失败：${r.error ?? '已取消'}`
+  if (r.ok) {
+    const st = await window.api.getSettings()
+    settings.value = st
+    emit('theme', st.theme)
+  }
+}
+
 async function patchFloat(p: Partial<FloatSettings>): Promise<void> {
   const next = await window.api.floatSetSettings(p)
   if (settings.value) settings.value = { ...settings.value, float: next }
@@ -613,6 +650,39 @@ function daysLeft(r: QuarantineRecord): string {
       <div class="sd-body">
         <!-- ── 设置 ── -->
         <template v-if="tab === 'settings' && settings">
+          <section class="sd-sec">
+            <h4>规则供给</h4>
+            <div class="sd-row col">
+              <label>规则库更新源（留空 = 官方源 + 镜像回退）</label>
+              <input
+                class="mono"
+                type="url"
+                style="width: 100%"
+                :value="settings.rulesUpdateUrl"
+                @change="patch({ rulesUpdateUrl: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
+            <div class="sd-row">
+              <button class="ghost" :disabled="rulesBusy" @click="checkRulesUpdate">
+                {{ rulesBusy ? '检查中…' : '检查规则更新' }}
+              </button>
+            </div>
+            <div v-if="rulesText" class="sd-hint" :class="rulesOk ? '' : 'warn'">{{ rulesText }}</div>
+            <div class="sd-hint dim">
+              更新包必须通过 Ed25519 签名（公钥内置）、SHA-256 校验、版本单调与安全结构检查，任何一步失败都不会改动本机规则。
+            </div>
+          </section>
+
+          <section class="sd-sec">
+            <h4>备份</h4>
+            <div class="sd-row">
+              <button class="ghost" @click="exportSettings">导出设置…</button>
+              <button class="ghost" @click="importSettings">导入设置…</button>
+            </div>
+            <div v-if="backupText" class="sd-hint" :class="backupOk ? '' : 'warn'">{{ backupText }}</div>
+            <div class="sd-hint dim">导出为 JSON 备份文件（含全部应用设置）；导入时自动校验来源。</div>
+          </section>
+
           <section class="sd-sec">
             <h4>外观</h4>
             <div class="sd-row">

@@ -574,6 +574,8 @@ export interface FloatSettings {
   lockPosition: boolean
   /** v3.8 插件市场索引 URL（空 = 官方源） */
   pluginIndexUrl?: string
+  /** v5.1：首次启用引导已展示（首次不自动隐藏，让用户看见本体） */
+  autoHideIntroDone?: boolean
   /**
    * 多实例（F4）。为空 / 未设置时表示「单实例」—— 由上面的顶层字段
    * 合成一个默认实例，因此老配置无需迁移即照常工作。
