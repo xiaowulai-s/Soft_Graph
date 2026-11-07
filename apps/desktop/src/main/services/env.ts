@@ -89,7 +89,7 @@ export function defaultSettings(): AppSettings {
     excludePaths: [],
     quarantineKeepDaysLow: 7,
     quarantineKeepDaysHigh: 14,
-    theme: 'dark',
+    theme: 'light',
     maxDepth: 2,
     enabledJunkCategories: [],
     advancedMode: false,

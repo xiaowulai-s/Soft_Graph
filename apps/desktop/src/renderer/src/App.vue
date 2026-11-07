@@ -25,6 +25,10 @@ import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import MaintenanceCenter from './components/MaintenanceCenter.vue'
 import DiskTreemap from './components/DiskTreemap.vue'
+import ActivityBar from './components/ActivityBar.vue'
+import CommandPalette from './components/CommandPalette.vue'
+import DashboardHome from './components/DashboardHome.vue'
+import ToolboxView from './components/ToolboxView.vue'
 import { NAV_MODULES } from './nav'
 
 // ───────────────── 状态 ─────────────────
@@ -71,8 +75,41 @@ const layoutMode = ref<'radial' | 'force' | 'cluster'>('radial')
 // 面板折叠 / 画布全屏
 const leftOpen = ref(true)
 // v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
-const mainView = ref<string>('graph')
+const mainView = ref<string>('dashboard')
 const treemapOpen = ref(false)
+// v5.0 命令面板 / 工具箱跳转
+const paletteOpen = ref(false)
+const toolboxJump = ref('')
+const jumpSeq = ref(0)
+function onDashNav(view: string, tool?: string): void {
+  if (tool) {
+    jumpSeq.value += 1
+    toolboxJump.value = `${tool}#${jumpSeq.value}`
+  }
+  mainView.value = view
+}
+function onPaletteRun(cmd: { view: string; tool?: string; action?: string }): void {
+  if (cmd.action === 'treemap') {
+    mainView.value = 'junk'
+    treemapOpen.value = true
+    return
+  }
+  if (cmd.action === 'rescan-software') {
+    mainView.value = 'graph'
+    void scanSoftware()
+    return
+  }
+  if (cmd.action === 'rescan-junk') {
+    mainView.value = 'junk'
+    void scanJunk(false)
+    return
+  }
+  if (cmd.tool) {
+    jumpSeq.value += 1
+    toolboxJump.value = `${cmd.tool}#${jumpSeq.value}`
+  }
+  mainView.value = cmd.view
+}
 const isGraph = computed(() => mainView.value === 'graph')
 // v3.8.1：顶栏更新入口 —— 常驻 ⟳，有更新时角标点亮；点击直达维护中心「扫描与更新」并自动检查
 const mcTab = ref('system')
@@ -80,6 +117,13 @@ const appUpdatePhase = ref<string>('')
 const updateDot = computed(() => ['available', 'downloading', 'downloaded'].includes(appUpdatePhase.value))
 let updateUnsub: (() => void) | null = null
 onMounted(() => {
+  // v5.0：Ctrl+K 命令面板
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault()
+      paletteOpen.value = !paletteOpen.value
+    }
+  })
   updateUnsub = window.api.onAppUpdateState((st) => {
     appUpdatePhase.value = st.phase
   })
@@ -96,11 +140,10 @@ onBeforeUnmount(() => {
   updateUnsub = null
 })
 function openUpdateCenter(): void {
-  mcTab.value = 'system'
-  mainView.value = 'maintenance'
+  jumpSeq.value += 1
+  toolboxJump.value = `system#${jumpSeq.value}`
+  mainView.value = 'toolbox'
 }
-const activeChildren = computed(() => NAV_MODULES.find((m) => m.id === mainView.value)?.children ?? [])
-/** v3.5 二级导航：激活模块声明 children 时渲染顶栏下的子项行（横向位不足的扩容机制） */
 const rightOpen = ref(true)
 const canvasFull = ref(false)
 
@@ -695,6 +738,8 @@ const statusText = computed(() => {
 
 <template>
   <div class="app" :class="{ full: canvasFull }">
+    <ActivityBar v-model="mainView" />
+    <div class="sg-main">
     <!-- 顶栏 -->
     <header class="tb">
       <div class="tb-brand">
@@ -702,19 +747,6 @@ const statusText = computed(() => {
         <span class="tb-name">SoftGraph</span>
       </div>
 
-      <!-- v3.4 模块化导航：由 nav.ts 注册表驱动 -->
-      <nav class="tb-nav">
-        <button
-          v-for="m in NAV_MODULES"
-          :key="m.id"
-          class="tb-nav-btn"
-          :class="{ active: mainView === m.id }"
-          :title="m.desc"
-          @click="mainView = m.id"
-        >
-          <span>{{ m.icon }}</span><span>{{ m.title }}</span>
-        </button>
-      </nav>
 
       <button v-show="isGraph" :disabled="swScanning" @click="scanSoftware">{{ software.length ? '重新扫描' : '扫描软件' }}</button>
       <button v-show="isGraph" :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
@@ -800,26 +832,9 @@ const statusText = computed(() => {
       </button>
       <button class="ghost tb-update" :class="{ dot: updateDot }" title="检查应用更新" @click="openUpdateCenter">⟳</button>
       <button class="ghost" title="桌面浮窗" @click="openDrawer('float')">浮窗</button>
-      <button class="ghost" title="设置" @click="openDrawer('settings')">⚙</button>
     </header>
 
-    <nav v-if="activeChildren.length" class="tb-subnav">
-      <button v-for="c in activeChildren" :key="c.id" class="ghost" @click="mainView = c.id">
-        <span>{{ c.icon }}</span> {{ c.title }}
-      </button>
-    </nav>
 
-    <!-- v3.5 二级导航：激活模块有 children 时渲染 -->
-    <nav v-if="activeChildren.length" class="tb-subnav">
-      <button
-        v-for="c in activeChildren"
-        :key="c.id"
-        class="ghost"
-        @click="mainView = c.id"
-      >
-        <span>{{ c.icon }}</span> {{ c.title }}
-      </button>
-    </nav>
 
     <!-- 三栏主体 -->
     <DiskTreemap :open="treemapOpen" @close="treemapOpen = false" />
@@ -949,8 +964,33 @@ const statusText = computed(() => {
     </main>
 
     <!-- v3.4 维护中心主视图 -->
-    <main v-if="mainView === 'maintenance'" class="maint-page">
-      <MaintenanceCenter :page="true" :initial-tab="mcTab" />
+    <main v-if="mainView === 'dashboard'" class="dash-page">
+      <DashboardHome
+        :junk-total="junkSummary?.totalBytes ?? 0"
+        :junk-items="junkSummary?.totalCount ?? 0"
+        :software-count="software.length"
+        @navigate="onDashNav"
+        @rescan-software="scanSoftware()"
+        @rescan-junk="scanJunk(false)"
+        @treemap="treemapOpen = true"
+        @market="openDrawer('float')"
+      />
+    </main>
+
+    <main v-if="mainView === 'toolbox'" class="toolbx-page">
+      <ToolboxView :jump-tool="toolboxJump" @open-market="openDrawer('float')" />
+    </main>
+
+    <main v-if="mainView === 'settings'" class="settings-page">
+      <SettingsDrawer
+        :page="true"
+        :open="true"
+        :tab="drawerTab"
+        @close="mainView = 'dashboard'"
+        @set-tab="drawerTab = $event"
+        @toast="showToast"
+        @theme="onThemeChange"
+      />
     </main>
 
     <!-- 状态栏 -->
@@ -1059,6 +1099,9 @@ const statusText = computed(() => {
     <Transition name="fade">
       <div v-if="toast" class="toast">{{ toast }}</div>
     </Transition>
+
+    <CommandPalette :open="paletteOpen" @close="paletteOpen = false" @run="onPaletteRun" />
+    </div>
   </div>
 </template>
 
@@ -1431,4 +1474,28 @@ const statusText = computed(() => {
 .junk-page-body { flex: 1; overflow: auto; }
 .junk-page-body :deep(.js) { width: 100%; max-width: none; border-left: none; }
 .maint-page { height: 100%; overflow: auto; padding: 16px 0; }
+
+/* v5.0 外壳：活动栏 + 主区 */
+.app {
+  display: flex;
+}
+.sg-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.dash-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.toolbx-page,
+.settings-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 </style>

@@ -17,7 +17,7 @@ import type {
 import { formatBytes, formatTime } from '@shared/util'
 import { DEFAULT_INSTANCE_ID, nextInstanceId, normalizeInstances } from '@shared/float'
 
-const props = defineProps<{ open: boolean; tab: TabKey }>()
+const props = defineProps<{ open: boolean; tab: TabKey; /** v5.0：作为独立视图内嵌渲染（无遮罩、占满容器） */ page?: boolean }>()
 type TabKey = 'settings' | 'float' | 'quarantine' | 'registry' | 'rules' | 'about'
 
 const emit = defineEmits<{
@@ -599,15 +599,15 @@ function daysLeft(r: QuarantineRecord): string {
 </script>
 
 <template>
-  <div v-if="open" class="sd-mask" @click.self="emit('close')">
-    <div class="sd">
+  <div v-if="open || page" :class="page ? 'sd-page' : 'sd-mask'" @click.self="!page && emit('close')">
+    <div class="sd" :class="{ 'sd-inpage': page }">
       <header class="sd-head">
         <div class="sd-tabs">
           <button v-for="t in TABS" :key="t.key" :class="{ on: tab === t.key }" @click="emit('set-tab', t.key)">
             {{ t.label }}
           </button>
         </div>
-        <button class="ghost" @click="emit('close')">✕</button>
+        <button v-if="!page" class="ghost" @click="emit('close')">✕</button>
       </header>
 
       <div class="sd-body">
@@ -1617,5 +1617,22 @@ function daysLeft(r: QuarantineRecord): string {
   display: flex; align-items: center; gap: 8px;
   background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 10px; padding: 8px 10px;
+}
+.sd-page {
+  position: static;
+  background: var(--bg);
+  display: block;
+  height: 100%;
+  overflow: auto;
+  padding: 18px 22px;
+}
+.sd-inpage {
+  width: min(760px, 100%);
+  height: auto;
+  min-height: calc(100% - 4px);
+  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin: 0 auto;
 }
 </style>
