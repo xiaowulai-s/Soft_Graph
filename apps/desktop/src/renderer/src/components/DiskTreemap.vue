@@ -7,7 +7,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { formatBytes } from '@shared/util'
 import { squarify, type TreemapItem, type TreemapRect } from '@shared/squarify'
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean; /** v5.2：独立页模式 */ page?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const W = 900
@@ -122,9 +122,9 @@ const colorFor = (r: TreemapRect): string => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="dt-mask" @click.self="emit('close')">
-      <div class="dt-panel">
+  <Teleport to="body" :disabled="page">
+    <div v-if="open || page" :class="page ? 'dt-page' : 'dt-mask'" @click.self="!page && emit('close')">
+      <div class="dt-panel" :class="{ 'dt-inpage': page }">
         <header class="dt-head">
           <h3>空间树图</h3>
           <input
@@ -137,7 +137,7 @@ const colorFor = (r: TreemapRect): string => {
           <button class="ghost" :disabled="loading || !pathInput.trim()" @click="startScan">
             {{ loading ? '扫描中…' : '分析' }}
           </button>
-          <button class="ghost" @click="emit('close')">✕</button>
+          <button v-if="!page" class="ghost" @click="emit('close')">✕</button>
         </header>
         <div class="dt-crumbs">
           <template v-for="(c, i) in crumbs" :key="c.path">
@@ -204,4 +204,17 @@ const colorFor = (r: TreemapRect): string => {
 .dt-ops { display: flex; gap: 8px; align-items: center; font-size: 12px; min-height: 30px; }
 .dt-toast { font-size: 12px; color: var(--accent-2, #22d3ee); }
 button.ghost { background: transparent; border: 1px solid var(--border); border-radius: 8px; color: inherit; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.dt-page {
+  position: static;
+  height: 100%;
+  overflow: auto;
+  padding: 18px 22px;
+  background: var(--bg);
+  display: block;
+}
+.dt-inpage {
+  width: min(1000px, 100%);
+  max-width: none;
+  margin: 0 auto;
+}
 </style>

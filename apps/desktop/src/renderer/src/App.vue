@@ -28,7 +28,13 @@ import DiskTreemap from './components/DiskTreemap.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import DashboardHome from './components/DashboardHome.vue'
-import ToolboxView from './components/ToolboxView.vue'
+import StartupPage from './components/pages/StartupPage.vue'
+import UpgradePage from './components/pages/UpgradePage.vue'
+import RegistryPage from './components/pages/RegistryPage.vue'
+import ManifestPage from './components/pages/ManifestPage.vue'
+import SimilarImagesPage from './components/pages/SimilarImagesPage.vue'
+import SchedulePage from './components/pages/SchedulePage.vue'
+import MarketPage from './components/pages/MarketPage.vue'
 import { NAV_MODULES } from './nav'
 
 // ───────────────── 状态 ─────────────────
@@ -79,13 +85,7 @@ const mainView = ref<string>('dashboard')
 const treemapOpen = ref(false)
 // v5.0 命令面板 / 工具箱跳转
 const paletteOpen = ref(false)
-const toolboxJump = ref('')
-const jumpSeq = ref(0)
-function onDashNav(view: string, tool?: string): void {
-  if (tool) {
-    jumpSeq.value += 1
-    toolboxJump.value = `${tool}#${jumpSeq.value}`
-  }
+function onDashNav(view: string): void {
   mainView.value = view
 }
 // v5.1 N2：检查升级（按名称模糊匹配 winget 列表）
@@ -124,11 +124,6 @@ async function onExportManifest(fmt: 'csv' | 'ps1'): Promise<void> {
 }
 
 function onPaletteRun(cmd: { view: string; tool?: string; action?: string }): void {
-  if (cmd.action === 'treemap') {
-    mainView.value = 'junk'
-    treemapOpen.value = true
-    return
-  }
   if (cmd.action === 'rescan-software') {
     mainView.value = 'graph'
     void scanSoftware()
@@ -138,10 +133,6 @@ function onPaletteRun(cmd: { view: string; tool?: string; action?: string }): vo
     mainView.value = 'junk'
     void scanJunk(false)
     return
-  }
-  if (cmd.tool) {
-    jumpSeq.value += 1
-    toolboxJump.value = `${cmd.tool}#${jumpSeq.value}`
   }
   mainView.value = cmd.view
 }
@@ -175,9 +166,7 @@ onBeforeUnmount(() => {
   updateUnsub = null
 })
 function openUpdateCenter(): void {
-  jumpSeq.value += 1
-  toolboxJump.value = `system#${jumpSeq.value}`
-  mainView.value = 'toolbox'
+  mainView.value = 'settings'
 }
 const rightOpen = ref(true)
 const canvasFull = ref(false)
@@ -872,8 +861,6 @@ const statusText = computed(() => {
 
 
     <!-- 三栏主体 -->
-    <DiskTreemap :open="treemapOpen" @close="treemapOpen = false" />
-
     <main v-show="isGraph" class="body">
       <div v-if="leftOpen && !canvasFull" class="col-left">
         <SoftwareList
@@ -891,7 +878,6 @@ const statusText = computed(() => {
           @mark-portable="markPortable"
           @launch="onLaunchSoftware"
           @export-manifest="onExportManifest"
-          @upgrade="onUpgradeSoftware"
           @uninstall="onUninstallSoftware"
         />
       </div>
@@ -980,8 +966,6 @@ const statusText = computed(() => {
         <span class="mid-title">垃圾清理</span>
         <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
         <span style="flex:1"></span>
-        <button class="ghost" title="按目录大小可视化磁盘占用" @click="treemapOpen = true">▦ 空间树图</button>
-        <button class="ghost" title="相似图片盘点（aHash 分组查重）" @click="onDashNav('toolbox', 'system')">🖼 相似图片</button>
       </div>
       <div class="junk-page-body">
         <JunkSidebar
@@ -1004,6 +988,15 @@ const statusText = computed(() => {
     </main>
 
     <!-- v3.4 维护中心主视图 -->
+    <main v-if="mainView === 'startup'" class="page-host"><StartupPage /></main>
+    <main v-if="mainView === 'upgrade'" class="page-host"><UpgradePage /></main>
+    <main v-if="mainView === 'registry'" class="page-host"><RegistryPage /></main>
+    <main v-if="mainView === 'manifest'" class="page-host"><ManifestPage /></main>
+    <main v-if="mainView === 'images'" class="page-host"><SimilarImagesPage /></main>
+    <main v-if="mainView === 'schedule'" class="page-host"><SchedulePage /></main>
+    <main v-if="mainView === 'market'" class="page-host"><MarketPage /></main>
+    <main v-if="mainView === 'treemap'" class="page-host"><DiskTreemap :page="true" :open="true" /></main>
+
     <main v-if="mainView === 'dashboard'" class="dash-page">
       <DashboardHome
         :junk-total="junkSummary?.totalBytes ?? 0"
@@ -1012,13 +1005,7 @@ const statusText = computed(() => {
         @navigate="onDashNav"
         @rescan-software="scanSoftware()"
         @rescan-junk="scanJunk(false)"
-        @treemap="treemapOpen = true"
-        @market="openDrawer('float')"
       />
-    </main>
-
-    <main v-if="mainView === 'toolbox'" class="toolbx-page">
-      <ToolboxView :jump-tool="toolboxJump" @open-market="openDrawer('float')" @open-manifest="mainView = 'graph'" />
     </main>
 
     <main v-if="mainView === 'settings'" class="settings-page">
@@ -1527,6 +1514,11 @@ const statusText = computed(() => {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+}
+.page-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .dash-page {
   flex: 1;

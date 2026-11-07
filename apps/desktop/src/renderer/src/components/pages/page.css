@@ -1,0 +1,67 @@
+/* v5.2 统一页面骨架（两段式）：状态总览卡 + 操作区。各独立页 @import 复用。 */
+.pg {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.pg-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.pg-stat {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pg-stat-label {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.pg-stat-val {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.pg-wait {
+  padding: 30px;
+  text-align: center;
+}
+.pg-err {
+  color: var(--danger);
+  padding: 8px 2px;
+}
+.pg-list {
+  background: var(--panel);
+  border: 1px solid var(--border-hair);
+  border-radius: 10px;
+  padding: 4px 10px;
+}
+.pg-actions {
+  display: flex;
+  gap: 10px;
+}
+.pg-toast {
+  font-size: 12px;
+  color: var(--accent);
+}
+.pg-foot {
+  font-size: 11px;
+}
+.pg-empty {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-3);
+}

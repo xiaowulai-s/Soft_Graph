@@ -102,7 +102,7 @@ export class FloatWindowManager {
     if (x < wa.x - width + 20 || x > wa.x + wa.width - 20) x = wa.x + wa.width - width - 24
     if (y < wa.y - 20 || y > wa.y + wa.height - 40) y = wa.y + 80
 
-    this.win = new BrowserWindow({
+    const opts = {
       width,
       height: this.contentHeight,
       x,
@@ -128,7 +128,17 @@ export class FloatWindowManager {
         sandbox: false,
         backgroundThrottling: false
       }
-    })
+    }
+    // v5.2 P0：透明窗口在部分 GPU 环境创建失败 —— 先试透明，失败降级实底重试，全程留痕
+    try {
+      this.win = new BrowserWindow(opts)
+    } catch (e) {
+      void import('../services/logger').then((m) => {
+        m.logger().warn('float', '透明窗口创建失败，降级实底重试', { error: String((e as Error).message).slice(0, 160) })
+        void m.logger().flushNow()
+      })
+      this.win = new BrowserWindow({ ...opts, transparent: false, backgroundColor: '#16202C' })
+    }
 
     // 置顶层级：screen-saver 级别可覆盖大部分全屏窗口
     if (s.alwaysOnTop) this.win.setAlwaysOnTop(true, 'screen-saver')

@@ -25,7 +25,6 @@ const emit = defineEmits<{
   (e: 'mark-portable', payload: { path: string; isPortable: boolean }): void
   (e: 'launch', path: string): void
   (e: 'export-manifest', format: 'csv' | 'ps1'): void
-  (e: 'upgrade', name: string): void
   (e: 'uninstall', id: string): void
 }>()
 
@@ -146,9 +145,6 @@ const menuFor = ref<string | null>(null)
           <div v-if="menuFor === it.id" class="sl-menu" @click.stop>
             <button v-if="it.mainExe" class="ghost" @click="emit('launch', it.mainExe); menuFor = null">
               启动应用
-            </button>
-            <button class="ghost" @click="emit('upgrade', it.name); menuFor = null">
-              检查升级
             </button>
             <button v-if="it.uninstallString" class="ghost" style="color: var(--danger)" @click="emit('uninstall', it.id); menuFor = null">
               卸载引导

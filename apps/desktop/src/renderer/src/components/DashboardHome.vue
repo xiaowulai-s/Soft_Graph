@@ -9,11 +9,9 @@ import type { StartupEntry } from '@shared/startup'
 
 const props = defineProps<{ junkTotal: number; softwareCount: number; junkItems: number }>()
 const emit = defineEmits<{
-  navigate: [view: string, tool?: string]
+  navigate: [view: string]
   'rescan-software': []
   'rescan-junk': []
-  treemap: []
-  market: []
 }>()
 
 const quarCount = ref(0)
@@ -79,7 +77,7 @@ function fmtWhen(ts: number): string {
         <span class="dh-val mono">{{ softwareCount }}</span>
         <span class="dh-sub">图谱与依赖分析</span>
       </button>
-      <button class="dh-card" title="进入自启动管理" @click="emit('navigate', 'toolbox', 'startup')">
+      <button class="dh-card" title="进入自启动管理" @click="emit('navigate', 'startup')">
         <span class="dh-label">自启动项</span>
         <span class="dh-val mono">{{ startupCount ?? '…' }}</span>
         <span class="dh-sub" :style="startupUnsigned ? 'color:var(--warning)' : ''">
@@ -96,8 +94,8 @@ function fmtWhen(ts: number): string {
     <div class="dh-actions">
       <button class="primary dh-act" @click="emit('rescan-junk')">垃圾扫描</button>
       <button class="dh-act" @click="emit('rescan-software')">重新扫描软件</button>
-      <button class="dh-act" @click="emit('treemap')">▦ 空间树图</button>
-      <button class="dh-act" @click="emit('market')">插件市场</button>
+      <button class="dh-act" @click="emit('navigate', 'treemap')">▦ 空间树图</button>
+      <button class="dh-act" @click="emit('navigate', 'market')">插件市场</button>
     </div>
 
     <div v-if="recent.length" class="dh-recent">
@@ -115,7 +113,7 @@ function fmtWhen(ts: number): string {
         <span class="dh-dot" :style="{ background: upgradeCount > 5 ? 'var(--warning)' : 'var(--accent)' }"></span>
         <span>
           可升级软件 {{ upgradeCount }} 个
-          <button class="ghost" style="margin-left: 8px; padding: 2px 8px" @click="emit('navigate', 'toolbox', 'software')">去升级 →</button>
+          <button class="ghost" style="margin-left: 8px; padding: 2px 8px" @click="emit('navigate', 'upgrade')">去升级 →</button>
         </span>
       </div>
       <div class="dh-row">

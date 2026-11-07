@@ -24,17 +24,8 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   ...NAV_MODULES.map((m) => ({ label: m.title, hint: m.desc, group: '视图', cmd: { view: m.id } as PaletteRun })),
-  { label: '自启动管理', hint: '注册表 / 启动文件夹 启停', group: '工具', cmd: { view: 'toolbox', tool: 'startup' } },
-  { label: '软件升级管家', hint: 'winget 可升级软件', group: '工具', cmd: { view: 'toolbox', tool: 'software' } },
-  { label: '注册表残留清理', hint: '卸载表死条目', group: '工具', cmd: { view: 'toolbox', tool: 'software' } },
-  { label: '相似图片盘点', hint: 'aHash 分组查重', group: '工具', cmd: { view: 'toolbox', tool: 'system' } },
-  { label: '应用更新', hint: '检查 / 下载 / 安装', group: '工具', cmd: { view: 'toolbox', tool: 'system' } },
-  { label: '规则供给', hint: '社区规则导入 · 在线更新', group: '工具', cmd: { view: 'toolbox', tool: 'rules' } },
-  { label: '定时清理调度', hint: '周期 · 空闲窗口', group: '工具', cmd: { view: 'toolbox', tool: 'cleanup' } },
-  { label: '插件市场', hint: '官方索引 · 一键安装', group: '工具', cmd: { view: 'toolbox', tool: 'market' } },
-  { label: '空间树图', hint: '目录占用可视化', group: '动作', cmd: { view: 'junk', action: 'treemap' } },
   { label: '重新扫描软件', hint: '重建软件库与图谱', group: '动作', cmd: { view: 'graph', action: 'rescan-software' } },
-  { label: '垃圾扫描', hint: '18 类规则全量扫描', group: '动作', cmd: { view: 'junk', action: 'rescan-junk' } }
+  { label: '垃圾扫描', hint: '19 类规则全量扫描', group: '动作', cmd: { view: 'junk', action: 'rescan-junk' } }
 ]
 
 const q = ref('')

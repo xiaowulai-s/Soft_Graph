@@ -141,14 +141,22 @@ async function importSettings(): Promise<void> {
 }
 
 async function patchFloat(p: Partial<FloatSettings>): Promise<void> {
-  const next = await window.api.floatSetSettings(p)
-  if (settings.value) settings.value = { ...settings.value, float: next }
+  try {
+    const next = await window.api.floatSetSettings(p)
+    if (settings.value) settings.value = { ...settings.value, float: next }
+  } catch (e) {
+    emit('toast', `浮窗设置失败：${(e as Error).message}（详见日志 scope float）`)
+  }
 }
 
 async function toggleFloat(): Promise<void> {
-  const on = await window.api.floatToggle()
-  if (settings.value) settings.value = { ...settings.value, float: { ...settings.value.float, enabled: on } }
-  emit('toast', on ? '桌面浮窗已开启' : '桌面浮窗已关闭')
+  try {
+    const on = await window.api.floatToggle()
+    if (settings.value) settings.value = { ...settings.value, float: { ...settings.value.float, enabled: on } }
+    emit('toast', on ? '桌面浮窗已开启' : '桌面浮窗已关闭')
+  } catch (e) {
+    emit('toast', `浮窗开启失败：${(e as Error).message}（详见日志 scope float）`)
+  }
 }
 
 // ── 多实例编辑（F4-UI）──

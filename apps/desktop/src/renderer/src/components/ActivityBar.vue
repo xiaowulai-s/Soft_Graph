@@ -1,115 +1,149 @@
 <script setup lang="ts">
 /**
- * v5.0 左侧活动栏：54px 图标导航，注册表驱动（nav.ts 五区）。
- * 设置项固定在底部，其余自上而下。
+ * v5.2 侧栏：图标 + 文本常显（150px），按域分组，可折叠成 54px 纯图标。
+ * 条目由 nav.ts 注册表驱动，全部统一 SVG 线性图标 + 统一文本规格。
  */
-import { NAV_MODULES, navIconSvg } from '@shared/nav'
+import { ref } from 'vue'
+import { NAV_GROUPS, NAV_MODULES, navIconSvg } from '@shared/nav'
 
 const model = defineModel<string>({ required: true })
 
-const MAIN = NAV_MODULES.filter((m) => m.id !== 'settings')
-const SETTINGS = NAV_MODULES.find((m) => m.id === 'settings')
+const collapsed = ref(false)
 const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon)]))
 </script>
 
 <template>
-  <nav class="ab">
-    <div class="ab-brand">◈</div>
-    <button
-      v-for="m in MAIN"
-      :key="m.id"
-      class="ab-btn"
-      :class="{ active: model === m.id }"
-      :title="`${m.title} — ${m.desc}`"
-      @click="model = m.id"
-    >
-      <span class="ab-ico" v-html="ICONS[m.id]"></span>
-      <span class="ab-tip">{{ m.title }}</span>
-    </button>
+  <nav class="sb" :class="{ mini: collapsed }">
+    <div class="sb-brand">
+      <span class="sb-logo">◈</span>
+      <span v-if="!collapsed" class="sb-name">SoftGraph</span>
+    </div>
+
+    <template v-for="g in NAV_GROUPS" :key="g.key">
+      <div v-if="!collapsed" class="sb-group">{{ g.title }}</div>
+      <div v-else class="sb-group-line"></div>
+      <button
+        v-for="m in NAV_MODULES.filter((x) => x.group === g.key)"
+        :key="m.id"
+        class="sb-btn"
+        :class="{ active: model === m.id }"
+        :title="collapsed ? `${m.title} — ${m.desc}` : m.desc"
+        @click="model = m.id"
+      >
+        <span class="sb-ico" v-html="ICONS[m.id]"></span>
+        <span v-if="!collapsed" class="sb-txt">{{ m.title }}</span>
+      </button>
+    </template>
+
     <span style="flex: 1"></span>
-    <button
-      v-if="SETTINGS"
-      class="ab-btn"
-      :class="{ active: model === SETTINGS.id }"
-      :title="`${SETTINGS.title} — ${SETTINGS.desc}`"
-      @click="model = SETTINGS.id"
-    >
-      <span class="ab-ico" v-html="ICONS[SETTINGS.id]"></span>
-      <span class="ab-tip">{{ SETTINGS.title }}</span>
+    <button class="sb-btn sb-fold" :title="collapsed ? '展开侧栏' : '折叠侧栏'" @click="collapsed = !collapsed">
+      <span class="sb-ico fold-ico" :class="{ flip: collapsed }">‹</span>
+      <span v-if="!collapsed" class="sb-txt">折叠</span>
     </button>
   </nav>
 </template>
 
 <style scoped>
-.ab {
-  width: 54px;
+.sb {
+  width: 150px;
   flex: none;
   height: 100%;
   background: var(--panel);
   border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
+  padding: 10px 8px;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.15s ease;
+}
+.sb.mini {
+  width: 54px;
   align-items: center;
-  padding: 10px 0;
-  gap: 6px;
+  padding: 10px 6px;
 }
-.ab-brand {
-  font-size: 17px;
-  color: var(--accent);
-  margin-bottom: 10px;
-  user-select: none;
-}
-.ab-btn {
-  width: 40px;
-  height: 38px;
-  border: none;
-  background: transparent;
-  border-radius: 9px;
-  padding: 0;
+.sb-brand {
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
+  gap: 8px;
+  padding: 2px 8px 10px;
 }
-.ab-btn:hover:not(:disabled) {
+.sb-logo {
+  font-size: 17px;
+  color: var(--accent);
+  line-height: 1;
+}
+.sb-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.sb.mini .sb-brand {
+  justify-content: center;
+  padding: 2px 0 10px;
+}
+.sb-group {
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 2px;
+  padding: 10px 8px 4px;
+  user-select: none;
+}
+.sb-group-line {
+  width: 26px;
+  height: 1px;
+  background: var(--border-soft);
+  margin: 8px 0 4px;
+}
+.sb-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--text-2);
+}
+.sb-btn:hover:not(:disabled) {
   background: var(--hover);
   border: none;
 }
-.ab-btn.active {
+.sb-btn.active {
   background: var(--accent);
 }
-.ab-btn.active .ab-ico {
+.sb-btn.active .sb-ico,
+.sb-btn.active .sb-txt {
   color: #fff;
 }
-.ab-ico {
-  line-height: 1;
-  color: var(--text-2);
+.sb-ico {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--text-2);
 }
-.ab-ico :deep(svg) {
+.sb-ico :deep(svg) {
   display: block;
 }
-.ab-tip {
-  position: absolute;
-  left: 48px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 9px;
+.sb-txt {
   font-size: 12px;
-  color: var(--text);
+  color: var(--text-2);
   white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s;
-  z-index: 90;
-  box-shadow: var(--shadow);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.ab-btn:hover .ab-tip {
-  opacity: 1;
+.sb-fold {
+  margin-top: 4px;
+}
+.fold-ico {
+  font-size: 14px;
+  transition: transform 0.15s;
+}
+.fold-ico.flip {
+  transform: rotate(180deg);
 }
 </style>

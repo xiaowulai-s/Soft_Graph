@@ -457,7 +457,20 @@ function registerIpc(): void {
   h(CH.SETTINGS_GET, () => settings.get())
   h(CH.SETTINGS_SET, async (patch: Partial<AppSettings>) => {
     const next = settings.patch(patch)
-    if (patch.float) applyFloat(next.float)
+    if (patch.float) {
+      try {
+        applyFloat(next.float)
+        store.setKv('float:lastError', '')
+      } catch (e) {
+        const msg = String((e as Error).message).slice(0, 200)
+        void import('./services/logger').then((m) => {
+          m.logger().warn('float', '浮窗设置应用失败（SETTINGS_PATCH）', { error: msg })
+          void m.logger().flushNow()
+        })
+        store.setKv('float:lastError', msg)
+        throw e
+      }
+    }
     // 规则相关设置变化 → 规则缓存失效
     if (patch.excludePaths) scan.invalidateRules()
     return next
@@ -512,15 +525,37 @@ function registerIpc(): void {
     return inst ? ({ ...s, ...inst } as FloatSettings) : s
   })
   h(CH.FLOAT_SET_SETTINGS, (patch: Partial<FloatSettings>) => {
-    const next = settings.patchFloat(patch)
-    applyFloat(next)
-    return next
+    try {
+      const next = settings.patchFloat(patch)
+      applyFloat(next)
+      store.setKv('float:lastError', '')
+      return next
+    } catch (e) {
+      const msg = String((e as Error).message).slice(0, 200)
+      void import('./services/logger').then((m) => {
+        m.logger().warn('float', '浮窗设置应用失败', { error: msg })
+        void m.logger().flushNow()
+      })
+      store.setKv('float:lastError', msg)
+      throw e
+    }
   })
   h(CH.FLOAT_TOGGLE, (on?: boolean) => {
-    const open = float.toggle(on)
-    settings.patchFloat({ enabled: open })
-    restartFloatTimer()
-    return open
+    try {
+      const open = float.toggle(on)
+      settings.patchFloat({ enabled: open })
+      restartFloatTimer()
+      store.setKv('float:lastError', '')
+      return open
+    } catch (e) {
+      const msg = String((e as Error).message).slice(0, 200)
+      void import('./services/logger').then((m) => {
+        m.logger().warn('float', '浮窗开启失败', { error: msg })
+        void m.logger().flushNow()
+      })
+      store.setKv('float:lastError', msg)
+      throw e
+    }
   })
   h(CH.FLOAT_PLUGINS, () => registry.manifests())
   h(CH.FLOAT_RELOAD_PLUGINS, async () => {
