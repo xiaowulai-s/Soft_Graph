@@ -130,6 +130,20 @@ const api: SoftGraphApi = {
   floatPeek: (entered) => ipcRenderer.invoke(entered ? CH.FLOAT_PEEK_ENTER : CH.FLOAT_PEEK_LEAVE),
   floatOpenMain: () => ipcRenderer.invoke(CH.FLOAT_OPEN_MAIN),
   floatResize: (payload) => ipcRenderer.invoke(CH.FLOAT_RESIZE, payload),
+  floatPluginAction: (payload: { pluginId: string; index: number }) => ipcRenderer.invoke(CH.FLOAT_PLUGIN_ACTION, payload),
+
+  // v5.3 N1：备份同步
+  backupDrives: () => ipcRenderer.invoke(CH.BACKUP_DRIVES),
+  backupTasks: () => ipcRenderer.invoke(CH.BACKUP_TASKS),
+  backupSaveTask: (payload) => ipcRenderer.invoke(CH.BACKUP_SAVE_TASK, payload),
+  backupDeleteTask: (id: string) => ipcRenderer.invoke(CH.BACKUP_DELETE_TASK, { id }),
+  backupRun: (id: string) => ipcRenderer.invoke(CH.BACKUP_RUN, { id }),
+  backupPause: (id: string) => ipcRenderer.invoke(CH.BACKUP_PAUSE, { id }),
+  backupResume: (id: string) => ipcRenderer.invoke(CH.BACKUP_RESUME, { id }),
+  backupStop: (id: string) => ipcRenderer.invoke(CH.BACKUP_STOP, { id }),
+  backupState: () => ipcRenderer.invoke(CH.BACKUP_STATE),
+  backupLog: () => ipcRenderer.invoke(CH.BACKUP_LOG),
+  onBackupProgress: (cb: (s: import('@shared/types').BackupRunState) => void) => sub(CH.BACKUP_PROGRESS, cb as never),
 
   // 事件订阅
   onScanProgress: (cb) => sub(CH.SCAN_SOFTWARE_PROGRESS, cb as never),

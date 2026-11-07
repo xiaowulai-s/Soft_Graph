@@ -597,6 +597,39 @@ Write-SgJson @($out)
   }
 }
 
+// ───────────────── 13. 我的应用（v5.3 S3b：插件 API v2 点击动作首个内置落地） ─────────────────
+
+/**
+ * 「我的应用」卡：点击应用名直接启动（浮窗上即可开软件，不必回主界面）。
+ * 数据来自 host.recentApps()：最近启动（真实使用痕迹）优先，再用已收录软件的 mainExe 补齐。
+ * 每行带 action={kind:'open-path'}，渲染层只上报行号，target 由主进程回查 —— 渲染层伪造不了路径。
+ */
+const appsPlugin: FloatPlugin = {
+  manifest: {
+    id: 'sg.apps',
+    name: '我的应用',
+    description: '常用软件一键启动（点击行即打开）',
+    interval: 30_000,
+    view: 'list',
+    icon: 'launch',
+    builtin: true,
+    version: '1.0.0',
+    author: 'SoftGraph'
+  },
+  collect(ctx: PluginContext): FloatPluginDatum[] {
+    const apps = ctx.app.recentApps(6)
+    if (apps.length === 0) {
+      return [{ label: '我的应用', value: '暂无数据', hint: '完成软件扫描或在仪表盘启动过软件后出现' }]
+    }
+    return apps.map((a) => ({
+      label: a.name,
+      value: '▶ 打开',
+      tone: 'good',
+      action: { kind: 'open-path', target: a.path }
+    }))
+  }
+}
+
 export const BUILTIN_PLUGINS: FloatPlugin[] = [
   cpuMemPlugin,
   diskPlugin,
@@ -609,8 +642,9 @@ export const BUILTIN_PLUGINS: FloatPlugin[] = [
   tempPlugin,
   batteryPlugin,
   netConnPlugin,
-  focusPlugin
+  focusPlugin,
+  appsPlugin
 ]
 
-/** 默认启用的插件顺序 */
-export const DEFAULT_ENABLED = ['sys.cpumem', 'sys.disk', 'sg.junk', 'sys.clock']
+/** 默认启用的插件顺序（v5.3：加入我的应用） */
+export const DEFAULT_ENABLED = ['sys.cpumem', 'sys.disk', 'sg.junk', 'sys.clock', 'sg.apps']

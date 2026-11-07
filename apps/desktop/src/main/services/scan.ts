@@ -1213,71 +1213,22 @@ export class ScanService {
     return { cleaned: r.ok, freedBytes: r.freedBytes }
   }
 
-  /** winget 升级管家（v3.1 P0-2）：列出可升级软件 */
+  /** winget 升级管家（v3.1 P0-2；v5.3 C2 实现迁至 services/winget.ts，此处仅转发保持 IPC 契约） */
   async wingetList(): Promise<import('@shared/types').WingetUpgrade[]> {
-    const { spawn } = await import('node:child_process')
-    return new Promise((resolve) => {
-      const child = spawn('winget', ['upgrade', '--disable-interactivity'], { windowsHide: true })
-      let raw = Buffer.alloc(0)
-      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.on('error', () => resolve([])) // winget 未安装
-      child.on('close', async () => {
-        // winget 输出为控制台码页（中文 GBK）——必须 buffer 解码，不能直接 toString
-        let text = raw.toString('utf8')
-        try {
-          const u = await import('node:util')
-          text = new u.TextDecoder('gbk').decode(raw)
-        } catch {
-          /* 保底 utf8 */
-        }
-        void import('@shared/schedule').then((m) => resolve(m.parseWingetUpgradeOutput(text)))
-      })
-    })
+    const w = await import('./winget')
+    return w.listUpgrades()
   }
 
   /** winget 升级管家（v3.1 P0-2）：静默升级单个软件 */
   async wingetUpgrade(id: string): Promise<{ ok: boolean; needsElevation?: boolean; output?: string }> {
-    const { spawn } = await import('node:child_process')
-    return new Promise((resolve) => {
-      // id 来自我们自己的解析结果（winget Id 格式白名单字符），防注入
-      if (!/^[A-Za-z0-9.\-_]+$/.test(id)) return resolve({ ok: false, output: '非法软件 Id' })
-      const child = spawn('winget', ['upgrade', '--id', id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'], { windowsHide: true })
-      let raw = Buffer.alloc(0)
-      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.on('error', (e) => resolve({ ok: false, output: e.message }))
-      child.on('close', async (code) => {
-        const u = await import('node:util')
-        const output = new u.TextDecoder('gbk').decode(raw).slice(-4000)
-        // C1：需要管理员权限的包静默失败 → 标记 needsElevation 供 UI 提供提权重试
-        const needsElevation = code !== 0 && /(管理员|administrator|elevation|0x8a15)/i.test(output)
-        resolve({ ok: code === 0, needsElevation, output })
-      })
-    })
+    const w = await import('./winget')
+    return w.upgrade(id)
   }
 
   /** C1：以管理员权限静默升级单个软件（触发 UAC，等待完成） */
   async wingetUpgradeElevated(id: string): Promise<{ ok: boolean; output?: string }> {
-    const { spawn } = await import('node:child_process')
-    return new Promise((resolve) => {
-      if (!/^[A-Za-z0-9.\-_]+$/.test(id)) return resolve({ ok: false, output: '非法软件 Id' })
-      // Start-Process -Verb RunAs 触发 UAC；-Wait 等待升级完成
-      const args = id.replace(/'/g, "''")
-      const child = spawn(
-        'powershell',
-        ['-NoProfile', '-Command', `Start-Process winget -ArgumentList 'upgrade','--id','${args}','--exact','--silent','--accept-package-agreements','--accept-source-agreements','--disable-interactivity' -Verb RunAs -Wait; exit $LASTEXITCODE`],
-        { windowsHide: true }
-      )
-      let raw = Buffer.alloc(0)
-      child.stdout.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.stderr.on('data', (d: Buffer) => (raw = Buffer.concat([raw, d])))
-      child.on('error', (e) => resolve({ ok: false, output: e.message }))
-      child.on('close', async (code) => {
-        const u = await import('node:util')
-        resolve({ ok: code === 0, output: new u.TextDecoder('gbk').decode(raw).slice(-4000) })
-      })
-    })
+    const w = await import('./winget')
+    return w.upgradeElevated(id)
   }
 
   /**

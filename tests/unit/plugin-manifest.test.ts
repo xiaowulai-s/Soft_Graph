@@ -33,6 +33,7 @@ const HOST: RegistryHost = {
   quarantineCount: () => 0,
   softwareCount: () => 0,
   lastJunkScanAt: () => null,
+  recentApps: () => [],
   psJson: async () => [] as never
 }
 

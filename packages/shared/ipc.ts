@@ -137,6 +137,8 @@ export const CH = {
   QUARANTINE_COUNT: 'quarantine:count',
   FLOAT_MARKET: 'float:market',
   FLOAT_PLUGIN_UPDATE: 'float:pluginUpdate',
+  /** v5.3 S3b：插件卡片点击动作（渲染层只传 pluginId + 行号，target 由主进程回查） */
+  FLOAT_PLUGIN_ACTION: 'float:pluginAction',
   STARTUP_LIST: 'startup:list',
   STARTUP_TOGGLE: 'startup:toggle',
   DISK_TREEMAP: 'disk:treemap',
@@ -146,7 +148,20 @@ export const CH = {
   EXPORT_MANIFEST: 'app:exportManifest',
   LAUNCHER_TOGGLE_HOTKEY: 'app:launcherHotkey',
   FLOAT_RESIZE: 'float:resize',
-  FLOAT_STATE: 'float:state'
+  FLOAT_STATE: 'float:state',
+  /** v5.3 N1：备份同步 */
+  BACKUP_DRIVES: 'backup:drives',
+  BACKUP_TASKS: 'backup:tasks',
+  BACKUP_SAVE_TASK: 'backup:saveTask',
+  BACKUP_DELETE_TASK: 'backup:deleteTask',
+  BACKUP_RUN: 'backup:run',
+  BACKUP_PAUSE: 'backup:pause',
+  BACKUP_RESUME: 'backup:resume',
+  BACKUP_STOP: 'backup:stop',
+  BACKUP_STATE: 'backup:state',
+  BACKUP_LOG: 'backup:log',
+  /** 主进程 → 渲染层进度推送 */
+  BACKUP_PROGRESS: 'backup:progress'
 } as const
 
 export interface AppInfo {
@@ -300,6 +315,21 @@ export interface SoftGraphApi {
   floatPeek(entered: boolean): Promise<void>
   floatOpenMain(): Promise<void>
   floatResize(payload: { height: number }): Promise<void>
+  /** v5.3 S3b：触发浮窗卡片某行的点击动作（index 为该插件 payload.data 的下标） */
+  floatPluginAction(payload: { pluginId: string; index: number }): Promise<{ ok: boolean; error?: string }>
+
+  // v5.3 N1：备份同步
+  backupDrives(): Promise<import('./types').BackupDriveInfo[]>
+  backupTasks(): Promise<import('./types').BackupTask[]>
+  backupSaveTask(payload: { task: Partial<import('./types').BackupTask> & { name: string; sources: string[] } }): Promise<{ ok: boolean; id?: string; error?: string }>
+  backupDeleteTask(id: string): Promise<{ ok: boolean; error?: string }>
+  backupRun(id: string): Promise<{ ok: boolean; error?: string }>
+  backupPause(id: string): Promise<{ ok: boolean; error?: string }>
+  backupResume(id: string): Promise<{ ok: boolean; error?: string }>
+  backupStop(id: string): Promise<{ ok: boolean; error?: string }>
+  backupState(): Promise<Record<string, import('./types').BackupRunState>>
+  backupLog(): Promise<import('./types').BackupLogEntry[]>
+  onBackupProgress(cb: (s: import('./types').BackupRunState) => void): () => void
 
   // 事件订阅
   onScanProgress(cb: (p: ScanProgress) => void): () => void

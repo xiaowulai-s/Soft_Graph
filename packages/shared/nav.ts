@@ -29,6 +29,7 @@ export const NAV_MODULES: NavModule[] = [
   { id: 'treemap', title: '空间树图', icon: 'grid', desc: '目录占用可视化', group: 'space' },
   { id: 'images', title: '相似图片', icon: 'images', desc: 'aHash 分组查重', group: 'space' },
   { id: 'schedule', title: '定时调度', icon: 'clock', desc: '静默清理计划与状态', group: 'system' },
+  { id: 'backup', title: '备份同步', icon: 'backup', desc: '开发文件夹 → 移动硬盘增量备份', group: 'system' },
   { id: 'market', title: '插件市场', icon: 'store', desc: '浮窗插件安装更新', group: 'system' },
   { id: 'settings', title: '设置', icon: 'gear', desc: '主题 · 浮窗 · 备份 · 规则', group: 'system' }
 ]
@@ -50,6 +51,7 @@ export const NAV_ICONS: Record<string, string> = {
   grid: '<rect x="4.5" y="4.5" width="6.4" height="6.4" rx="1"/><rect x="13.1" y="4.5" width="6.4" height="6.4" rx="1"/><rect x="4.5" y="13.1" width="6.4" height="6.4" rx="1"/><rect x="13.1" y="13.1" width="6.4" height="6.4" rx="1"/>',
   images: '<rect x="4" y="6" width="11" height="13" rx="1.6"/><path d="M8 6V4.6A1.6 1.6 0 0 1 9.6 3h8.8A1.6 1.6 0 0 1 20 4.6v10.8a1.6 1.6 0 0 1-1.6 1.6H17"/><circle cx="8" cy="10" r="1.4"/><path d="M4.5 17l3.5-3.5 2.5 2.5 2-2 2.5 3"/>',
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2.2"/>',
+  backup: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.6"/><path d="M4.5 5.5v6c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6v-6"/><path d="M4.5 11.5v6c0 1.4 3.4 2.6 7.5 2.6s7.5-1.2 7.5-2.6v-6"/>',
   store: '<path d="M4.5 8.5h15l-1 11a1.8 1.8 0 0 1-1.8 1.6H7.3a1.8 1.8 0 0 1-1.8-1.6z"/><path d="M8.5 8.5V7a3.5 3.5 0 0 1 7 0v1.5"/>',
   gear: '<circle cx="12" cy="12" r="3.1"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   case: '<rect x="4" y="8.2" width="16" height="11" rx="2.2"/><path d="M9.2 8V6.3a1.3 1.3 0 0 1 1.3-1.3h3a1.3 1.3 0 0 1 1.3 1.3V8M4 13.2h16"/>'

@@ -34,6 +34,7 @@ import RegistryPage from './components/pages/RegistryPage.vue'
 import ManifestPage from './components/pages/ManifestPage.vue'
 import SimilarImagesPage from './components/pages/SimilarImagesPage.vue'
 import SchedulePage from './components/pages/SchedulePage.vue'
+import BackupPage from './components/pages/BackupPage.vue'
 import MarketPage from './components/pages/MarketPage.vue'
 import { NAV_MODULES } from './nav'
 
@@ -994,6 +995,7 @@ const statusText = computed(() => {
     <main v-if="mainView === 'manifest'" class="page-host"><ManifestPage /></main>
     <main v-if="mainView === 'images'" class="page-host"><SimilarImagesPage /></main>
     <main v-if="mainView === 'schedule'" class="page-host"><SchedulePage /></main>
+    <main v-if="mainView === 'backup'" class="page-host"><BackupPage /></main>
     <main v-if="mainView === 'market'" class="page-host"><MarketPage /></main>
     <main v-if="mainView === 'treemap'" class="page-host"><DiskTreemap :page="true" :open="true" /></main>
 

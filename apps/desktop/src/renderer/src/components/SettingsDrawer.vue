@@ -15,6 +15,7 @@ import type {
   RegistryScanResult
 } from '@shared/types'
 import { formatBytes, formatTime } from '@shared/util'
+import { mdLite } from '@shared/md-lite'
 import { DEFAULT_INSTANCE_ID, nextInstanceId, normalizeInstances } from '@shared/float'
 
 const props = defineProps<{ open: boolean; tab: TabKey; /** v5.0：作为独立视图内嵌渲染（无遮罩、占满容器） */ page?: boolean }>()
@@ -102,6 +103,47 @@ async function removeExclude(p: string): Promise<void> {
 // ───────────────── 浮窗设置 ─────────────────
 
 const float = computed<FloatSettings | null>(() => settings.value?.float ?? null)
+
+// ── v5.3：应用自更新入口（关于页） —— v5.2 维护中心退役后曾丢失，这里恢复 ──
+const appUpdate = ref<AppUpdateState | null>(null)
+const skipText = ref('')
+let appUpdateUnsub: (() => void) | null = null
+
+onMounted(() => {
+  appUpdateUnsub = window.api.onAppUpdateState((st) => {
+    appUpdate.value = st
+  })
+  // 关于页打开时自动检查一次（幂等：主进程 24h 节流）
+  void checkAppUpdate()
+})
+onBeforeUnmount(() => {
+  appUpdateUnsub?.()
+  appUpdateUnsub = null
+})
+
+async function checkAppUpdate(): Promise<void> {
+  appUpdate.value = { phase: 'checking' }
+  try {
+    const r = await window.api.appUpdateCheck()
+    if (r.available) appUpdate.value = { phase: 'available', version: r.version ?? '' }
+    else appUpdate.value = { phase: 'not-available', version: r.version ?? '' }
+  } catch (e) {
+    appUpdate.value = { phase: 'error', message: (e as Error).message }
+  }
+}
+
+async function downloadAppUpdate(): Promise<void> {
+  await window.api.appUpdateDownload()
+}
+
+function installAppUpdate(): void {
+  window.api.appUpdateInstall()
+}
+
+async function skipAppUpdate(version: string): Promise<void> {
+  await window.api.appUpdateSkip(version)
+  skipText.value = `已跳过 v${version}，之后的版本仍会正常提示`
+}
 
 // ── v5.1：规则供给 + 设置备份 ──
 const rulesBusy = ref(false)
@@ -1253,6 +1295,33 @@ function daysLeft(r: QuarantineRecord): string {
         <template v-else-if="tab === 'about' && info">
           <section class="sd-sec">
             <h4>SoftGraph v{{ info?.version }}</h4>
+
+            <!-- v5.3：应用自更新（v5.2 维护中心退役后入口丢失，恢复至此） -->
+            <div class="sd-row" style="margin-bottom: 10px">
+              <button class="ghost" :disabled="appUpdate?.phase === 'checking' || appUpdate?.phase === 'downloading'" @click="checkAppUpdate">
+                {{ appUpdate?.phase === 'checking' ? '检查中…' : '检查应用更新' }}
+              </button>
+              <button v-if="appUpdate?.phase === 'available'" class="ghost" @click="downloadAppUpdate">
+                下载 v{{ appUpdate.version }}
+              </button>
+              <button v-if="appUpdate?.phase === 'downloaded'" class="primary" @click="installAppUpdate">
+                重启并安装 v{{ appUpdate.version }}
+              </button>
+            </div>
+            <div v-if="appUpdate?.phase === 'downloading'" class="sd-hint sd-inline">
+              下载中 {{ appUpdate.percent }}%（{{ (appUpdate.bytesPerSecond / 1048576).toFixed(1) }} MB/s）
+            </div>
+            <div v-else-if="appUpdate?.phase === 'not-available'" class="sd-hint sd-inline">已是最新版本（v{{ appUpdate.version }}）</div>
+            <div v-else-if="appUpdate?.phase === 'downloaded'" class="sd-hint sd-inline">下载完成，点「重启并安装」完成更新</div>
+            <div v-else-if="appUpdate?.phase === 'error'" class="sd-hint sd-inline risk-medium">更新失败：{{ appUpdate.message }}</div>
+            <div v-else-if="appUpdate?.phase === 'available'" class="sd-hint sd-inline">
+              发现新版本 v{{ appUpdate.version }}，点「下载」获取
+              <div v-if="appUpdate.releaseNotes" class="sd-hint" style="max-height:100px;overflow:auto;margin-top:4px"><div style="font-size:11px;line-height:1.7;color:var(--text-2)" v-html="mdLite(String(appUpdate.releaseNotes).slice(0, 600))"></div></div>
+              <button class="ghost" style="margin-top:4px" @click="skipAppUpdate(appUpdate.version)">跳过此版本</button>
+              <div v-if="skipText" class="sd-hint">{{ skipText }}</div>
+            </div>
+            <div class="sd-hint">启动后自动检查（每 24h 一次），下载需手动确认；失败会写入日志（scope app-update）。</div>
+
             <div class="sd-hint">软件图谱与磁盘清理工具 —— 依赖关系可视化 · 便携软件识别 · 垃圾空间治理</div>
             <table class="sd-table">
               <tbody>

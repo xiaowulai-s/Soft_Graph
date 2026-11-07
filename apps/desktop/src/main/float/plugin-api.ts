@@ -31,6 +31,8 @@ export interface PluginContext {
     quarantineCount(): number
     softwareCount(): number
     lastJunkScanAt(): number | null
+    /** v5.3 S3b：可启动应用（供「我的应用」卡）；limit 默认 8 */
+    recentApps(limit?: number): { name: string; path: string }[]
   }
   /** 供插件缓存跨轮次状态（如上一次的计数器值） */
   state: Map<string, unknown>

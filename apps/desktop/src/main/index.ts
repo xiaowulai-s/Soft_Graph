@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { CH, type AppInfo } from '@shared/ipc'
 import type { AppSettings, FloatSettings } from '@shared/types'
 import { formatBytes } from '@shared/util'
+import { prettyDisplayName } from '@shared/display-name'
 import { openDb } from './db/driver'
 import { Store } from './db/store'
 import { ScanService } from './services/scan'
@@ -35,6 +36,7 @@ let settings: SettingsStore
 let paths: AppPaths
 let float: FloatWindows
 let registry: PluginRegistry
+let backup: import('./services/backup').BackupService | null = null
 let iconQueue: IconQueue
 let floatTimer: NodeJS.Timeout | null = null
 let quitting = false
@@ -600,6 +602,17 @@ function registerIpc(): void {
     return r ?? { cleaned: 0, freedBytes: 0 }
   })
   h(CH.WINGET_LIST, async () => scan.wingetList())
+  // v5.3 N1：备份同步
+  h(CH.BACKUP_DRIVES, async () => backup!.drives())
+  h(CH.BACKUP_TASKS, async () => backup!.tasks())
+  h(CH.BACKUP_SAVE_TASK, async (payload: { task: Partial<import('@shared/types').BackupTask> & { name: string; sources: string[] } }) => backup!.saveTask(payload.task))
+  h(CH.BACKUP_DELETE_TASK, async (payload: { id: string }) => backup!.deleteTask(payload.id))
+  h(CH.BACKUP_RUN, async (payload: { id: string }) => backup!.run(payload.id))
+  h(CH.BACKUP_PAUSE, async (payload: { id: string }) => backup!.pause(payload.id))
+  h(CH.BACKUP_RESUME, async (payload: { id: string }) => backup!.resume(payload.id))
+  h(CH.BACKUP_STOP, async (payload: { id: string }) => backup!.stop(payload.id))
+  h(CH.BACKUP_STATE, async () => backup!.allStates())
+  h(CH.BACKUP_LOG, async () => backup!.log())
   h(CH.RULES_IMPORT_WINAPP2, async () => scan.importWinapp2())
   h(CH.QUARANTINE_COUNT, async () => Number(store.getKv('quarantine:count') ?? '0'))
   h(CH.FLOAT_PLUGIN_UPDATE, async (payload: { url: string }) => registry.updateFromUrl(payload.url))
@@ -808,6 +821,32 @@ function registerIpc(): void {
     await pushFloatTick(true)
     return null
   })
+  // v5.3 S3b：插件卡片点击动作 —— target 不由渲染层传入，回查注册表净化工件
+  h(CH.FLOAT_PLUGIN_ACTION, async (payload: { pluginId: string; index: number }) => {
+    const action = registry.actionAt(String(payload?.pluginId ?? ''), Number(payload?.index ?? -1))
+    if (!action) return { ok: false, error: '动作不存在或已过期' }
+    try {
+      if (action.kind === 'open-url') {
+        await shell.openExternal(action.target)
+        return { ok: true }
+      }
+      // open-path：启动应用/打开文件
+      const err = await shell.openPath(action.target)
+      if (!err) {
+        // 与 APP_LAUNCH 一致：记录进最近启动，供仪表盘常用软件区与「我的应用」卡
+        const name = action.target.split(/[\\/]/).pop()?.replace(/\.exe$/i, '') || action.target
+        const raw = store.getKv('dash:recent')
+        let list: { name: string; path: string; at: number }[] = []
+        try { list = raw ? (JSON.parse(raw) as { name: string; path: string; at: number }[]) : [] } catch { list = [] }
+        const next = list.filter((x) => x.path.toLowerCase() !== action.target.toLowerCase())
+        next.unshift({ name, path: action.target, at: Date.now() })
+        store.setKv('dash:recent', JSON.stringify(next.slice(0, 8)))
+      }
+      return { ok: !err, error: err || undefined }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
   // 以下五个通道必须知道来源窗口 —— 多实例下「拖哪个窗口」只有 sender 能回答
   he(CH.FLOAT_DRAG, (wc, payload: { dx: number; dy: number }) => {
     float.dragBy(wc, payload.dx, payload.dy)
@@ -928,12 +967,58 @@ async function bootstrap(): Promise<void> {
       const s = store.lastScan('junk')
       return s?.finished_at ? Number(s.finished_at) : null
     },
+    // v5.3 S3b：可启动应用 = 最近启动（真实使用痕迹）优先，再用已收录软件的 mainExe 补齐
+    recentApps: (limit = 8) => {
+      const out: { name: string; path: string }[] = []
+      const seen = new Set<string>()
+      let recent: { name: string; path: string; at: number }[] = []
+      try {
+        const raw = store.getKv('dash:recent')
+        recent = raw ? (JSON.parse(raw) as { name: string; path: string; at: number }[]) : []
+      } catch {
+        recent = []
+      }
+      for (const r of recent) {
+        const k = r.path.toLowerCase()
+        if (!r.path || seen.has(k)) continue
+        seen.add(k)
+        out.push({ name: r.name, path: r.path })
+      }
+      for (const sw of store.listSoftware()) {
+        if (out.length >= limit) break
+        if (!sw.mainExe) continue
+        const k = sw.mainExe.toLowerCase()
+        if (seen.has(k)) continue
+        seen.add(k)
+        // 脏名清洗（与软件列表同口径）+ 终末兜底：
+        // 剥控制字符；纯 GUID/十六进制/版本段残名（无字母或无有效字符）直接丢弃 —— 这类条目进卡只会是噪音
+        let pretty = prettyDisplayName(String(sw.name ?? ''), sw.mainExe.split(/[\\/]/).pop()?.replace(/\.exe$/i, ''))
+        pretty = pretty.replace(/[\x00-\x1f\x7f]/g, '').trim()
+        if (!pretty || !/[A-Za-z\u4e00-\u9fa5]/.test(pretty) || /^[0-9a-fA-F]{6,}(\..+)?$/.test(pretty)) continue
+        out.push({ name: pretty, path: sw.mainExe })
+      }
+      return out.slice(0, limit)
+    },
     psJson: async <T,>(script: string, timeoutMs?: number) => {
       const { psJson } = await import('@scanner/psbridge')
       return psJson<T>(script, { timeoutMs: timeoutMs ?? 20_000 })
     }
  }, join(paths.root, 'plugin-approvals.json'))
   await registry.load()
+
+  // v5.3 N1：备份同步服务（进度推送广播到主窗口）
+  {
+    const { BackupService } = await import('./services/backup')
+    backup = new BackupService(store, async <T,>(script: string, timeoutMs?: number) => {
+      const { psJson } = await import('@scanner/psbridge')
+      return psJson<T>(script, { timeoutMs: timeoutMs ?? 20_000 })
+    })
+    backup.setProgressSink((s) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send(CH.BACKUP_PROGRESS, s)
+      }
+    })
+  }
 
   registerIpc()
   createMainWindow()

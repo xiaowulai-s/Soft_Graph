@@ -482,6 +482,57 @@ export interface ScanProgress {
   found?: number
 }
 
+// ───────────────────────── N1 备份同步（v5.3） ─────────────────────────
+
+/** 一个备份任务：源目录集合 → 目标盘根目录下的 <任务名>/ */
+export interface BackupTask {
+  id: string
+  name: string
+  /** 源目录（绝对路径，可多个） */
+  sources: string[]
+  /** 目标：优先按卷标匹配移动硬盘；volumeLabel 为空时用 driveLetter */
+  volumeLabel: string
+  /** 备用盘符（如 "E:"），卷标匹配不到时使用 */
+  driveLetter?: string
+  createdAt: number
+  lastRunAt?: number
+}
+
+/** 可用驱动器（Win32_LogicalDisk 提取） */
+export interface BackupDriveInfo {
+  letter: string
+  label: string
+  totalBytes: number
+  freeBytes: number
+  /** DriveType：2 = 可移动磁盘，3 = 本地磁盘 */
+  driveType: number
+}
+
+/** 任务运行态（主进程单例持有；拔盘暂停、插盘续传） */
+export interface BackupRunState {
+  taskId: string
+  /** running | paused | done | stopped | error */
+  phase: 'running' | 'paused' | 'done' | 'stopped' | 'error'
+  /** paused 时的原因：device-lost = 拔盘；manual = 手动暂停 */
+  reason?: 'device-lost' | 'manual' | ''
+  current?: string
+  copied: number
+  skipped: number
+  conflicts: number
+  bytes: number
+  errors: string[]
+  startedAt?: number
+  finishedAt?: number
+}
+
+/** 任务日志条目 */
+export interface BackupLogEntry {
+  ts: number
+  taskId: string
+  action: 'run' | 'pause' | 'resume' | 'stop' | 'done' | 'error' | 'device-lost' | 'device-back'
+  detail: string
+}
+
 // ───────────────────────── 浮窗与插件（模块二） ─────────────────────────
 
 export type FloatEdge = 'left' | 'right' | 'top' | 'none'
@@ -507,6 +558,13 @@ export interface FloatPluginManifest {
   file?: string
 }
 
+/** v5.3 S3b：数据项点击动作（插件 API v2）。主进程执行前会再校验一次。 */
+export interface PluginAction {
+  /** 打开本地文件/程序（shell.openPath）；或打开 https 链接（shell.openExternal） */
+  kind: 'open-path' | 'open-url'
+  target: string
+}
+
 export interface FloatPluginDatum {
   label: string
   value: string
@@ -514,6 +572,8 @@ export interface FloatPluginDatum {
   ratio?: number
   hint?: string
   tone?: 'normal' | 'good' | 'warn' | 'danger'
+  /** v5.3 S3b：点击该行触发的动作（浮窗把该行渲染为可点击） */
+  action?: PluginAction
 }
 
 export interface FloatPluginPayload {

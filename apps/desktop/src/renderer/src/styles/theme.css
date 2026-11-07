@@ -57,7 +57,13 @@
   --stat-amber-val: #633806;
 
   --shadow: 0 12px 32px rgba(20, 32, 50, 0.1);
+  /* v5.3：大厂风补充令牌 —— 层级阴影 / 焦点环 / 过渡曲线 */
+  --shadow-sm: 0 1px 2px rgba(20, 32, 50, 0.05), 0 2px 8px rgba(20, 32, 50, 0.04);
+  --shadow-md: 0 4px 16px rgba(20, 32, 50, 0.08);
+  --ring: 0 0 0 2px var(--accent-soft);
+  --ease: cubic-bezier(0.3, 0.7, 0.4, 1);
   --radius: 10px;
+  --radius-lg: 14px;
   --radius-sm: 6px;
   --mono: 'Cascadia Mono', 'JetBrains Mono', 'Consolas', monospace;
   --sans: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
@@ -108,6 +114,8 @@
   --stat-amber-val: #fbbf24;
 
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -141,11 +149,15 @@ button {
   border-radius: var(--radius-sm);
   padding: 5px 11px;
   cursor: pointer;
-  transition: background 0.14s, border-color 0.14s;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), box-shadow 0.12s var(--ease), transform 0.12s var(--ease);
 }
 button:hover:not(:disabled) {
   background: var(--hover);
   border-color: var(--accent);
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 button:disabled {
   opacity: 0.45;
@@ -155,9 +167,16 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
 }
 button.primary:hover:not(:disabled) {
   filter: brightness(1.12);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+button.primary:active:not(:disabled) {
+  transform: translateY(0);
 }
 button.danger {
   background: var(--risk-high);
@@ -188,7 +207,7 @@ select {
 input:focus,
 select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: var(--ring);
 }
 
 input[type='checkbox'] {

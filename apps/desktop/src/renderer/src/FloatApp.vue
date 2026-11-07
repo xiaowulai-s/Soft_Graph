@@ -113,7 +113,11 @@ const ICONS: Record<string, string> = {
   trash: '⌫',
   graph: '◈',
   process: '☰',
-  plugin: '⧉'
+  plugin: '⧉',
+  launch: '▶',
+  temp: '✦',
+  battery: '▮',
+  focus: '◎'
 }
 
 function icon(name: string): string {
@@ -122,6 +126,19 @@ function icon(name: string): string {
 
 function openMain(): void {
   void window.api.floatOpenMain()
+}
+
+// ── v5.3 S3b：数据项点击动作 ──
+const actionBusy = ref<string>('')
+async function runAction(pluginId: string, index: number, d: { kind: string; target: string }): Promise<void> {
+  if (actionBusy.value) return
+  actionBusy.value = pluginId + index
+  try {
+    const r = await window.api.floatPluginAction({ pluginId, index })
+    if (!r.ok) console.warn('[float] 动作失败', d.kind, r.error)
+  } finally {
+    actionBusy.value = ''
+  }
 }
 </script>
 
@@ -175,7 +192,14 @@ function openMain(): void {
 
         <!-- metric 视图：标签 + 值 -->
         <template v-else-if="p.view === 'metric'">
-          <div v-for="d in p.data" :key="d.label" class="fw-metric">
+          <div
+            v-for="(d, i) in p.data"
+            :key="d.label + i"
+            class="fw-metric"
+            :class="{ clickable: d.action }"
+            :title="d.action ? '打开' : undefined"
+            @click.stop="d.action && runAction(p.pluginId, i, d.action)"
+          >
             <span class="fw-m-l">{{ d.label }}</span>
             <span class="fw-m-v" :style="{ color: toneColor[d.tone ?? 'normal'] }">{{ d.value }}</span>
           </div>
@@ -228,7 +252,14 @@ function openMain(): void {
 
         <!-- list 视图 -->
         <template v-else>
-          <div v-for="d in p.data" :key="d.label" class="fw-li">
+          <div
+            v-for="(d, i) in p.data"
+            :key="d.label + i"
+            class="fw-li"
+            :class="{ clickable: d.action }"
+            :title="d.action ? '打开' : undefined"
+            @click.stop="d.action && runAction(p.pluginId, i, d.action)"
+          >
             <span class="fw-li-l">{{ d.label }}</span>
             <span class="fw-li-v" :style="{ color: toneColor[d.tone ?? 'normal'] }">{{ d.value }}</span>
           </div>
@@ -394,6 +425,27 @@ function openMain(): void {
   gap: 8px;
   font-size: 11.5px;
   line-height: 1.9;
+}
+/* v5.3 S3b：可点击行（带动作的数据项） */
+.fw-metric.clickable,
+.fw-li.clickable {
+  cursor: pointer;
+  margin: 0 -4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  transition: background 0.12s ease;
+}
+.fw-metric.clickable:hover,
+.fw-li.clickable:hover {
+  background: var(--fw-line);
+}
+.fw-li.clickable .fw-li-v {
+  color: var(--fw-accent);
+  opacity: 0.55;
+  font-size: 10px;
+}
+.fw-li.clickable:hover .fw-li-v {
+  opacity: 1;
 }
 .fw-m-l,
 .fw-li-l {

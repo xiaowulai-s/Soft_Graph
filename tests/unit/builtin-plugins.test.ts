@@ -41,6 +41,7 @@ function makeCtx(opts: CtxOpts = {}): PluginContext {
       quarantineCount: () => 0,
       softwareCount: () => 0,
       lastJunkScanAt: () => null,
+      recentApps: () => [],
       ...(opts.app || {})
     },
     state: opts.state ?? new Map<string, unknown>(),
@@ -57,7 +58,7 @@ const byId = (id: string) => {
 
 describe('浮窗内置插件 · 清单完整性', () => {
   it('全部插件都具备合法清单', () => {
-    assert.equal(BUILTIN_PLUGINS.length, 12)
+    assert.equal(BUILTIN_PLUGINS.length, 13)
     const ids = new Set<string>()
     for (const p of BUILTIN_PLUGINS) {
       const m = p.manifest
