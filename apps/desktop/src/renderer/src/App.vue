@@ -1145,9 +1145,9 @@ const statusText = computed(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 11px;
+  padding: 7px 12px;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-hair);
   flex: none;
   -webkit-app-region: drag;
   overflow-x: auto;
@@ -1172,13 +1172,25 @@ const statusText = computed(() => {
   margin-right: 6px;
 }
 .tb-logo {
-  color: var(--accent);
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #fff;
+  background: linear-gradient(135deg, #14b8a6, #0f6e56);
+  box-shadow: var(--shadow-sm);
+}
+:root[data-theme='dark'] .tb-logo {
+  color: #04241e;
 }
 .tb-name {
-  font-weight: 700;
+  font-weight: 600;
   font-size: 13px;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
+  color: var(--text);
 }
 .tb-search {
   width: 236px;
@@ -1420,10 +1432,10 @@ const statusText = computed(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 12px;
+  padding: 5px 14px;
   font-size: 11px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-hair);
   color: var(--text-2);
   flex: none;
 }

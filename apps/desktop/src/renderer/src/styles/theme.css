@@ -1,93 +1,101 @@
 /**
- * 视觉规范 v5.0 —— 冷调玻璃（Cool Glass），浅色优先，暗色为伴生主题。
- * 令牌名与 v3.6 保持兼容（--bg/--panel/--text…），全组件自动换装。
- * 新增：--surface/--surface-2/--canvas/--border-hair/--accent-soft。
+ * 视觉规范 v6.0 —— Linear 系（浅色基准 · 深色伴生）
+ *
+ * 设计基调（用户定稿：Linear 浅色 · 舒适密度 · 8px 圆角）：
+ *   浅色为主工作面 —— 冷灰底 #f7f8fa + 纯白面板 + 发丝描边（#eef1f5 一线）
+ *   accent 松绿 #0f6e56（浅色下加深保对比），深色伴生用青荧 #2dd4bf
+ *   层次靠「底色差 + 发丝线 + 轻阴影」三件套，不用重描边
+ *
+ * 令牌名与 v3.6+ 全兼容（--bg/--panel/--text…），全组件自动换装。
  */
 
 :root {
   /* 表面 */
-  --bg: #f2f7fa;
+  --bg: #f7f8fa;
+  --side: #f0f2f5;
   --panel: #ffffff;
-  --panel-2: #f7fafc;
+  --panel-2: #f2f4f7;
   --surface: #ffffff;
-  --surface-2: #f7fafc;
-  --canvas: #fbfdfe;
-  --hover: #edf3f8;
+  --surface-2: #f2f4f7;
+  --canvas: #fbfcfd;
+  --hover: #eef1f5;
 
-  /* 边框 —— 极细描边是本风格的签名 */
-  --border: #b5d4f4;
-  --border-soft: #dce9f2;
-  --border-hair: #edf3f8;
+  /* 边框 —— 发丝线体系 */
+  --border: #dfe5ec;
+  --border-soft: #e7ebf0;
+  --border-hair: #eef1f5;
 
-  /* 文字（冷调三阶） */
-  --text: #042c53;
-  --text-2: #3b556b;
-  --text-3: #8a97a8;
+  /* 文字（三阶） */
+  --text: #182230;
+  --text-2: #55677a;
+  --text-3: #93a3b3;
 
   /* 强调 */
   --accent: #0f6e56;
-  --accent-soft: #e1f5ee;
+  --accent-soft: #e4f1eb;
   --accent-2: #185fa5;
 
-  /* 语义（浅色底上加深保对比度） */
-  --success: #3b6d11;
-  --warning: #854f0b;
-  --danger: #a32d2d;
+  /* 语义 */
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --danger: #cf222e;
 
-  /* 图谱节点（冷调青绿梯度） */
+  /* 图谱节点 */
   --node-exe: #0f6e56;
   --node-dll: #185fa5;
   --node-plugin: #7c53da;
   --node-runtime: #b45309;
-  --node-missing: #a32d2d;
-  --node-system: #8a97a8;
+  --node-missing: #cf222e;
+  --node-system: #93a3b3;
 
   /* 风险色 */
-  --risk-low: #3b6d11;
-  --risk-medium: #854f0b;
-  --risk-high: #a32d2d;
-  --risk-hint: #8a97a8;
+  --risk-low: #1a7f37;
+  --risk-medium: #9a6700;
+  --risk-high: #cf222e;
+  --risk-hint: #93a3b3;
 
   /* 统计卡 */
-  --stat-teal-bg: #e1f5ee;
+  --stat-teal-bg: #e4f1eb;
   --stat-teal-val: #04342c;
-  --stat-blue-bg: #e6f1fb;
+  --stat-blue-bg: #e7f0fb;
   --stat-blue-val: #0c447c;
-  --stat-amber-bg: #faeeda;
+  --stat-amber-bg: #faf0dc;
   --stat-amber-val: #633806;
 
-  --shadow: 0 12px 32px rgba(20, 32, 50, 0.1);
-  /* v5.3：大厂风补充令牌 —— 层级阴影 / 焦点环 / 过渡曲线 */
-  --shadow-sm: 0 1px 2px rgba(20, 32, 50, 0.05), 0 2px 8px rgba(20, 32, 50, 0.04);
-  --shadow-md: 0 4px 16px rgba(20, 32, 50, 0.08);
-  --ring: 0 0 0 2px var(--accent-soft);
+  /* 阴影层级（浅色下极轻） */
+  --shadow: 0 1px 2px rgba(15, 25, 40, 0.04), 0 6px 20px rgba(15, 25, 40, 0.06);
+  --shadow-sm: 0 1px 2px rgba(15, 25, 40, 0.04);
+  --shadow-md: 0 3px 12px rgba(15, 25, 40, 0.08);
+  --ring: 0 0 0 3px rgba(15, 110, 86, 0.14);
   --ease: cubic-bezier(0.3, 0.7, 0.4, 1);
-  --radius: 10px;
-  --radius-lg: 14px;
+
+  --radius: 8px;
+  --radius-lg: 12px;
   --radius-sm: 6px;
   --mono: 'Cascadia Mono', 'JetBrains Mono', 'Consolas', monospace;
   --sans: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
 }
 
 :root[data-theme='dark'] {
-  --bg: #0e1620;
-  --panel: #16202c;
-  --panel-2: #1c2836;
-  --surface: #16202c;
-  --surface-2: #1c2836;
-  --canvas: #101b26;
-  --hover: #1e3040;
+  --bg: #0d1017;
+  --side: #0a0d13;
+  --panel: #131720;
+  --panel-2: #181d27;
+  --surface: #131720;
+  --surface-2: #181d27;
+  --canvas: #0f131b;
+  --hover: #1c2430;
 
-  --border: #24384c;
-  --border-soft: #1e3040;
-  --border-hair: #1a2836;
+  --border: #262f3c;
+  --border-soft: #1f2733;
+  --border-hair: #1a2230;
 
-  --text: #dce8f2;
-  --text-2: #93a8bc;
-  --text-3: #5f7488;
+  --text: #e8eef7;
+  --text-2: #8fa0b5;
+  --text-3: #5a6a7d;
 
   --accent: #2dd4bf;
-  --accent-soft: #0e2b26;
+  --accent-soft: #122b26;
   --accent-2: #60a5fa;
 
   --success: #4ade80;
@@ -99,23 +107,24 @@
   --node-plugin: #a78bfa;
   --node-runtime: #f59e0b;
   --node-missing: #f87171;
-  --node-system: #5f7488;
+  --node-system: #5a6a7d;
 
   --risk-low: #4ade80;
   --risk-medium: #fbbf24;
   --risk-high: #f87171;
-  --risk-hint: #5f7488;
+  --risk-hint: #5a6a7d;
 
-  --stat-teal-bg: #0f2a2e;
+  --stat-teal-bg: #0f2a26;
   --stat-teal-val: #2dd4bf;
   --stat-blue-bg: #16213a;
   --stat-blue-val: #dce8f2;
   --stat-amber-bg: #2a2317;
   --stat-amber-val: #fbbf24;
 
-  --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --ring: 0 0 0 3px rgba(45, 212, 191, 0.18);
 }
 
 * {
@@ -144,16 +153,16 @@ button {
   font-family: inherit;
   font-size: 12px;
   color: var(--text);
-  background: var(--panel-2);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 5px 11px;
+  padding: 5px 12px;
   cursor: pointer;
   transition: background 0.12s var(--ease), border-color 0.12s var(--ease), box-shadow 0.12s var(--ease), transform 0.12s var(--ease);
 }
 button:hover:not(:disabled) {
   background: var(--hover);
-  border-color: var(--accent);
+  border-color: var(--border-soft);
 }
 button:focus-visible {
   outline: none;
@@ -171,7 +180,7 @@ button.primary {
   box-shadow: var(--shadow-sm);
 }
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.12);
+  filter: brightness(1.08);
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);
 }
@@ -184,10 +193,15 @@ button.danger {
   color: #fff;
 }
 button.danger:hover:not(:disabled) {
-  filter: brightness(1.12);
+  filter: brightness(1.08);
 }
 button.ghost {
   background: transparent;
+  border-color: transparent;
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: transparent;
 }
 
 input[type='text'],
@@ -228,11 +242,14 @@ input[type='range'] {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: #cdd6e0;
   border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-2);
+  background: var(--text-3);
+}
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: #262f3c;
 }
 
 .mono {
@@ -262,11 +279,11 @@ input[type='range'] {
   display: inline-block;
   font-size: 10px;
   line-height: 1;
-  padding: 3px 5px;
+  padding: 3px 6px;
   border-radius: 4px;
-  background: var(--panel-2);
+  background: var(--surface-2);
   color: var(--text-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-hair);
 }
 
 .spin {

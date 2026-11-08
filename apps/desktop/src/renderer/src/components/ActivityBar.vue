@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * v5.2 侧栏：图标 + 文本常显（150px），按域分组，可折叠成 54px 纯图标。
+ * v6.0 侧栏：图标 + 文本常显（190px，Linear 系），按域分组，可折叠成 54px 纯图标。
  * 条目由 nav.ts 注册表驱动，全部统一 SVG 线性图标 + 统一文本规格。
  */
 import { ref } from 'vue'
@@ -44,18 +44,16 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
 </template>
 
 <style scoped>
-/* v5.3 重设计（参考 Linear / Notion 侧栏）：
-   208px 宽 · 30px 行高 · active 用 accent-soft 胶囊替代整块色底（更轻盈）
-   分组标题小字号大字距 · hover 仅微亮 · 全程 0.12s 过渡 */
+/* v6.0 Linear 系侧栏：190px · --side 底色 · 发丝分隔 · 淡胶囊 active */
 .sb {
-  width: 208px;
+  width: 190px;
   flex: none;
   height: 100%;
-  background: var(--panel);
+  background: var(--side);
   border-right: 1px solid var(--border-hair);
   display: flex;
   flex-direction: column;
-  padding: 12px 10px;
+  padding: 14px 12px;
   gap: 1px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -70,7 +68,7 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 2px 8px 12px;
+  padding: 2px 8px 14px;
 }
 .sb-logo {
   flex: none;
@@ -79,11 +77,15 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  color: var(--accent);
-  background: var(--accent-soft);
+  font-size: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #14b8a6, #0f6e56);
   border-radius: 7px;
   line-height: 1;
+  box-shadow: var(--shadow-sm);
+}
+:root[data-theme='dark'] .sb-logo {
+  color: #04241e;
 }
 .sb-name {
   font-size: 13px;
@@ -93,7 +95,7 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
 }
 .sb.mini .sb-brand {
   justify-content: center;
-  padding: 2px 0 12px;
+  padding: 2px 0 14px;
 }
 .sb.mini .sb-logo {
   width: 26px;
@@ -104,7 +106,7 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
   font-weight: 500;
   color: var(--text-3);
   letter-spacing: 1.4px;
-  padding: 12px 10px 5px;
+  padding: 14px 10px 5px;
   user-select: none;
 }
 .sb-group-line {
@@ -122,16 +124,16 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
   padding: 0 9px;
   border: none;
   background: transparent;
-  border-radius: 7px;
+  border-radius: var(--radius);
   color: var(--text-2);
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
 }
 .sb-btn:hover:not(:disabled) {
   background: var(--hover);
   border: none;
   color: var(--text);
 }
-/* active：淡色胶囊 + 强调色文字（Linear 风格），不再整块填充 */
+/* active：淡胶囊 + 强调色文字（Linear 风格） */
 .sb-btn.active {
   background: var(--accent-soft);
 }
@@ -146,7 +148,7 @@ const ICONS = Object.fromEntries(NAV_MODULES.map((m) => [m.id, navIconSvg(m.icon
   align-items: center;
   justify-content: center;
   color: var(--text-3);
-  transition: color 0.12s ease;
+  transition: color 0.12s var(--ease);
 }
 .sb-btn:hover .sb-ico {
   color: var(--text-2);

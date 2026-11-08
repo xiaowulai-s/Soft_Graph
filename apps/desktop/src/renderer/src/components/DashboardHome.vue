@@ -20,6 +20,8 @@ const startupUnsigned = ref(0)
 const schedInfo = ref<{ lastRunAt: number; lastCleaned: number; lastFreedBytes: number } | null>(null)
 const recent = ref<{ name: string; path: string; at: number }[]>([])
 const upgradeCount = ref<number | null>(null)
+/** v6.0：磁盘概览（轻量 CIM 查询，仪表盘丰富化） */
+const drives = ref<{ letter: string; label: string; totalBytes: number; freeBytes: number }[]>([])
 
 onMounted(async () => {
   void window.api.quarantineCount().then((n) => (quarCount.value = n)).catch(() => {})
@@ -45,6 +47,11 @@ onMounted(async () => {
     .wingetList()
     .then((ups) => (upgradeCount.value = ups.length))
     .catch(() => (upgradeCount.value = null))
+  // v6.0：磁盘概览懒加载（CIM 查询，不阻塞首屏）
+  void window.api
+    .backupDrives()
+    .then((ds) => drives.value = ds.filter((d) => d.totalBytes > 0))
+    .catch(() => {})
 })
 
 async function launchRecent(path: string): Promise<void> {
@@ -56,6 +63,18 @@ function fmtWhen(ts: number): string {
   if (!ts) return '尚未运行'
   const d = new Date(ts)
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** v6.0 磁盘概览辅助 */
+function diskPercent(d: { totalBytes: number; freeBytes: number }): number {
+  if (!d.totalBytes) return 0
+  return Math.round(((d.totalBytes - d.freeBytes) / d.totalBytes) * 100)
+}
+function diskTone(d: { totalBytes: number; freeBytes: number }): string {
+  const p = diskPercent(d)
+  if (p > 92) return 'var(--danger)'
+  if (p > 80) return 'var(--warning)'
+  return 'var(--accent)'
 }
 </script>
 
@@ -91,11 +110,31 @@ function fmtWhen(ts: number): string {
       </button>
     </div>
 
-    <div class="dh-actions">
-      <button class="primary dh-act" @click="emit('rescan-junk')">垃圾扫描</button>
-      <button class="dh-act" @click="emit('rescan-software')">重新扫描软件</button>
-      <button class="dh-act" @click="emit('navigate', 'treemap')">▦ 空间树图</button>
-      <button class="dh-act" @click="emit('navigate', 'market')">插件市场</button>
+    <div class="dh-grid">
+      <div class="dh-panel">
+        <div class="dh-feed-title">磁盘概览</div>
+        <div v-if="drives.length === 0" class="dim" style="font-size: 11px; padding: 4px 0 8px">读取中…</div>
+        <div v-for="d in drives" :key="d.letter" class="dh-disk-row" :title="`${d.letter} ${d.label || ''} · 总 ${formatBytes(d.totalBytes)} · 剩 ${formatBytes(d.freeBytes)}`">
+          <span class="dh-disk-letter mono">{{ d.letter }}</span>
+          <div class="dh-disk-bar">
+            <i :style="{ width: diskPercent(d) + '%', background: diskTone(d) }"></i>
+          </div>
+          <span class="dh-disk-txt mono">剩 {{ formatBytes(d.freeBytes, 1) }}</span>
+        </div>
+        <button class="ghost dh-more" @click="emit('navigate', 'treemap')">空间树图查看详情 →</button>
+      </div>
+      <div class="dh-panel">
+        <div class="dh-feed-title">快捷动作</div>
+        <div class="dh-acts2">
+          <button class="primary dh-act" @click="emit('rescan-junk')">垃圾扫描</button>
+          <button class="dh-act" @click="emit('rescan-software')">重新扫描软件</button>
+          <button class="dh-act" @click="emit('navigate', 'treemap')">▦ 空间树图</button>
+          <button class="dh-act" @click="emit('navigate', 'backup')">备份同步</button>
+        </div>
+        <div class="dim" style="font-size: 11px; padding: 8px 2px 2px">
+          上次定时清理：{{ fmtWhen(schedInfo?.lastRunAt ?? 0) }}{{ schedInfo?.lastCleaned ? ` · 清理 ${schedInfo.lastCleaned} 项 / ${formatBytes(schedInfo.lastFreedBytes)}` : '' }}
+        </div>
+      </div>
     </div>
 
     <div v-if="recent.length" class="dh-recent">
@@ -118,11 +157,7 @@ function fmtWhen(ts: number): string {
       </div>
       <div class="dh-row">
         <span class="dh-dot" style="background: var(--accent)"></span>
-        <span>上次定时清理：{{ fmtWhen(schedInfo?.lastRunAt ?? 0) }}{{ schedInfo?.lastCleaned ? ` · 清理 ${schedInfo.lastCleaned} 项 / ${formatBytes(schedInfo.lastFreedBytes)}` : '' }}</span>
-      </div>
-      <div class="dh-row">
-        <span class="dh-dot" style="background: var(--text-3)"></span>
-        <span>应用更新与升级发现会在这里与系统通知同步出现</span>
+        <span>备份同步任务与插件市场更新也会在这里提示</span>
       </div>
     </div>
   </div>
@@ -158,24 +193,91 @@ function fmtWhen(ts: number): string {
   gap: 4px;
   text-align: left;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius);
   padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s var(--ease), transform 0.15s var(--ease);
 }
 .dh-card:hover {
-  border-color: var(--accent);
+  border-color: var(--border-soft);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 .dh-label {
-  font-size: 12px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
   color: var(--text-3);
 }
 .dh-val {
-  font-size: 19px;
-  font-weight: 500;
+  font-size: 20px;
+  font-weight: 600;
 }
 .dh-sub {
   font-size: 11px;
   color: var(--text-3);
+}
+/* v6.0：双栏面板（磁盘概览 + 快捷动作） */
+.dh-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dh-panel {
+  background: var(--panel);
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius);
+  padding: 6px 16px 12px;
+  box-shadow: var(--shadow-sm);
+}
+.dh-disk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.dh-disk-row + .dh-disk-row {
+  border-top: 1px solid var(--border-hair);
+}
+.dh-disk-letter {
+  width: 26px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  flex: none;
+}
+.dh-disk-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.dh-disk-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s var(--ease);
+}
+.dh-disk-txt {
+  font-size: 11px;
+  color: var(--text-2);
+  flex: none;
+  min-width: 84px;
+  text-align: right;
+}
+.dh-more {
+  font-size: 11px;
+  padding: 4px 0 0;
+  color: var(--accent);
+}
+.dh-acts2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 4px;
 }
 .dh-actions {
   display: flex;
@@ -188,8 +290,9 @@ function fmtWhen(ts: number): string {
 .dh-feed {
   background: var(--panel);
   border: 1px solid var(--border-hair);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 6px 16px 12px;
+  box-shadow: var(--shadow-sm);
 }
 .dh-feed-title {
   font-size: 12px;
@@ -214,8 +317,9 @@ function fmtWhen(ts: number): string {
 .dh-recent {
   background: var(--panel);
   border: 1px solid var(--border-hair);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 6px 16px 12px;
+  box-shadow: var(--shadow-sm);
 }
 .dh-chips {
   display: flex;
@@ -224,8 +328,8 @@ function fmtWhen(ts: number): string {
   padding: 4px 0 6px;
 }
 .dh-chip {
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius);
   padding: 5px 13px;
   font-size: 12px;
   background: var(--surface-2);
@@ -233,5 +337,7 @@ function fmtWhen(ts: number): string {
 }
 .dh-chip:hover:not(:disabled) {
   border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 </style>
