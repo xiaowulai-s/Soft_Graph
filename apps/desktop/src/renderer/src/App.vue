@@ -21,6 +21,7 @@ import { formatBytes, formatDuration, formatTime } from '@shared/util'
 import SoftwareList from './components/SoftwareList.vue'
 import GraphCanvas from './components/GraphCanvas.vue'
 import JunkSidebar from './components/JunkSidebar.vue'
+import { Card } from './components/ui'
 import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import MaintenanceCenter from './components/MaintenanceCenter.vue'
@@ -967,6 +968,25 @@ const statusText = computed(() => {
         <span class="mid-title">垃圾清理</span>
         <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
         <span style="flex:1"></span>
+      </div>
+      <!-- v6.1 统计卡带（对齐设计稿 B 汇总指标） -->
+      <div class="grid grid-cols-4 gap-3 px-5 pb-3">
+        <Card hoverable class="gap-0.5 p-3.5">
+          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">可释放</div>
+          <div class="mt-0.5 font-mono text-lg font-semibold text-primary">{{ formatBytes(junkSummary?.totalBytes ?? 0) }}</div>
+        </Card>
+        <Card hoverable class="gap-0.5 p-3.5">
+          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">待审阅项</div>
+          <div class="mt-0.5 font-mono text-lg font-semibold">{{ junkSummary?.totalCount ?? 0 }}</div>
+        </Card>
+        <Card hoverable class="gap-0.5 p-3.5">
+          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">已扫描文件</div>
+          <div class="mt-0.5 font-mono text-lg font-semibold">{{ scannedFiles.toLocaleString() }}</div>
+        </Card>
+        <Card hoverable class="cursor-pointer gap-0.5 p-3.5" title="打开隔离区" @click="openDrawer('quarantine')">
+          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">隔离区 →</div>
+          <div class="mt-0.5 font-mono text-lg font-semibold">删除可还原</div>
+        </Card>
       </div>
       <div class="junk-page-body">
         <JunkSidebar

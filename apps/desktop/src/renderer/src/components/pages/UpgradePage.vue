@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * v5.2 软件升级独立页：状态总览 + 检查更新 + 单项/全部升级（含 UAC 重试）。
- * 合并说明：这是全应用唯一的升级管理入口。
+ * v6.1 软件升级（shadcn 重制，对齐设计稿 pg-upgrade）：
+ * 统计卡 + 升级列表（版本迁移 + UAC Badge）+ 批量操作。
+ * 需管理员的升级自动弹 UAC 重试；失败写入日志（scope winget）。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { WingetUpgrade } from '@shared/types'
+import { Badge, Button, Card } from '@renderer/components/ui'
 
 const ups = ref<WingetUpgrade[] | null>(null)
 const busy = ref(false)
@@ -12,6 +14,8 @@ const upgradingId = ref('')
 const allBusy = ref(false)
 const allProgress = ref(0)
 const errText = ref('')
+
+const elevCount = computed(() => ups.value?.filter((u) => u.needsElevation).length ?? 0)
 
 async function load(): Promise<void> {
   busy.value = true
@@ -46,12 +50,10 @@ async function upgradeAll(): Promise<void> {
   allBusy.value = true
   allProgress.value = 0
   const list = [...(ups.value ?? [])]
-  let okCount = 0
   for (const u of list) {
     try {
       const r = await window.api.wingetUpgrade(u.id)
-      if (r.ok) okCount++
-      ups.value = (ups.value ?? []).filter((x) => x.id !== u.id)
+      if (r.ok) ups.value = (ups.value ?? []).filter((x) => x.id !== u.id)
     } catch {
       /* 继续 */
     }
@@ -64,68 +66,72 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="pg">
-    <div class="pg-head">
-      <span class="pg-title">软件升级</span>
-      <span class="dim">winget 源 · 唯一升级管理入口</span>
+  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
+    <div class="flex flex-col gap-0.5 pb-1">
+      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">软件升级</h2>
+      <span class="text-[12.5px] text-muted-foreground">winget 升级管家 · 静默升级 · 需管理员时自动提示提权重试</span>
     </div>
 
-    <div class="pg-stat">
-      <span class="pg-stat-label">状态总览</span>
-      <span v-if="ups" class="pg-stat-val mono">
-        {{ ups.length }} 个可升级 · {{ ups.filter((u) => u.needsElevation).length }} 个需管理员
-      </span>
-      <span v-else class="pg-stat-val dim">检查中…</span>
-      <span v-if="allBusy" class="dim" style="font-size: 11px">批量升级中 {{ allProgress }}/{{ ups?.length ?? 0 }}…</span>
-    </div>
-
-    <div v-if="errText" class="pg-err">检查失败：{{ errText }}</div>
-    <div class="pg-actions">
-      <button class="primary" :disabled="busy || allBusy" @click="load">{{ busy ? '检查中…' : '检查更新' }}</button>
-      <button v-if="ups && ups.length" :disabled="allBusy" @click="upgradeAll">全部升级</button>
-    </div>
-
-    <div v-if="ups && !ups.length && !busy" class="pg-empty">所有软件均为最新（或 winget 未安装）</div>
-    <div v-else-if="ups" class="pg-list">
-      <div v-for="u in ups" :key="u.id" class="urow">
-        <div style="flex: 1; min-width: 0">
-          <div class="urow-name">
-            {{ u.name }}
-            <span v-if="u.needsElevation" class="badge" title="上次失败需要管理员权限">UAC</span>
-          </div>
-          <div class="urow-ver mono">{{ u.version }} → {{ u.available }}</div>
+    <!-- 统计卡 -->
+    <div class="grid grid-cols-4 gap-3">
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">待升级</div>
+        <div class="mt-1 font-mono text-xl font-semibold" :class="(ups?.length ?? 0) > 0 ? 'text-primary' : 'text-foreground'">
+          {{ ups ? ups.length : '…' }}
         </div>
-        <button class="ghost ubtn" :disabled="upgradingId === u.id || allBusy" @click="upgradeOne(u)">
-          {{ upgradingId === u.id ? '升级中…' : '升级' }}
-        </button>
-      </div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">winget upgrade 源</div>
+      </Card>
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">需提权</div>
+        <div class="mt-1 font-mono text-xl font-semibold" :class="elevCount > 0 ? 'text-warning' : 'text-foreground'">{{ ups ? elevCount : '…' }}</div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">0x8a15 自动检测</div>
+      </Card>
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">批量进度</div>
+        <div class="mt-1 font-mono text-xl font-semibold text-foreground">
+          {{ allBusy ? `${allProgress}/${ups?.length ?? 0}` : '—' }}
+        </div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">{{ allBusy ? '批量升级中…' : '空闲' }}</div>
+      </Card>
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">检查状态</div>
+        <div class="mt-1 text-xl font-semibold" :class="busy ? 'text-muted-foreground' : 'text-success'">{{ busy ? '检查中…' : '就绪' }}</div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">{{ errText ? '上次检查失败' : 'winget 已接入' }}</div>
+      </Card>
     </div>
-    <div class="dim pg-foot">需管理员的升级会自动弹 UAC 重试；失败原因写入日志（scope app-update / winget）。</div>
+
+    <!-- 操作条 -->
+    <div class="flex items-center gap-2.5">
+      <Button :disabled="busy || allBusy" @click="load">{{ busy ? '检查中…' : '检查更新' }}</Button>
+      <Button v-if="ups && ups.length" variant="secondary" :disabled="allBusy" @click="upgradeAll">全部静默升级</Button>
+      <span v-if="errText" class="text-xs text-destructive">检查失败：{{ errText }}</span>
+    </div>
+
+    <!-- 升级列表 -->
+    <Card v-if="ups && !ups.length && !busy" class="border-dashed bg-transparent py-8 text-center text-muted-foreground shadow-none">
+      所有软件均为最新（或 winget 未安装）
+    </Card>
+    <Card v-else-if="ups && ups.length" class="px-3 py-1.5">
+      <div v-for="u in ups" :key="u.id" class="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0">
+        <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div class="flex items-center gap-2">
+            <span class="text-[13px] font-medium text-foreground">{{ u.name }}</span>
+            <Badge v-if="u.needsElevation" variant="warning" title="上次静默失败，需要管理员权限">UAC</Badge>
+          </div>
+          <div class="font-mono text-[11px] text-muted-foreground">{{ u.version }} <span class="opacity-60">→</span> {{ u.available }}</div>
+        </div>
+        <Button
+          size="sm"
+          :variant="u.needsElevation ? 'secondary' : 'default'"
+          :disabled="upgradingId === u.id || allBusy"
+          :title="u.needsElevation ? '以管理员权限升级（弹 UAC）' : '静默升级'"
+          @click="upgradeOne(u)"
+        >
+          {{ upgradingId === u.id ? '升级中…' : u.needsElevation ? '提权升级' : '升级' }}
+        </Button>
+      </div>
+    </Card>
+
+    <p class="px-1 text-[11px] text-muted-foreground">需管理员的升级会自动弹 UAC 重试；失败原因写入日志（scope app-update / winget）。</p>
   </div>
 </template>
-
-<style scoped>
-@import './page.css';
-.urow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 8px;
-  border-bottom: 1px solid var(--border-hair);
-}
-.urow-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text);
-}
-.urow-ver {
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 2px;
-}
-.ubtn {
-  flex: none;
-}
-</style>

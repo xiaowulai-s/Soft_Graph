@@ -1,10 +1,13 @@
 <script setup lang="ts">
 /**
- * v5.2 定时调度独立页：开关 / 周期 / 空闲窗口 / 上次执行状态（两段式）。
+ * v6.1 定时调度（shadcn 重制，对齐设计稿 pg-schedule）：
+ * 三状态卡 + 配置面板 + 执行信息。设计稿中的「执行历史列表」
+ * 无历史数据 API 支撑，落地为「上次执行详情 + 立即执行」。
  */
 import { onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
 import type { AppSettings } from '@shared/types'
+import { Badge, Button, Card, Separator } from '@renderer/components/ui'
 
 const enabled = ref(false)
 const intervalHours = ref(168)
@@ -17,6 +20,11 @@ function fmtWhen(ts: number): string {
   if (!ts) return '尚未运行'
   const d = new Date(ts)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function nextEstimate(ts: number, hours: number): string {
+  if (!ts) return '启用后按周期推算'
+  return fmtWhen(ts + hours * 3600_000)
 }
 
 async function load(): Promise<void> {
@@ -61,50 +69,74 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="pg">
-    <div class="pg-head">
-      <span class="pg-title">定时调度</span>
-      <span class="dim">静默清理计划 —— 到期且空闲时自动隔离清理，可还原</span>
+  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
+    <div class="flex flex-col gap-0.5 pb-1">
+      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">定时调度</h2>
+      <span class="text-[12.5px] text-muted-foreground">静默清理计划 —— 到期且空闲时自动隔离清理，可还原</span>
     </div>
 
-    <div class="pg-stat">
-      <span class="pg-stat-label">状态总览</span>
-      <span class="pg-stat-val mono" :style="{ color: enabled ? 'var(--accent)' : 'var(--text-3)' }">
-        {{ enabled ? '已启用' : '未启用' }} · 每 {{ intervalHours }} 小时
-      </span>
-      <span class="dim" style="font-size: 11px">
-        上次执行：{{ fmtWhen(last?.lastRunAt ?? 0) }}{{ last?.lastCleaned ? ` · 清理 ${last.lastCleaned} 项 / ${formatBytes(last.lastFreedBytes)}` : '' }}
-      </span>
+    <!-- 状态卡 ×3 -->
+    <div class="grid grid-cols-3 gap-3">
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">调度状态</div>
+        <div class="mt-1 flex items-baseline gap-2">
+          <span class="text-xl font-semibold" :class="enabled ? 'text-primary' : 'text-muted-foreground'">{{ enabled ? '已启用' : '未启用' }}</span>
+          <Badge :variant="enabled ? 'success' : 'secondary'">{{ enabled ? '运行中' : '已停用' }}</Badge>
+        </div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">每 {{ intervalHours }} 小时 · {{ idleOnly ? '仅空闲时执行' : '到期即执行' }}</div>
+      </Card>
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">上次执行</div>
+        <div class="mt-1 font-mono text-sm font-semibold text-foreground">{{ fmtWhen(last?.lastRunAt ?? 0) }}</div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">
+          {{ last?.lastCleaned ? `清理 ${last.lastCleaned} 项 / ${formatBytes(last.lastFreedBytes)}` : '尚无记录' }}
+        </div>
+      </Card>
+      <Card hoverable class="gap-0.5 p-4">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">下次预计</div>
+        <div class="mt-1 font-mono text-sm font-semibold text-foreground">{{ enabled ? nextEstimate(last?.lastRunAt ?? 0, intervalHours) : '—' }}</div>
+        <div class="mt-0.5 text-[11px] text-muted-foreground">{{ idleOnly ? '系统空闲 ≥ 10 分钟时' : '到期即执行' }}</div>
+      </Card>
     </div>
 
-    <div class="pg-list" style="padding: 12px 16px; gap: 12px; display: flex; flex-direction: column">
-      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
-        <input v-model="enabled" type="checkbox" @change="patch" />
-        <span style="font-size: 13px; color: var(--text)">启用定时静默清理（自动隔离，可在隔离区还原）</span>
-      </label>
-      <div style="display: flex; align-items: center; gap: 10px">
-        <span style="font-size: 12px; color: var(--text-2); flex: none">执行周期</span>
-        <select v-model.number="intervalHours" :disabled="!enabled" style="width: 160px" @change="patch">
-          <option :value="24">每天</option>
-          <option :value="72">每 3 天</option>
-          <option :value="168">每周</option>
-          <option :value="336">每两周</option>
-          <option :value="720">每月</option>
-        </select>
-      </div>
-      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
-        <input v-model="idleOnly" type="checkbox" :disabled="!enabled" @change="patch" />
-        <span style="font-size: 12px; color: var(--text-2)">仅空闲时执行（系统无输入 ≥15 分钟，不满足自动顺延）</span>
-      </label>
-    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <!-- 配置 -->
+      <Card class="px-4 py-3">
+        <div class="pb-1 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">配置</div>
+        <div class="flex items-center justify-between py-2.5 text-xs">
+          <span class="text-muted-foreground">启用定时静默清理</span>
+          <input v-model="enabled" type="checkbox" class="h-3.5 w-3.5 accent-[var(--accent)]" @change="patch" />
+        </div>
+        <Separator />
+        <div class="flex items-center justify-between py-2.5 text-xs">
+          <span class="text-muted-foreground">执行周期</span>
+          <select v-model.number="intervalHours" class="h-6 rounded-md border border-input bg-secondary px-2 text-xs" @change="patch">
+            <option :value="24">每 24 小时（每天）</option>
+            <option :value="72">每 72 小时（3 天）</option>
+            <option :value="168">每 168 小时（每周）</option>
+            <option :value="336">每 336 小时（两周）</option>
+          </select>
+        </div>
+        <Separator />
+        <div class="flex items-center justify-between py-2.5 text-xs">
+          <span class="text-muted-foreground">仅系统空闲时执行</span>
+          <input v-model="idleOnly" type="checkbox" class="h-3.5 w-3.5 accent-[var(--accent)]" @change="patch" />
+        </div>
+      </Card>
 
-    <div class="pg-actions">
-      <button class="primary" :disabled="running" @click="runNow">{{ running ? '执行中…' : '立即执行一次' }}</button>
+      <!-- 执行 -->
+      <Card class="px-4 py-3">
+        <div class="pb-1 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">手动执行</div>
+        <div class="flex flex-wrap items-center gap-2 py-2">
+          <Button size="lg" :disabled="running" @click="runNow">{{ running ? '执行中…' : '立即执行一次' }}</Button>
+          <span v-if="runText" class="text-xs text-primary">{{ runText }}</span>
+        </div>
+        <Separator class="my-1" />
+        <p class="px-0.5 pb-1 pt-2 text-[11px] leading-relaxed text-muted-foreground">
+          调度清理与手动清理同链路：扫描 → 隔离（可还原）→ 7 天后可彻底清除。
+          空闲检测避免打断前台工作；跳过时顺延到下个空闲窗口。
+        </p>
+      </Card>
     </div>
-    <div v-if="runText" class="pg-toast">{{ runText }}</div>
   </div>
 </template>
-
-<style scoped>
-@import './page.css';
-</style>
