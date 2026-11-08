@@ -1,0 +1,53 @@
+/**
+ * Tailwind CSS v4 入口（v6.1 接入 shadcn-vue 组件体系）。
+ *
+ * 与现有 theme.css 的关系：
+ *   本文件只负责 Tailwind 引擎 + 令牌桥接（@theme inline 把既有
+ *   --bg/--panel/--text… 映射为 shadcn 语义色），不定义任何具体颜色 ——
+ *   真正的色板仍在 theme.css（浅色 Linear 基准 + 深色伴生）。
+ *   main.ts 中必须先 import 本文件再 import theme.css，
+ *   保证 theme.css 的组件基样式（button/input）覆盖 preflight。
+ */
+
+@import 'tailwindcss';
+
+/* 项目的深色模式挂在 <html data-theme="dark"> 上，而非 .dark 类 */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  /* shadcn 语义色 → 既有令牌（浅深主题随 data-theme 自动切换） */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--text);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--text-2);
+  --color-border: var(--border-hair);
+  --color-border-soft: var(--border-soft);
+  --color-input: var(--border);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text);
+  --color-accent: var(--hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-hover: var(--hover);
+  --color-side: var(--side);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-ring: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+}
+
+@layer base {
+  /* shadcn 惯例：全元素默认发丝边色（theme.css 中具名边色会按需覆盖） */
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 
 const alias = {
   '@shared': resolve('packages/shared'),
@@ -45,7 +46,7 @@ export default defineConfig({
   renderer: {
     root: resolve('apps/desktop/src/renderer'),
     resolve: { alias },
-    plugins: [vue()],
+    plugins: [vue(), tailwindcss()],
     worker: { format: 'es' },
     build: {
       rollupOptions: {

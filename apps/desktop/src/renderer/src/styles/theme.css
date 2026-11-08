@@ -9,6 +9,9 @@
  * 令牌名与 v3.6+ 全兼容（--bg/--panel/--text…），全组件自动换装。
  */
 
+/* v6.1：包进 @layer base —— 让 Tailwind utilities 层可以覆盖基样式（无层级样式会永远压过层级样式） */
+@layer base {
+
 :root {
   /* 表面 */
   --bg: #f7f8fa;
@@ -303,3 +306,5 @@ input[type='range'] {
 .fade-leave-to {
   opacity: 0;
 }
+
+} /* @layer base */

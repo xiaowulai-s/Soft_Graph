@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
- * v5.3 N1 备份同步独立页：开发文件夹 → 移动硬盘增量备份。
- * 语义：只增不改不删（目标端同名文件绝不覆盖，不同则记冲突跳过）。
- * 设备语义：拔盘自动暂停、插回自动续传（主进程 5s 探活）。
+ * v6.1 备份同步（shadcn-vue 样板页）：开发文件夹 → 移动硬盘增量备份。
+ * 语义：只增不改不删；拔盘自动暂停、插回自动续传（主进程 5s 探活）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatBytes } from '@shared/util'
 import type { BackupDriveInfo, BackupLogEntry, BackupRunState, BackupTask } from '@shared/types'
+import { Badge, Button, Card, Input, Separator } from '@renderer/components/ui'
 
 const tasks = ref<BackupTask[]>([])
 const drives = ref<BackupDriveInfo[]>([])
@@ -15,7 +15,6 @@ const log = ref<BackupLogEntry[]>([])
 const toast = ref('')
 const busy = ref(false)
 
-// ── 新建/编辑表单 ──
 const editing = ref(false)
 const editId = ref('')
 const name = ref('')
@@ -59,13 +58,13 @@ function stateOf(id: string): BackupRunState | null {
   return states.value[id] ?? null
 }
 
-function phaseText(st: BackupRunState | null): string {
-  if (!st) return '未运行'
-  if (st.phase === 'running') return `备份中 · ${st.copied} 新增 / ${st.skipped} 跳过 / ${st.conflicts} 冲突`
-  if (st.phase === 'paused') return st.reason === 'device-lost' ? '已暂停（目标盘已拔出，插回自动续传）' : '已暂停（手动）'
-  if (st.phase === 'done') return `完成 · 新增 ${st.copied} 个 / ${formatBytes(st.bytes)} · 冲突 ${st.conflicts}`
-  if (st.phase === 'stopped') return `已停止 · 已拷贝 ${st.copied} 个`
-  return `错误 · ${st.errors[0] ?? '未知'}`
+function phaseBadge(st: BackupRunState | null): { text: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' } {
+  if (!st) return { text: '未运行', variant: 'secondary' }
+  if (st.phase === 'running') return { text: `备份中 · ${st.copied} 新增 / ${st.skipped} 跳过 / ${st.conflicts} 冲突`, variant: 'default' }
+  if (st.phase === 'paused') return { text: st.reason === 'device-lost' ? '已暂停（目标盘已拔出，插回自动续传）' : '已暂停（手动）', variant: 'warning' }
+  if (st.phase === 'done') return { text: `完成 · 新增 ${st.copied} 个 / ${formatBytes(st.bytes)} · 冲突 ${st.conflicts}`, variant: 'success' }
+  if (st.phase === 'stopped') return { text: `已停止 · 已拷贝 ${st.copied} 个`, variant: 'secondary' }
+  return { text: `错误 · ${st.errors[0] ?? '未知'}`, variant: 'destructive' }
 }
 
 async function act(id: string, op: 'run' | 'pause' | 'resume' | 'stop' | 'delete'): Promise<void> {
@@ -129,16 +128,7 @@ async function saveForm(): Promise<void> {
 function logText(e: BackupLogEntry): string {
   const d = new Date(e.ts)
   const hh = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  const labels: Record<string, string> = {
-    run: '开始',
-    pause: '暂停',
-    resume: '续传',
-    stop: '停止',
-    done: '完成',
-    error: '错误',
-    'device-lost': '拔盘',
-    'device-back': '插回'
-  }
+  const labels: Record<string, string> = { run: '开始', pause: '暂停', resume: '续传', stop: '停止', done: '完成', error: '错误', 'device-lost': '拔盘', 'device-back': '插回' }
   return `${hh} [${labels[e.action] ?? e.action}] ${e.detail}`
 }
 
@@ -147,172 +137,115 @@ onBeforeUnmount(() => unsub())
 </script>
 
 <template>
-  <div class="pg">
-    <div class="pg-head">
-      <span class="pg-title">备份同步</span>
-      <span class="dim">开发文件夹 → 移动硬盘 · 增量只增不改不删 · 拔盘暂停插回续传</span>
+  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
+    <!-- 页头 -->
+    <div class="flex flex-col gap-0.5 pb-1">
+      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">备份同步</h2>
+      <span class="text-[12.5px] text-muted-foreground">开发文件夹 → 移动硬盘 · 增量只增不改不删 · 拔盘暂停插回续传</span>
     </div>
 
-    <div class="pg-stat">
-      <span class="pg-stat-label">目标设备</span>
-      <span class="pg-stat-val mono" :style="{ color: targetPresent || !editing ? 'var(--accent)' : 'var(--danger)' }">
-        {{ removable.length === 0 ? '未检测到可移动磁盘' : removable.map((d) => `${d.letter} ${d.label || '未命名'}（剩 ${formatBytes(d.freeBytes)}）`).join(' · ') }}
+    <!-- 目标设备状态条 -->
+    <Card class="flex items-center gap-3 px-4 py-3">
+      <span class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">目标设备</span>
+      <Badge v-if="removable.length === 0" variant="warning">未检测到可移动磁盘</Badge>
+      <span v-else class="font-mono text-xs text-foreground">
+        {{ removable.map((d) => `${d.letter} ${d.label || '未命名'}（剩 ${formatBytes(d.freeBytes)}）`).join(' · ') }}
       </span>
-      <span class="dim" style="font-size: 11px">按卷标识别目标盘；同一任务换 USB 口不影响识别</span>
-    </div>
+      <span class="ml-auto text-[11px] text-muted-foreground">按卷标识别目标盘；同一任务换 USB 口不影响识别</span>
+    </Card>
 
-    <div class="pg-actions">
-      <button class="primary" @click="startCreate">新建任务</button>
-      <button v-if="editing" class="ghost" @click="editing = false">取消编辑</button>
-      <span class="pg-toast">{{ toast }}</span>
+    <!-- 操作条 -->
+    <div class="flex items-center gap-2.5">
+      <Button @click="startCreate">新建任务</Button>
+      <Button v-if="editing" variant="ghost" @click="editing = false">取消编辑</Button>
+      <span v-if="toast" class="text-xs text-primary">{{ toast }}</span>
     </div>
 
     <!-- 新建 / 编辑表单 -->
-    <div v-if="editing" class="pg-list" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
-      <div style="display: flex; align-items: center; gap: 10px">
-        <span class="dim" style="width: 64px">任务名</span>
-        <input v-model="name" class="pg-input" placeholder="如：dev-workspace" maxlength="60" />
+    <Card v-if="editing" class="flex flex-col gap-3 p-4">
+      <div class="flex items-center gap-3">
+        <span class="w-16 flex-none text-xs text-muted-foreground">任务名</span>
+        <Input v-model="name" placeholder="如：dev-workspace" maxlength="60" class="flex-1" />
       </div>
-      <div style="display: flex; align-items: flex-start; gap: 10px">
-        <span class="dim" style="width: 64px; padding-top: 6px">源目录</span>
-        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px">
-          <div v-for="(s, i) in sources" :key="s" class="bk-src-row">
-            <span class="mono" :title="s">{{ s }}</span>
-            <button class="ghost" @click="sources.splice(i, 1)">移除</button>
+      <div class="flex items-start gap-3">
+        <span class="w-16 flex-none pt-1.5 text-xs text-muted-foreground">源目录</span>
+        <div class="flex flex-1 flex-col gap-1">
+          <div v-for="(s, i) in sources" :key="s" class="flex items-center gap-2 text-[11.5px]">
+            <span class="flex-1 truncate font-mono text-muted-foreground" :title="s">{{ s }}</span>
+            <Button variant="ghost" size="sm" @click="sources.splice(i, 1)">移除</Button>
           </div>
-          <button class="ghost" style="align-self: flex-start" @click="addSource">＋ 添加目录…</button>
+          <Button variant="outline" size="sm" class="self-start" @click="addSource">＋ 添加目录…</Button>
         </div>
       </div>
-      <div style="display: flex; align-items: center; gap: 10px">
-        <span class="dim" style="width: 64px">目标卷标</span>
-        <input v-model="volumeLabel" class="pg-input" placeholder="移动硬盘的卷标（如 Backup）" maxlength="32" />
-        <select v-model="driveLetter" class="pg-input" style="width: 90px">
+      <div class="flex items-center gap-3">
+        <span class="w-16 flex-none text-xs text-muted-foreground">目标卷标</span>
+        <Input v-model="volumeLabel" placeholder="移动硬盘的卷标（如 Backup）" maxlength="32" class="flex-1" />
+        <select v-model="driveLetter" class="h-7 flex-none rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/25">
           <option value="">备用盘符</option>
           <option v-for="d in drives" :key="d.letter" :value="d.letter">{{ d.letter }}</option>
         </select>
       </div>
-      <div v-if="formErr" class="pg-err">{{ formErr }}</div>
-      <div class="pg-actions">
-        <button class="primary" :disabled="!name.trim() || sources.length === 0" @click="saveForm">保存</button>
+      <div v-if="formErr" class="text-xs text-destructive">{{ formErr }}</div>
+      <div class="flex items-center gap-2.5">
+        <Button :disabled="!name.trim() || sources.length === 0" @click="saveForm">保存</Button>
       </div>
-      <span class="dim pg-foot">备份到「目标盘根目录 / 任务名 / 源目录相对路径」。目标端已有文件一律不覆盖：相同则跳过，不同记冲突。</span>
-    </div>
+      <Separator />
+      <span class="text-[11px] text-muted-foreground">
+        备份到「目标盘根目录 / 任务名 / 源目录相对路径」。目标端已有文件一律不覆盖：相同则跳过，不同记冲突。
+      </span>
+    </Card>
 
     <!-- 任务列表 -->
-    <div v-if="tasks.length === 0 && !editing" class="pg-empty">还没有备份任务 —— 点「新建任务」选择源目录与目标盘</div>
-    <div v-else class="pg-list" style="padding: 8px 12px">
-      <div v-for="t in tasks" :key="t.id" class="bk-task">
-        <div class="bk-task-main">
-          <div style="display: flex; align-items: baseline; gap: 8px">
-            <span style="font-weight: 500">{{ t.name }}</span>
-            <span class="dim" style="font-size: 11px">→ 卷标「{{ t.volumeLabel || t.driveLetter }}」 · {{ t.sources.length }} 个源目录</span>
+    <Card v-if="tasks.length === 0 && !editing" class="border-dashed bg-transparent py-8 text-center text-muted-foreground shadow-none">
+      还没有备份任务 —— 点「新建任务」选择源目录与目标盘
+    </Card>
+    <Card v-else-if="tasks.length" class="px-3 py-1.5">
+      <div v-for="t in tasks" :key="t.id" class="flex items-start gap-4 py-3">
+        <div class="flex min-w-0 flex-1 flex-col gap-1">
+          <div class="flex items-baseline gap-2.5">
+            <span class="text-[13px] font-medium text-foreground">{{ t.name }}</span>
+            <span class="text-[11px] text-muted-foreground">→ 卷标「{{ t.volumeLabel || t.driveLetter }}」 · {{ t.sources.length }} 个源目录</span>
           </div>
-          <div class="mono dim bk-srcs" :title="t.sources.join('\n')">{{ t.sources.join('  ·  ') }}</div>
-          <div class="bk-state" :class="stateOf(t.id)?.phase" style="font-size: 12px">{{ phaseText(stateOf(t.id)) }}</div>
-          <div v-if="stateOf(t.id)?.current && stateOf(t.id)?.phase === 'running'" class="mono dim" style="font-size: 10.5px">{{ stateOf(t.id)?.current }}</div>
-          <span class="dim" style="font-size: 11px">
+          <div class="truncate font-mono text-[11px] text-muted-foreground" :title="t.sources.join('\n')">{{ t.sources.join(' · ') }}</div>
+          <div class="mt-0.5 flex items-center gap-2">
+            <Badge :variant="phaseBadge(stateOf(t.id)).variant">{{ phaseBadge(stateOf(t.id)).text }}</Badge>
+          </div>
+          <div v-if="stateOf(t.id)?.current && stateOf(t.id)?.phase === 'running'" class="truncate font-mono text-[10.5px] text-muted-foreground">
+            {{ stateOf(t.id)?.current }}
+          </div>
+          <span class="text-[11px] text-muted-foreground">
             {{ t.lastRunAt ? `上次运行 ${new Date(t.lastRunAt).toLocaleString()}` : '尚未运行' }}
           </span>
         </div>
-        <div class="bk-task-ops">
-          <button v-if="!stateOf(t.id) || ['done', 'stopped', 'error'].includes(stateOf(t.id)!.phase)" class="primary" :disabled="busy" @click="act(t.id, 'run')">运行</button>
-          <button v-if="stateOf(t.id)?.phase === 'running'" class="ghost" :disabled="busy" @click="act(t.id, 'pause')">暂停</button>
-          <button v-if="stateOf(t.id)?.phase === 'paused'" class="primary" :disabled="busy" @click="act(t.id, 'resume')">续传</button>
-          <button v-if="['running', 'paused'].includes(stateOf(t.id)?.phase ?? '')" class="ghost" :disabled="busy" @click="act(t.id, 'stop')">停止</button>
-          <button class="ghost" :disabled="busy" @click="startEdit(t)">编辑</button>
-          <button class="ghost risk" :disabled="busy" @click="act(t.id, 'delete')">删除</button>
+        <div class="flex flex-none flex-wrap justify-end gap-1.5">
+          <Button
+            v-if="!stateOf(t.id) || ['done', 'stopped', 'error'].includes(stateOf(t.id)!.phase)"
+            size="sm"
+            :disabled="busy"
+            @click="act(t.id, 'run')"
+          >
+            运行
+          </Button>
+          <Button v-if="stateOf(t.id)?.phase === 'running'" variant="secondary" size="sm" :disabled="busy" @click="act(t.id, 'pause')">暂停</Button>
+          <Button v-if="stateOf(t.id)?.phase === 'paused'" size="sm" :disabled="busy" @click="act(t.id, 'resume')">续传</Button>
+          <Button v-if="['running', 'paused'].includes(stateOf(t.id)?.phase ?? '')" variant="secondary" size="sm" :disabled="busy" @click="act(t.id, 'stop')">停止</Button>
+          <Button variant="ghost" size="sm" :disabled="busy" @click="startEdit(t)">编辑</Button>
+          <Button variant="ghost" size="sm" class="text-destructive hover:bg-destructive/10 hover:text-destructive" :disabled="busy" @click="act(t.id, 'delete')">删除</Button>
         </div>
       </div>
-    </div>
+    </Card>
 
     <!-- 任务日志 -->
-    <div v-if="log.length" class="pg-list" style="padding: 10px 14px">
-      <div class="pg-stat-label" style="margin-bottom: 6px">任务日志（最近 {{ log.length }} 条）</div>
-      <div v-for="(e, i) in log.slice(0, 30)" :key="i" class="bk-log mono" :class="{ warn: e.action === 'error' || e.action === 'device-lost' }">{{ logText(e) }}</div>
-    </div>
+    <Card v-if="log.length" class="px-4 py-3">
+      <div class="pb-1.5 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">任务日志（最近 {{ log.length }} 条）</div>
+      <div
+        v-for="(e, i) in log.slice(0, 30)"
+        :key="i"
+        class="break-all py-0.5 font-mono text-[11px] leading-relaxed"
+        :class="e.action === 'error' || e.action === 'device-lost' ? 'text-warning' : 'text-muted-foreground'"
+      >
+        {{ logText(e) }}
+      </div>
+    </Card>
   </div>
 </template>
-
-<style scoped>
-.bk-task {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px 4px;
-}
-.bk-task + .bk-task {
-  border-top: 1px solid var(--border-hair);
-}
-.bk-task-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.bk-srcs {
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bk-state {
-  color: var(--text-2);
-}
-.bk-state.running {
-  color: var(--accent);
-}
-.bk-state.paused {
-  color: var(--warning);
-}
-.bk-state.error {
-  color: var(--danger);
-}
-.bk-task-ops {
-  display: flex;
-  gap: 6px;
-  flex: none;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.bk-src-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
-}
-.bk-src-row .mono {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bk-log {
-  font-size: 11px;
-  color: var(--text-2);
-  line-height: 1.8;
-  word-break: break-all;
-}
-.bk-log.warn {
-  color: var(--warning);
-}
-button.risk {
-  color: var(--danger);
-}
-.pg-input {
-  flex: 1;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  color: var(--text);
-  font-size: 12.5px;
-  outline: none;
-}
-.pg-input:focus {
-  border-color: var(--accent);
-}
-select.pg-input {
-  flex: none;
-}
-</style>
