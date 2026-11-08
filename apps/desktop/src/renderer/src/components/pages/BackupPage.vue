@@ -23,6 +23,8 @@ const busy = ref(false)
 const preview = ref<BackupPreviewResult | null>(null)
 const previewingId = ref('')
 const previewFiles = ref(0)
+const previewCurrent = ref('')
+const previewError = ref('')
 const previewTab = ref<'add' | 'update' | 'extra'>('add')
 const deleteExtras = ref(false)
 
@@ -81,7 +83,10 @@ const unsubRun = window.api.onBackupProgress((s) => {
   if (s.phase === 'done' || s.phase === 'stopped' || s.phase === 'error') void load()
 })
 const unsubPreview = window.api.onBackupPreviewProgress((p) => {
-  if (previewingId.value === p.taskId) previewFiles.value = p.files
+  if (previewingId.value === p.taskId) {
+    previewFiles.value = p.files
+    previewCurrent.value = p.current ?? ''
+  }
 })
 
 // 设备热插拔感知：进页后 5s 一查 + 手动刷新
@@ -122,12 +127,15 @@ function mappingText(t: BackupTask): string {
 async function doPreview(id: string): Promise<void> {
   previewingId.value = id
   previewFiles.value = 0
+  previewCurrent.value = ''
   preview.value = null
+  previewError.value = ''
   try {
     const r = await window.api.backupPreview(id)
     if (r.cancelled) return
     if (!r.ok || !r.result) {
-      say(r.error ?? '预览失败', false)
+      previewError.value = r.error ?? '预览失败'
+      say(previewError.value, false)
       return
     }
     preview.value = r.result
@@ -135,6 +143,9 @@ async function doPreview(id: string): Promise<void> {
     deleteExtras.value = false
     say(`预览完成：新增 ${r.result.add} · 更新 ${r.result.update} · 目标多出 ${r.result.deleteExtra}`)
     await load()
+  } catch (e) {
+    previewError.value = `预览异常：${(e as Error).message}`
+    say(previewError.value, false)
   } finally {
     previewingId.value = ''
   }
@@ -200,6 +211,7 @@ function startEdit(t: BackupTask): void {
   volumeLabel.value = t.volumeLabel
   driveLetter.value = t.driveLetter ?? ''
   formErr.value = ''
+  previewError.value = ''
   if (preview.value?.taskId === t.id) preview.value = null
 }
 
@@ -225,25 +237,32 @@ function addMapping(): void {
 
 async function saveForm(): Promise<void> {
   formErr.value = ''
-  const clean = mappings.value.filter((m) => m.from.trim())
-  const r = await window.api.backupSaveTask({
-    task: {
-      id: editId.value || undefined,
-      name: name.value.trim(),
-      mode: mode.value,
-      mappings: clean,
-      excludeDirs: extraExcludes.value.slice(),
-      volumeLabel: volumeLabel.value.trim(),
-      driveLetter: driveLetter.value || undefined
+  try {
+    const clean = mappings.value
+      .filter((m) => m.from.trim())
+      // 关键：展开为纯对象 —— Vue reactive 元素是 Proxy，Electron IPC 结构化克隆不支持 Proxy（静默 DataCloneError）
+      .map((m) => ({ from: String(m.from), to: String(m.to ?? '') }))
+    const r = await window.api.backupSaveTask({
+      task: {
+        id: editId.value || undefined,
+        name: name.value.trim(),
+        mode: mode.value,
+        mappings: clean,
+        excludeDirs: extraExcludes.value.slice(),
+        volumeLabel: volumeLabel.value.trim(),
+        driveLetter: driveLetter.value || undefined
+      }
+    })
+    if (!r.ok) {
+      formErr.value = r.error ?? '保存失败'
+      return
     }
-  })
-  if (!r.ok) {
-    formErr.value = r.error ?? '保存失败'
-    return
+    editing.value = false
+    say(editId.value ? '任务已更新（旧预览已失效）' : '任务已创建 —— 下一步：预览差异')
+    await load()
+  } catch (e) {
+    formErr.value = `保存异常：${(e as Error).message}`
   }
-  editing.value = false
-  say(editId.value ? '任务已更新（旧预览已失效）' : '任务已创建 —— 下一步：预览差异')
-  await load()
 }
 
 async function saveSchedule(): Promise<void> {
@@ -405,7 +424,10 @@ const previewEntries = computed(() => {
                 {{ t.lastRunAt ? `上次运行 ${new Date(t.lastRunAt).toLocaleString()}` : '尚未运行' }}
               </span>
             </div>
-            <div v-if="stateOf(t.id)?.current && stateOf(t.id)?.phase === 'running'" class="truncate font-mono text-[10.5px] text-muted-foreground">
+            <div v-if="previewingId === t.id" class="truncate font-mono text-[10.5px] text-muted-foreground" :title="previewCurrent">
+              正在检查：{{ previewCurrent || '…' }}
+            </div>
+            <div v-else-if="stateOf(t.id)?.current && stateOf(t.id)?.phase === 'running'" class="truncate font-mono text-[10.5px] text-muted-foreground" :title="stateOf(t.id)?.current">
               {{ stateOf(t.id)?.current }}
             </div>
           </div>
@@ -420,6 +442,12 @@ const previewEntries = computed(() => {
             <Button variant="ghost" size="sm" :disabled="busy" @click="startEdit(t)">编辑</Button>
             <Button variant="ghost" size="sm" class="text-destructive hover:bg-destructive/10 hover:text-destructive" :disabled="busy" @click="act(t.id, 'delete')">删除</Button>
           </div>
+        </div>
+
+        <!-- 预览失败：常驻显示（不随 toast 消失） -->
+        <div v-if="previewError && preview?.taskId !== t.id" class="mt-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[12px] text-warning">
+          预览未完成：{{ previewError }}
+          <div class="mt-1 text-[11px] text-muted-foreground">建议：重新插拔目标盘（可能休眠/接触不良）后，再点「预览差异」重试。</div>
         </div>
 
         <!-- 预览报告 -->

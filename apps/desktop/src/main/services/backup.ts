@@ -21,7 +21,7 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { existsSync } from 'node:fs'
+
 import { join, dirname, relative, isAbsolute, resolve, basename } from 'node:path'
 import type { BackupDriveInfo, BackupLogEntry, BackupPreviewResult, BackupRunState, BackupTask } from '@shared/types'
 
@@ -29,6 +29,27 @@ const LOG_CAP = 200
 const DEVICE_POLL_MS = 5_000
 /** 预览采样上限：每区最多返回的明细条数（全量统计仍计算） */
 const SAMPLE_CAP = 200
+/** 单个 fs 操作超时：USB 抽/休眠时 stat 会挂起占满 libuv 线程池，必须快速失败 */
+const FS_TIMEOUT_MS = 12_000
+/** 连续超时次数达此值 → 判定设备失联，中止预览 */
+const FS_TIMEOUT_STRIKES = 3
+
+/** 带超时的 fs promise 包装：超时抛「设备响应超时」；泄漏的操作完成后自动丢弃 */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((res, rej) => {
+    const t = setTimeout(() => rej(new Error(`${what} 响应超时（目标盘可能已断开/休眠）`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        res(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        rej(e)
+      }
+    )
+  })
+}
 
 /** v6.2 默认排除目录名（备份开发文件夹必须跳过这些，否则拷不完） */
 export const DEFAULT_EXCLUDE_DIRS: readonly string[] = [
@@ -128,7 +149,8 @@ export class BackupService {
   /** 预览结果缓存（taskId → 预览），执行前校验 freshness */
   private previews = new Map<string, PreviewInternal>()
   private previewCancelled = new Set<string>()
-  private onPreviewProgress: ((p: { taskId: string; files: number }) => void) | null = null
+  private previewBusy = new Set<string>()
+  private onPreviewProgress: ((p: { taskId: string; files: number; current?: string }) => void) | null = null
 
   constructor(
     private store: StoreLike,
@@ -139,7 +161,7 @@ export class BackupService {
     this.onProgress = fn
   }
 
-  setPreviewProgressSink(fn: (p: { taskId: string; files: number }) => void): void {
+  setPreviewProgressSink(fn: (p: { taskId: string; files: number; current?: string }) => void): void {
     this.onPreviewProgress = fn
   }
 
@@ -277,10 +299,18 @@ Write-SgJson @($out)
   async preview(id: string): Promise<{ ok: boolean; error?: string; result?: BackupPreviewResult; cancelled?: boolean }> {
     const task = this.tasks().find((t) => t.id === id)
     if (!task) return { ok: false, error: '任务不存在' }
+    const act = this.states.get(id)
+    if (act && (act.phase === 'running' || act.phase === 'paused')) return { ok: false, error: '任务正在备份，无法预览' }
+    if (this.previewBusy.has(id)) return { ok: false, error: '预览已在进行中' }
     const targetRoot = await this.resolveTargetRoot(task)
     if (!targetRoot) {
-      this.addLog(id, 'error', `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）`)
-      return { ok: false, error: `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）` }
+      const hint =
+        task.mode === 'explicit'
+          ? '目标路径所在盘未接入'
+          : `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）`
+      this.addLog(id, 'error', hint)
+      this.previewBusy.delete(id)
+      return { ok: false, error: hint }
     }
     const excludeDirs = [...DEFAULT_EXCLUDE_DIRS, ...(task.excludeDirs ?? [])]
     const counts = { add: 0, update: 0, deleteExtra: 0, same: 0 }
@@ -288,16 +318,21 @@ Write-SgJson @($out)
     let bytesToAdd = 0
     const errors: string[] = []
     this.previewCancelled.delete(id)
+    this.previewBusy.add(id)
+    // 设备失联检测：连续 fs 超时计数（USB 抽/休眠时 stat/readdir 会挂起占满 libuv 线程池）
+    const strikes = { fsTimeout: 0 }
     let seen = 0
     let lastTick = 0
-    const tick = (): boolean => {
-      // 返回 false 表示已取消；每 800 个文件上报一次进度
+    let current = ''
+    // 每 400ms 上报一次进度（含当前检查路径）；返回 false 表示已取消
+    const tick = (cur?: string): boolean => {
+      if (cur) current = cur
       seen++
       const now = Date.now()
-      if (now - lastTick > 300) {
+      if (now - lastTick > 400) {
         lastTick = now
         try {
-          this.onPreviewProgress?.({ taskId: id, files: seen })
+          this.onPreviewProgress?.({ taskId: id, files: seen, current })
         } catch {
           /* ignore */
         }
@@ -306,18 +341,40 @@ Write-SgJson @($out)
     }
 
     for (const m of task.mappings) {
-      if (!existsSync(m.from)) {
+      if (!(await fileExists(m.from))) {
         errors.push(`源目录不存在：${m.from}`)
         continue
       }
+      if (this.previewCancelled.has(id)) {
+        this.previewBusy.delete(id)
+        return { ok: false, cancelled: true, error: '预览已取消' }
+      }
       const targetBase = task.mode === 'explicit' && m.to ? resolve(m.to) : targetRoot
       const counter = { n: 0 }
-      const r = await this.previewDir(task, m.from, m.from, targetBase, targetRoot, excludeDirs, counts, samples, errors, counter, tick)
-      if (!r) return { ok: false, cancelled: true, error: '预览已取消' }
+      const r = await this.previewDir(task, m.from, m.from, targetBase, targetRoot, excludeDirs, counts, samples, errors, counter, tick, strikes)
+      if (r === 'cancel') {
+        this.previewBusy.delete(id)
+        return { ok: false, cancelled: true, error: '预览已取消' }
+      }
+      if (r === 'timeout') {
+        this.previewBusy.delete(id)
+        const hint = '目标盘响应超时 —— 设备可能已断开或休眠，请重新插入后重试'
+        this.addLog(id, 'error', hint)
+        return { ok: false, error: hint }
+      }
       bytesToAdd += counter.n
-      if (task.mode === 'explicit' ? existsSync(targetBase) : true) {
-        const r2 = await this.previewExtras(task, m.from, targetBase, targetRoot, excludeDirs, counts, samples, errors, tick)
-        if (!r2) return { ok: false, cancelled: true, error: '预览已取消' }
+      if (task.mode === 'explicit' ? await fileExists(targetBase) : true) {
+        const r2 = await this.previewExtras(task, m.from, targetBase, targetRoot, excludeDirs, counts, samples, errors, tick, strikes)
+        if (r2 === 'cancel') {
+          this.previewBusy.delete(id)
+          return { ok: false, cancelled: true, error: '预览已取消' }
+        }
+        if (r2 === 'timeout') {
+          this.previewBusy.delete(id)
+          const hint = '目标盘响应超时 —— 设备可能已断开或休眠，请重新插入后重试'
+          this.addLog(id, 'error', hint)
+          return { ok: false, error: hint }
+        }
       }
     }
 
@@ -347,6 +404,7 @@ Write-SgJson @($out)
       errors,
       at: result.at
     })
+    this.previewBusy.delete(id)
     this.addLog(id, 'run', `预览完成 —— 新增 ${counts.add} / 更新 ${counts.update} / 目标多出 ${counts.deleteExtra} / 一致 ${counts.same}`)
     return { ok: true, result }
   }
@@ -362,25 +420,32 @@ Write-SgJson @($out)
     samples: { add: PreviewEntry[]; update: PreviewEntry[]; targetExtras: PreviewEntry[] },
     errors: string[],
     bytesCounter: { n: number },
-    tick: () => boolean
-  ): Promise<boolean> {
+    tick: (cur?: string) => boolean,
+    strikes: { fsTimeout: number }
+  ): Promise<'ok' | 'cancel' | 'timeout'> {
     let entries: import('node:fs').Dirent[]
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
+      entries = await withTimeout(fs.readdir(dir, { withFileTypes: true }), FS_TIMEOUT_MS, '读取目录')
     } catch (e) {
+      if ((e as Error).message.includes('响应超时')) {
+        strikes.fsTimeout++
+        if (strikes.fsTimeout >= FS_TIMEOUT_STRIKES) return 'timeout'
+        errors.push(`读取超时 ${dir}`)
+        return 'ok'
+      }
       errors.push(`读取失败 ${dir}：${(e as Error).message}`)
-      return true
+      return 'ok'
     }
     const targetRoot = task.mode === 'explicit' ? targetBase : mirrorFallbackRoot
     for (const e of entries) {
-      if (!tick()) return false
       const full = join(dir, e.name)
+      if (!tick(full)) return 'cancel'
       if (e.isSymbolicLink()) continue // 防循环、防拷出盘外
       const relFromSrc = relative(sourceRoot, full)
       if (isExcluded(relFromSrc, excludeDirs)) continue
       if (e.isDirectory()) {
-        const r = await this.previewDir(task, sourceRoot, full, targetBase, mirrorFallbackRoot, excludeDirs, counts, samples, errors, bytesCounter, tick)
-        if (!r) return false
+        const r = await this.previewDir(task, sourceRoot, full, targetBase, mirrorFallbackRoot, excludeDirs, counts, samples, errors, bytesCounter, tick, strikes)
+        if (r !== 'ok') return r
         continue
       }
       if (!e.isFile()) continue
@@ -390,11 +455,17 @@ Write-SgJson @($out)
         continue
       }
       try {
-        const srcStat = await fs.stat(full)
+        const srcStat = await withTimeout(fs.stat(full), FS_TIMEOUT_MS, '读取源文件')
         let tgtStat: import('node:fs').Stats | null = null
         try {
-          tgtStat = await fs.stat(tp.path)
-        } catch {
+          tgtStat = await withTimeout(fs.stat(tp.path), FS_TIMEOUT_MS, '读取目标文件')
+        } catch (e) {
+          if ((e as Error).message.includes('响应超时')) {
+            strikes.fsTimeout++
+            if (strikes.fsTimeout >= FS_TIMEOUT_STRIKES) return 'timeout'
+            errors.push(`${full}：目标读取超时`)
+            continue
+          }
           tgtStat = null
         }
         const action = decideFile(!!tgtStat, srcStat.size, srcStat.mtimeMs, tgtStat?.size ?? 0, tgtStat?.mtimeMs ?? 0)
@@ -409,10 +480,16 @@ Write-SgJson @($out)
           counts.same++
         }
       } catch (err) {
+        if ((err as Error).message.includes('响应超时')) {
+          strikes.fsTimeout++
+          if (strikes.fsTimeout >= FS_TIMEOUT_STRIKES) return 'timeout'
+          errors.push(`${full}：读取超时`)
+          continue
+        }
         errors.push(`${full}：${(err as Error).message}`)
       }
     }
-    return true
+    return 'ok'
   }
 
   /** 目标多出：目标树里有、源里没有的文件（审阅后删除候选） */
@@ -425,36 +502,41 @@ Write-SgJson @($out)
     counts: { add: number; update: number; deleteExtra: number; same: number },
     samples: { add: PreviewEntry[]; update: PreviewEntry[]; targetExtras: PreviewEntry[] },
     errors: string[],
-    tick: () => boolean
-  ): Promise<boolean> {
-    const walk = async (dir: string): Promise<boolean> => {
-      if (!tick()) return false
+    tick: (cur?: string) => boolean,
+    strikes: { fsTimeout: number }
+  ): Promise<'ok' | 'cancel' | 'timeout'> {
+    const walk = async (dir: string): Promise<'ok' | 'cancel' | 'timeout'> => {
       let entries: import('node:fs').Dirent[]
       try {
-        entries = await fs.readdir(dir, { withFileTypes: true })
+        entries = await withTimeout(fs.readdir(dir, { withFileTypes: true }), FS_TIMEOUT_MS, '读取目录')
       } catch (e) {
+        if ((e as Error).message.includes('响应超时')) {
+          strikes.fsTimeout++
+          if (strikes.fsTimeout >= FS_TIMEOUT_STRIKES) return 'timeout'
+          return 'ok'
+        }
         errors.push(`读取目标失败 ${dir}：${(e as Error).message}`)
-        return true
+        return 'ok'
       }
       for (const e of entries) {
-        if (!tick()) return false
         const full = join(dir, e.name)
+        if (!tick(full)) return 'cancel'
         if (e.isSymbolicLink()) continue
         if (e.isDirectory()) {
           const r = await walk(full)
-          if (!r) return false
+          if (r !== 'ok') return r
           continue
         }
         if (!e.isFile()) continue
         const srcPath = this.extraSourcePath(task, sourceRoot, targetBase, mirrorFallbackRoot, full)
         if (!srcPath) continue
         if (isExcluded(relative(sourceRoot, srcPath) || '', excludeDirs)) continue
-        if (!existsSync(srcPath)) {
+        if (!(await fileExists(srcPath))) {
           counts.deleteExtra++
           if (samples.targetExtras.length < SAMPLE_CAP) {
             let sz = 0
             try {
-              sz = (await fs.stat(full)).size
+              sz = (await withTimeout(fs.stat(full), FS_TIMEOUT_MS, '读取目标文件')).size
             } catch {
               /* ignore */
             }
@@ -462,7 +544,7 @@ Write-SgJson @($out)
           }
         }
       }
-      return true
+      return 'ok'
     }
     return walk(targetBase)
   }
@@ -490,8 +572,12 @@ Write-SgJson @($out)
     if (cur && cur.phase === 'running') return { ok: false, error: '任务已在运行' }
     const targetRoot = await this.resolveTargetRoot(task)
     if (!targetRoot) {
-      this.addLog(id, 'error', `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）`)
-      return { ok: false, error: `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）` }
+      const hint =
+        task.mode === 'explicit'
+          ? '目标路径所在盘未接入'
+          : `目标盘未接入（卷标「${task.volumeLabel || task.driveLetter}」）`
+      this.addLog(id, 'error', hint)
+      return { ok: false, error: hint }
     }
     if (opts?.requireFreshPreview && !this.previews.has(id)) {
       return { ok: false, error: '请先执行「预览差异」再开始备份' }
@@ -539,8 +625,13 @@ Write-SgJson @($out)
     return { ok: true }
   }
 
-  /** 定时无人值守：只新增+更新覆盖，绝不删除；不要求预览 */
+  /** 定时无人值守：只新增+更新覆盖，绝不删除；不要求预览；用户正在交互（预览/执行/暂停）时跳过本轮 */
   async scheduledRun(id: string): Promise<{ ok: boolean; error?: string }> {
+    // 互斥 1：同任务任何活动态（running/paused）都跳过
+    const st = this.states.get(id)
+    if (st && (st.phase === 'running' || st.phase === 'paused')) return { ok: false, error: '任务正在运行' }
+    // 互斥 2：预览进行中（用户正在交互）跳过本轮，避免 USB 带宽争抢拖死预览
+    if (this.previewCancelled.has(id) === false && this.previewBusy.has(id)) return { ok: false, error: '预览进行中' }
     return this.run(id, { deleteExtras: false, requireFreshPreview: false })
   }
 
@@ -612,13 +703,13 @@ Write-SgJson @($out)
 
     for (const m of task.mappings) {
       if (this.cancelled.has(task.id)) break
-      if (!existsSync(m.from)) {
+      if (!(await fileExists(m.from))) {
         st.errors.push(`源目录不存在：${m.from}`)
         continue
       }
       const targetBase = task.mode === 'explicit' && m.to ? resolve(m.to) : targetRoot
       await this.syncDir(task, m.from, m.from, targetBase, targetRoot, excludeDirs, st, errors)
-      if (deleteExtras && existsSync(targetBase) && !this.cancelled.has(task.id)) {
+      if (deleteExtras && (await fileExists(targetBase)) && !this.cancelled.has(task.id)) {
         await this.deleteExtras(task, m.from, targetBase, targetRoot, excludeDirs, st, errors)
       }
     }
@@ -751,7 +842,7 @@ Write-SgJson @($out)
         const srcPath = this.extraSourcePath(task, sourceRoot, targetBase, mirrorFallbackRoot, full)
         if (!srcPath) continue
         if (isExcluded(relative(sourceRoot, srcPath) || '', excludeDirs)) continue
-        if (!existsSync(srcPath)) {
+        if (!(await fileExists(srcPath))) {
           try {
             await fs.unlink(full)
             st.conflicts++ // 复用计数：删除多出数
@@ -766,8 +857,23 @@ Write-SgJson @($out)
 
   // ── 通用 ──
 
+  /**
+   * 目标设备在线检测（按模式分支）：
+   *   explicit：所有映射 to 所在盘符都在线即可（目标路径用户已指定，不依赖卷标）；
+   *   mirror：卷标优先、盘符兑底，返回镜像落盘根。
+   * 返回 null = 未接入。返回值在 explicit 模式下为首个 to 所在盘根（供容量预检）。
+   */
   private async resolveTargetRoot(task: BackupTask): Promise<string | null> {
     const drives = await this.drives()
+    if (task.mode === 'explicit') {
+      const tos = task.mappings.map((m) => resolve(m.to ?? ''))
+      if (!tos.length) return null
+      for (const to of tos) {
+        const letter = to.slice(0, 2).toUpperCase()
+        if (!drives.find((d) => d.letter.toUpperCase() === letter)) return null
+      }
+      return tos[0].slice(0, 3).toUpperCase()
+    }
     if (task.volumeLabel) {
       const hit = drives.find((d) => d.label && d.label.toLowerCase() === task.volumeLabel.toLowerCase())
       if (hit) return hit.letter + '\\'
@@ -787,6 +893,14 @@ Write-SgJson @($out)
     const out: Record<string, BackupRunState> = {}
     for (const [k, v] of this.states) out[k] = v
     return out
+  }
+
+  /** 是否有任何活动（运行/暂停/预览中）—— 定时调度以此决定是否跳过本轮 */
+  anyActive(): boolean {
+    for (const s of this.states.values()) {
+      if (s.phase === 'running' || s.phase === 'paused') return true
+    }
+    return this.previewBusy.size > 0
   }
 
   private push(st: BackupRunState): void {
@@ -811,6 +925,16 @@ Write-SgJson @($out)
     const list = this.log()
     list.unshift({ ts: Date.now(), taskId, action, detail })
     this.store.setKv('backup:log', JSON.stringify(list.slice(0, LOG_CAP)))
+  }
+}
+
+/** 带超时的存在性检查：**绝不用同步 existsSync** —— 同步 fs 对断开/休眠的 USB 盘会冻结整个主进程事件循环 */
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await withTimeout(fs.stat(longPath(p)), FS_TIMEOUT_MS, '读取')
+    return true
+  } catch {
+    return false
   }
 }
 

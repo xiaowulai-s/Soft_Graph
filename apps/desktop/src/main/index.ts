@@ -1033,6 +1033,18 @@ async function bootstrap(): Promise<void> {
   registerIpc()
   createMainWindow()
 
+  // E2E 测试钩子（仅设置 SG_E2E_PICKDIR 环境变量时生效）：
+  // 固定目录选择对话框的返回值（| 分隔轮流），供自动化全流程验收使用。生产环境不生效。
+  if (process.env.SG_E2E_PICKDIR) {
+    const picks = process.env.SG_E2E_PICKDIR.split('|')
+    let pickN = 0
+    dialog.showOpenDialog = async (): Promise<{ canceled: boolean; filePaths: string[] }> => {
+      const p = picks[pickN++ % picks.length]
+      return { canceled: false, filePaths: [p] }
+    }
+    log.info('app', 'E2E 测试钩子已启用：pickDir 固定返回', picks)
+  }
+
   // v3.0.3：应用自更新（electron-updater；dev 不启用，见 updater.ts 守卫）
   initAppUpdater((state) => {
     for (const w of BrowserWindow.getAllWindows()) {
@@ -1052,6 +1064,11 @@ async function bootstrap(): Promise<void> {
       if (!sch?.enabled) return
       const last = Number(store.getKv('backup:sch:lastAt') ?? 0)
       if (Date.now() - last < sch.intervalHours * 3600_000) return
+      // 用户正在交互（预览/执行/暂停）时跳过本轮，避免 USB 带宽争抢
+      if (backup!.anyActive()) {
+        log.info('backup', '定时备份跳过本轮：有任务活动或预览进行中')
+        return
+      }
       const tasks = backup!.tasks()
       if (!tasks.length) return
       store.setKv('backup:sch:lastAt', String(Date.now()))

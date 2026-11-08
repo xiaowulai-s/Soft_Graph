@@ -147,7 +147,7 @@ const api: SoftGraphApi = {
   backupState: () => ipcRenderer.invoke(CH.BACKUP_STATE),
   backupLog: () => ipcRenderer.invoke(CH.BACKUP_LOG),
   onBackupProgress: (cb: (s: import('@shared/types').BackupRunState) => void) => sub(CH.BACKUP_PROGRESS, cb as never),
-  onBackupPreviewProgress: (cb: (p: { taskId: string; files: number }) => void) => sub(CH.BACKUP_PREVIEW_PROGRESS, cb as never),
+  onBackupPreviewProgress: (cb: (p: { taskId: string; files: number; current?: string }) => void) => sub(CH.BACKUP_PREVIEW_PROGRESS, cb as never),
 
   // 事件订阅
   onScanProgress: (cb) => sub(CH.SCAN_SOFTWARE_PROGRESS, cb as never),

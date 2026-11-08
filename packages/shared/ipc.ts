@@ -338,7 +338,7 @@ export interface SoftGraphApi {
   backupState(): Promise<Record<string, import('./types').BackupRunState>>
   backupLog(): Promise<import('./types').BackupLogEntry[]>
   onBackupProgress(cb: (s: import('./types').BackupRunState) => void): () => void
-  onBackupPreviewProgress(cb: (p: { taskId: string; files: number }) => void): () => void
+  onBackupPreviewProgress(cb: (p: { taskId: string; files: number; current?: string }) => void): () => void
 
   // 事件订阅
   onScanProgress(cb: (p: ScanProgress) => void): () => void
