@@ -9,7 +9,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { isValidWingetId, upgradeArgs, interpretUpgradeExit, decodeConsoleOutput } from '../../apps/desktop/src/main/services/winget'
-import { decideFile, resolveTargetPath } from '../../apps/desktop/src/main/services/backup'
+import { decideFile, resolveTargetPath, isExcluded } from '../../apps/desktop/src/main/services/backup'
 import { loadPluginSandboxed } from '../../apps/desktop/src/main/float/plugin-sandbox'
 import { sanitizeAction, sanitizeDatum } from '../../apps/desktop/src/main/float/registry'
 import { BUILTIN_PLUGINS } from '../../apps/desktop/src/main/float/builtin'
@@ -62,32 +62,41 @@ describe('v5.3 C2 winget 模块化', () => {
   })
 })
 
-// ───────────────── N1 备份同步 ─────────────────
+// ───────────────── N1 备份同步（v6.2 审阅式语义） ─────────────────
 
-describe('v5.3 N1 备份纯逻辑', () => {
-  it('decideFile：只增不改不删 —— 目标存在且不同一律 conflict，绝不覆盖', () => {
-    assert.equal(decideFile(false, 100, 1e12, 0, 0), 'copy')
-    assert.equal(decideFile(true, 100, 1e12, 100, 1e12), 'skip')
-    assert.equal(decideFile(true, 100, 1e12, 100, 1e12 + 1000), 'skip', 'mtime 差 1s 内视为同文件')
-    assert.equal(decideFile(true, 100, 1e12, 200, 1e12), 'conflict')
-    assert.equal(decideFile(true, 100, 1e12, 100, 1e12 + 60_000), 'conflict')
+describe('v6.2 N1 备份纯逻辑', () => {
+  it('decideFile：v2 审阅式 —— 目标不同 → update（预览审阅后单向覆盖）', () => {
+    assert.equal(decideFile(false, 100, 1e12, 0, 0), 'add')
+    assert.equal(decideFile(true, 100, 1e12, 100, 1e12), 'same')
+    assert.equal(decideFile(true, 100, 1e12, 100, 1e12 + 1000), 'same', 'mtime 差 1s 内视为同文件')
+    assert.equal(decideFile(true, 100, 1e12, 200, 1e12), 'update', '尺寸不同 → 更新覆盖（经预览确认）')
+    assert.equal(decideFile(true, 100, 1e12, 100, 1e12 + 60_000), 'update', '目标更新 → 仍以源为准（单向）')
   })
 
-  it('resolveTargetPath：正常映射 + 越界拦截', () => {
-    const r = resolveTargetPath('E:\\bk', 'dev', 'C:\\work\\app', 'C:\\work\\app\\src\\a.ts')
+  it('resolveTargetPath：explicit 模式目标 = 显式 to 目录 + 相对路径', () => {
+    const r = resolveTargetPath('E:\\Demo', 'dev', 'D:\\Demo', 'D:\\Demo\\Graph\\a.ts')
     assert.ok(r.ok)
     const p = r.path!.toLowerCase()
-    assert.ok(p.startsWith('e:\\bk\\dev\\'), `目标应落在任务目录内：${p}`)
-    assert.ok(p.endsWith('src\\a.ts'))
-    // 源在源根之外 → 拒绝
-    const bad = resolveTargetPath('E:\\bk', 'dev', 'C:\\work\\app', 'C:\\Windows\\system32\\evil.dll')
+    assert.ok(p.startsWith('e:\\demo\\'), `目标应落在显式 to 目录内：${p}`)
+    assert.ok(p.endsWith('graph\\a.ts'))
+    const bad = resolveTargetPath('E:\\Demo', 'dev', 'D:\\Demo', 'C:\\Windows\\system32\\evil.dll')
     assert.equal(bad.ok, false)
   })
 
-  it('resolveTargetPath：任务名非法字符被替换（不产生子目录逃逸）', () => {
-    const r = resolveTargetPath('E:\\bk', 'a/../b', 'C:\\w', 'C:\\w\\x.txt')
+  it('resolveTargetPath：mirror 模式保留盘符结构（D:\\work → X:\\D\\work）', () => {
+    const r = resolveTargetPath('X:\\', 'dev', 'D:\\work\\app', 'D:\\work\\app\\src\\a.ts', 'mirror')
     assert.ok(r.ok)
-    assert.ok(!r.path!.includes('..'))
+    const p = r.path!.toLowerCase()
+    assert.ok(p.startsWith('x:\\d\\work\\app\\'), `盘符镜像结构：${p}`)
+    assert.ok(p.endsWith('src\\a.ts'))
+  })
+
+  it('isExcluded：默认排除名单命中任一路径段即跳过', () => {
+    assert.equal(isExcluded('app\\node_modules\\lib\\a.js', ['node_modules']), true)
+    assert.equal(isExcluded('node_modules', ['node_modules']), true)
+    assert.equal(isExcluded('app\\src\\a.ts', ['node_modules']), false)
+    assert.equal(isExcluded('app\\Node_Modules\\a.js', ['node_modules']), true, '大小写不敏感')
+    assert.equal(isExcluded('app\\dist\\x', ['dist', 'build']), true)
   })
 })
 

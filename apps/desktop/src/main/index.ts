@@ -605,9 +605,15 @@ function registerIpc(): void {
   // v5.3 N1：备份同步
   h(CH.BACKUP_DRIVES, async () => backup!.drives())
   h(CH.BACKUP_TASKS, async () => backup!.tasks())
-  h(CH.BACKUP_SAVE_TASK, async (payload: { task: Partial<import('@shared/types').BackupTask> & { name: string; sources: string[] } }) => backup!.saveTask(payload.task))
+  h(CH.BACKUP_SAVE_TASK, async (payload: { task: Partial<import('@shared/types').BackupTask> & { name: string } }) => backup!.saveTask(payload.task))
   h(CH.BACKUP_DELETE_TASK, async (payload: { id: string }) => backup!.deleteTask(payload.id))
-  h(CH.BACKUP_RUN, async (payload: { id: string }) => backup!.run(payload.id))
+  h(CH.BACKUP_RUN, async (payload: { id: string; opts?: { deleteExtras?: boolean; requireFreshPreview?: boolean } }) => backup!.run(payload.id, payload.opts))
+  h(CH.BACKUP_PREVIEW, async (payload: { id: string }) => backup!.preview(payload.id))
+  h(CH.BACKUP_PREVIEW_CANCEL, async (payload: { id: string }) => {
+    backup!.cancelPreview(payload.id)
+    return null
+  })
+  h(CH.BACKUP_EXECUTE, async (payload: { id: string; opts: { deleteExtras: boolean } }) => backup!.run(payload.id, { ...payload.opts, requireFreshPreview: true }))
   h(CH.BACKUP_PAUSE, async (payload: { id: string }) => backup!.pause(payload.id))
   h(CH.BACKUP_RESUME, async (payload: { id: string }) => backup!.resume(payload.id))
   h(CH.BACKUP_STOP, async (payload: { id: string }) => backup!.stop(payload.id))
@@ -1018,6 +1024,10 @@ async function bootstrap(): Promise<void> {
         if (!w.isDestroyed()) w.webContents.send(CH.BACKUP_PROGRESS, s)
       }
     })
+    backup.setPreviewProgressSink((p) => {
+      const w = mainWindow
+      if (w && !w.isDestroyed()) w.webContents.send(CH.BACKUP_PREVIEW_PROGRESS, p)
+    })
   }
 
   registerIpc()
@@ -1033,6 +1043,30 @@ async function bootstrap(): Promise<void> {
   // v3.1：定时静默清理调度器（每 15 分钟检查是否到期；到期由 maybeRunScheduledClean 决定执行）
   setInterval(() => void scan.maybeRunScheduledClean().catch(() => {}), 15 * 60_000)
   setTimeout(() => void scan.maybeRunScheduledClean().catch(() => {}), 2 * 60_000)
+
+  // v6.2 备份定时调度：到期且目标盘在线 → 无人值守安全策略（只增改不删）
+  const backupTick = (): void => {
+    try {
+      const s = settings.get()
+      const sch = s.backupSchedule
+      if (!sch?.enabled) return
+      const last = Number(store.getKv('backup:sch:lastAt') ?? 0)
+      if (Date.now() - last < sch.intervalHours * 3600_000) return
+      const tasks = backup!.tasks()
+      if (!tasks.length) return
+      store.setKv('backup:sch:lastAt', String(Date.now()))
+      for (const t of tasks) {
+        void backup!
+          .scheduledRun(t.id)
+          .then((r) => log.info('backup', `定时备份 ${t.name}: ${r.ok ? '已启动' : r.error}`))
+          .catch(() => {})
+      }
+    } catch {
+      /* 调度失败不影响主流程 */
+    }
+  }
+  setInterval(backupTick, 15 * 60_000)
+  setTimeout(backupTick, 90_000)
 
   if (settings.get().float.enabled) {
     float.open()

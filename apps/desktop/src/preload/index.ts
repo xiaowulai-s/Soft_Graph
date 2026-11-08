@@ -137,13 +137,17 @@ const api: SoftGraphApi = {
   backupTasks: () => ipcRenderer.invoke(CH.BACKUP_TASKS),
   backupSaveTask: (payload) => ipcRenderer.invoke(CH.BACKUP_SAVE_TASK, payload),
   backupDeleteTask: (id: string) => ipcRenderer.invoke(CH.BACKUP_DELETE_TASK, { id }),
-  backupRun: (id: string) => ipcRenderer.invoke(CH.BACKUP_RUN, { id }),
+  backupRun: (id: string, opts?: { deleteExtras?: boolean; requireFreshPreview?: boolean }) => ipcRenderer.invoke(CH.BACKUP_RUN, { id, opts }),
+  backupPreview: (id: string) => ipcRenderer.invoke(CH.BACKUP_PREVIEW, { id }),
+  backupCancelPreview: (id: string) => ipcRenderer.invoke(CH.BACKUP_PREVIEW_CANCEL, { id }),
+  backupExecute: (id: string, opts: { deleteExtras: boolean }) => ipcRenderer.invoke(CH.BACKUP_EXECUTE, { id, opts }),
   backupPause: (id: string) => ipcRenderer.invoke(CH.BACKUP_PAUSE, { id }),
   backupResume: (id: string) => ipcRenderer.invoke(CH.BACKUP_RESUME, { id }),
   backupStop: (id: string) => ipcRenderer.invoke(CH.BACKUP_STOP, { id }),
   backupState: () => ipcRenderer.invoke(CH.BACKUP_STATE),
   backupLog: () => ipcRenderer.invoke(CH.BACKUP_LOG),
   onBackupProgress: (cb: (s: import('@shared/types').BackupRunState) => void) => sub(CH.BACKUP_PROGRESS, cb as never),
+  onBackupPreviewProgress: (cb: (p: { taskId: string; files: number }) => void) => sub(CH.BACKUP_PREVIEW_PROGRESS, cb as never),
 
   // 事件订阅
   onScanProgress: (cb) => sub(CH.SCAN_SOFTWARE_PROGRESS, cb as never),

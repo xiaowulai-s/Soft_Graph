@@ -160,6 +160,11 @@ export const CH = {
   BACKUP_STOP: 'backup:stop',
   BACKUP_STATE: 'backup:state',
   BACKUP_LOG: 'backup:log',
+  /** v6.2：审阅式同步 —— 预览差异 / 按策略执行 */
+  BACKUP_PREVIEW: 'backup:preview',
+  BACKUP_EXECUTE: 'backup:execute',
+  BACKUP_PREVIEW_CANCEL: 'backup:previewCancel',
+  BACKUP_PREVIEW_PROGRESS: 'backup:previewProgress',
   /** 主进程 → 渲染层进度推送 */
   BACKUP_PROGRESS: 'backup:progress'
 } as const
@@ -321,15 +326,19 @@ export interface SoftGraphApi {
   // v5.3 N1：备份同步
   backupDrives(): Promise<import('./types').BackupDriveInfo[]>
   backupTasks(): Promise<import('./types').BackupTask[]>
-  backupSaveTask(payload: { task: Partial<import('./types').BackupTask> & { name: string; sources: string[] } }): Promise<{ ok: boolean; id?: string; error?: string }>
+  backupSaveTask(payload: { task: Partial<import('./types').BackupTask> & { name: string } }): Promise<{ ok: boolean; id?: string; error?: string }>
   backupDeleteTask(id: string): Promise<{ ok: boolean; error?: string }>
-  backupRun(id: string): Promise<{ ok: boolean; error?: string }>
+  backupRun(id: string, opts?: { deleteExtras?: boolean; requireFreshPreview?: boolean }): Promise<{ ok: boolean; error?: string }>
+  backupPreview(id: string): Promise<{ ok: boolean; error?: string; result?: import('./types').BackupPreviewResult; cancelled?: boolean }>
+  backupCancelPreview(id: string): Promise<void>
+  backupExecute(id: string, opts: { deleteExtras: boolean }): Promise<{ ok: boolean; error?: string }>
   backupPause(id: string): Promise<{ ok: boolean; error?: string }>
   backupResume(id: string): Promise<{ ok: boolean; error?: string }>
   backupStop(id: string): Promise<{ ok: boolean; error?: string }>
   backupState(): Promise<Record<string, import('./types').BackupRunState>>
   backupLog(): Promise<import('./types').BackupLogEntry[]>
   onBackupProgress(cb: (s: import('./types').BackupRunState) => void): () => void
+  onBackupPreviewProgress(cb: (p: { taskId: string; files: number }) => void): () => void
 
   // 事件订阅
   onScanProgress(cb: (p: ScanProgress) => void): () => void

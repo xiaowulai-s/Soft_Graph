@@ -484,18 +484,43 @@ export interface ScanProgress {
 
 // ───────────────────────── N1 备份同步（v5.3） ─────────────────────────
 
-/** 一个备份任务：源目录集合 → 目标盘根目录下的 <任务名>/ */
+/** 一个备份任务（v6.2 v2）：映射对驱动，支持显式映射与盘符镜像双模式 */
+export interface BackupMapping {
+  /** 源目录（绝对路径） */
+  from: string
+  /** 目标目录（显式模式必填，绝对路径；镜像模式忽略） */
+  to?: string
+}
+
 export interface BackupTask {
   id: string
   name: string
-  /** 源目录（绝对路径，可多个） */
-  sources: string[]
-  /** 目标：优先按卷标匹配移动硬盘；volumeLabel 为空时用 driveLetter */
+  /** explicit = 显式「源→目标」映射对（默认）；mirror = 盘符镜像 */
+  mode: 'explicit' | 'mirror'
+  mappings: BackupMapping[]
+  /** 用户自定义排除目录名（在默认排除基础上追加） */
+  excludeDirs?: string[]
+  /** 目标盘识别：卷标优先，盘符兑底（镜像模式的落盘） */
   volumeLabel: string
-  /** 备用盘符（如 "E:"），卷标匹配不到时使用 */
   driveLetter?: string
   createdAt: number
   lastRunAt?: number
+  lastPreviewAt?: number
+}
+
+/** 预览报告：三区统计 + 采样明细（全量执行时按同一规则重扫） */
+export interface BackupPreviewResult {
+  taskId: string
+  add: number
+  update: number
+  deleteExtra: number
+  same: number
+  bytesToAdd: number
+  sampleAdds: { path: string; sizeBytes: number; targetPath: string }[]
+  sampleUpdates: { path: string; sizeBytes: number; targetPath: string }[]
+  sampleExtras: { path: string; sizeBytes: number; targetPath: string }[]
+  errors: string[]
+  at: number
 }
 
 /** 可用驱动器（Win32_LogicalDisk 提取） */
@@ -666,6 +691,8 @@ export interface AppSettings {
   hotkeyLauncher?: boolean
   /** v3.2 B2：重复文件(GC-11)/超大文件(GC-12)的额外扫描目录 */
   extraScanDirs: string[]
+  /** v6.2 备份定时自动调度：到期且目标盘在线时执行（无人值守安全策略：只增改不删） */
+  backupSchedule?: { enabled: boolean; intervalHours: number }
   float: FloatSettings
 }
 
