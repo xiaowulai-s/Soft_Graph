@@ -522,6 +522,9 @@ Write-SgJson @($out)
         const full = join(dir, e.name)
         if (!tick(full)) return 'cancel'
         if (e.isSymbolicLink()) continue
+        // 剪枝：排除目录（node_modules/.git…）在目标端不下降也不统计 —— 避免扫进数千个无关文件
+        const relToTarget = relative(targetBase, full)
+        if (task.mode === 'explicit' && isExcluded(relToTarget || '', excludeDirs)) continue
         if (e.isDirectory()) {
           const r = await walk(full)
           if (r !== 'ok') return r
@@ -794,9 +797,28 @@ Write-SgJson @($out)
         st.bytes += srcStat.size
         this.push({ ...st })
       } catch (err) {
-        errors.push(`${full}：${(err as Error).message}`)
+        const raw = (err as Error).message
+        let msg = `${full}：${raw}`
+        // NTFS 目录条目损坏（U 盘抽拔/拷贝中断残留）：mkdir/stat 报 UNKNOWN
+        if (raw.includes('UNKNOWN') && (raw.includes('mkdir') || raw.includes('copyfile'))) {
+          msg = `${full}：目标目录已损坏 —— 请对目标盘运行 chkdsk 修复，或删除目标端对应损坏目录后重试`
+        }
+        errors.push(msg)
+        // 前 10 条逐条写入任务日志（用户必须能看到具体错误），之后按需汇总
+        if (errors.length <= 10) {
+          this.addLog(task.id, 'error', msg.length > 300 ? msg.slice(0, 300) : msg)
+        }
         if (errors.length > 100) {
-          this.addLog(task.id, 'error', '错误过多（>100），任务中止')
+          // 汇总错误类型分布，便于定位共性根因
+          const byCode = new Map<string, number>()
+          for (const e of errors) {
+            const m = e.match(/：([^：]*(?:Error|EPERM|EBUSY|ENOENT|EACCES|EPERM|EIO)[^：]*)$/)
+            const code = m ? m[1].slice(0, 80) : e.split('：').pop()!.slice(0, 80)
+            byCode.set(code, (byCode.get(code) ?? 0) + 1)
+          }
+          const top = [...byCode.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+          for (const [code, n] of top) this.addLog(task.id, 'error', `错误类型 ×${n}：${code}`)
+          this.addLog(task.id, 'error', '错误过多（>100），任务中止 —— 详情见上方错误条目与任务卡错误列表')
           this.cancelled.add(task.id)
           return
         }
@@ -828,6 +850,8 @@ Write-SgJson @($out)
           await new Promise((r) => setTimeout(r, 2_000))
         }
         const full = join(dir, e.name)
+        // 剪枝：排除目录在目标端不下降、不删除
+        if (task.mode === 'explicit' && isExcluded(relative(targetBase, full) || '', excludeDirs)) continue
         if (e.isDirectory()) {
           await walk(full)
           try {

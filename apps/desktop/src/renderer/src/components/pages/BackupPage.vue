@@ -6,7 +6,8 @@
  *   设备：进页自动检测 + 5s 轮询 + 手动刷新；拔盘自动暂停、插回续传。
  *   定时：settings.backupSchedule，无人值守安全策略（只增改不删）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import BackupFlowLine from '../BackupFlowLine.vue'
 import { formatBytes } from '@shared/util'
 import type { BackupDriveInfo, BackupLogEntry, BackupPreviewResult, BackupRunState, BackupTask } from '@shared/types'
 import { Badge, Button, Card, Input, Separator } from '@renderer/components/ui'
@@ -79,8 +80,14 @@ async function load(): Promise<void> {
 }
 
 const unsubRun = window.api.onBackupProgress((s) => {
+  const prev = states.value[s.taskId]
   states.value = { ...states.value, [s.taskId]: s }
   if (s.phase === 'done' || s.phase === 'stopped' || s.phase === 'error') void load()
+  // v6.2 动效：完成瞬间触发流动线庆祝（3.2s 后自动收起）
+  if (s.phase === 'done' && prev && prev.phase !== 'done') {
+    celebrated.set(s.taskId, Date.now())
+    setTimeout(() => celebrated.delete(s.taskId), 3400)
+  }
 })
 const unsubPreview = window.api.onBackupPreviewProgress((p) => {
   if (previewingId.value === p.taskId) {
@@ -106,6 +113,35 @@ onBeforeUnmount(() => {
   unsubPreview()
   if (pollTimer) clearInterval(pollTimer)
 })
+
+/** 错误详情展开状态（任务 id 集合） */
+const errExpanded = reactive(new Set<string>())
+/** v6.2 动效：完成庆祝展示中的任务（id → 触发时间） */
+const celebrated = reactive(new Map<string, number>())
+
+/** 流动线是否激活（预览中 / 运行中 / 暂停 / 完成庆祝窗口） */
+function flowModeOf(id: string): 'preview' | 'run' | null {
+  if (previewingId.value === id) return 'preview'
+  const ph = stateOf(id)?.phase
+  if (ph === 'running' || ph === 'paused' || (ph === 'done' && celebrated.has(id))) return 'run'
+  return null
+}
+
+function flowSourceLabel(id: string): string {
+  const t = tasks.value.find((x) => x.id === id)
+  if (!t) return ''
+  return t.mappings[0]?.from ?? ''
+}
+
+function flowTargetLabel(id: string): string {
+  const t = tasks.value.find((x) => x.id === id)
+  if (!t) return ''
+  return t.mode === 'explicit' ? (t.mappings[0]?.to ?? '') : `${t.volumeLabel || t.driveLetter || '目标盘'} 镜像`
+}
+function toggleErrDetail(id: string): void {
+  if (errExpanded.has(id)) errExpanded.delete(id)
+  else errExpanded.add(id)
+}
 
 function stateOf(id: string): BackupRunState | null {
   return states.value[id] ?? null
@@ -429,6 +465,34 @@ const previewEntries = computed(() => {
             </div>
             <div v-else-if="stateOf(t.id)?.current && stateOf(t.id)?.phase === 'running'" class="truncate font-mono text-[10.5px] text-muted-foreground" :title="stateOf(t.id)?.current">
               {{ stateOf(t.id)?.current }}
+            </div>
+            <!-- v6.2 动效：备份过程可视化流动线 -->
+            <BackupFlowLine
+              v-if="flowModeOf(t.id)"
+              :key="t.id + (flowModeOf(t.id) ?? '')"
+              :mode="flowModeOf(t.id)!"
+              :source="flowSourceLabel(t.id)"
+              :target="flowTargetLabel(t.id)"
+              :copied="stateOf(t.id)?.copied ?? 0"
+              :bytes="stateOf(t.id)?.bytes ?? 0"
+              :scanned="previewingId === t.id ? previewFiles : 0"
+              :current="previewingId === t.id ? previewCurrent : (stateOf(t.id)?.current ?? '')"
+              :paused="stateOf(t.id)?.phase === 'paused'"
+              :celebrate="celebrated.get(t.id) ?? 0"
+            />
+            <!-- 运行错误详情：常驻可见，可展开 -->
+            <div
+              v-if="(stateOf(t.id)?.errors?.length ?? 0) > 0 && ['error', 'stopped', 'done', 'paused'].includes(stateOf(t.id)?.phase ?? '')"
+              class="mt-1.5 rounded-lg border border-destructive/30 bg-destructive/5 p-2"
+            >
+              <button class="flex w-full items-center gap-1 text-left text-[11px] font-medium text-destructive" @click="toggleErrDetail(t.id)">
+                <span>{{ errExpanded.has(t.id) ? '▾' : '▸' }} 错误详情 {{ stateOf(t.id)!.errors.length }} 条</span>
+              </button>
+              <div v-if="errExpanded.has(t.id)" class="mt-1 max-h-40 space-y-0.5 overflow-y-auto font-mono text-[10.5px] text-muted-foreground">
+                <div v-for="(e, i) in stateOf(t.id)!.errors.slice(0, 50)" :key="i" class="break-all" :title="e">{{ e }}</div>
+                <div v-if="stateOf(t.id)!.errors.length > 50" class="text-[10px]">…仅显示前 50 条，完整信息见任务日志</div>
+              </div>
+              <div v-else class="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground" :title="stateOf(t.id)!.errors[0]">{{ stateOf(t.id)!.errors[0] }}</div>
             </div>
           </div>
           <div class="flex flex-none flex-wrap justify-end gap-1.5">
