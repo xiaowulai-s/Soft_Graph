@@ -703,6 +703,8 @@ Write-SgJson @($out)
     const st = this.states.get(task.id)!
     const excludeDirs = [...DEFAULT_EXCLUDE_DIRS, ...(task.excludeDirs ?? [])]
     const errors: string[] = []
+    // 本轮执行中发现的损坏目标目录（整棵子树跳过，避免每文件一条错误）
+    const corruptDirs = new Set<string>()
 
     for (const m of task.mappings) {
       if (this.cancelled.has(task.id)) break
@@ -711,7 +713,7 @@ Write-SgJson @($out)
         continue
       }
       const targetBase = task.mode === 'explicit' && m.to ? resolve(m.to) : targetRoot
-      await this.syncDir(task, m.from, m.from, targetBase, targetRoot, excludeDirs, st, errors)
+      await this.syncDir(task, m.from, m.from, targetBase, targetRoot, excludeDirs, st, errors, corruptDirs)
       if (deleteExtras && (await fileExists(targetBase)) && !this.cancelled.has(task.id)) {
         await this.deleteExtras(task, m.from, targetBase, targetRoot, excludeDirs, st, errors)
       }
@@ -745,7 +747,8 @@ Write-SgJson @($out)
     mirrorFallbackRoot: string,
     excludeDirs: readonly string[],
     st: BackupRunState,
-    errors: string[]
+    errors: string[],
+    corruptDirs: Set<string>
   ): Promise<void> {
     let entries: import('node:fs').Dirent[]
     try {
@@ -765,7 +768,10 @@ Write-SgJson @($out)
       const relFromSrc = relative(sourceRoot, full)
       if (isExcluded(relFromSrc, excludeDirs)) continue
       if (e.isDirectory()) {
-        await this.syncDir(task, sourceRoot, full, targetBase, mirrorFallbackRoot, excludeDirs, st, errors)
+        const tp = resolveTargetPath(targetRoot, task.name, sourceRoot, full, task.mode === 'mirror' ? 'mirror' : 'explicit')
+        // 已知损坏目录的子树直接跳过（避免每个文件刷一条错误）
+        if (tp.ok && tp.path && this.underCorrupt(tp.path, corruptDirs)) continue
+        await this.syncDir(task, sourceRoot, full, targetBase, mirrorFallbackRoot, excludeDirs, st, errors, corruptDirs)
         continue
       }
       if (!e.isFile()) continue
@@ -799,9 +805,18 @@ Write-SgJson @($out)
       } catch (err) {
         const raw = (err as Error).message
         let msg = `${full}：${raw}`
-        // NTFS 目录条目损坏（U 盘抽拔/拷贝中断残留）：mkdir/stat 报 UNKNOWN
+        // NTFS 目录条目损坏（U 盘抽拔/拷贝中断残留）：mkdir/copyfile 报 UNKNOWN
         if (raw.includes('UNKNOWN') && (raw.includes('mkdir') || raw.includes('copyfile'))) {
-          msg = `${full}：目标目录已损坏 —— 请对目标盘运行 chkdsk 修复，或删除目标端对应损坏目录后重试`
+          // 定位损坏祖先目录并整棵标记跳过 —— 一次提示替代每个文件一条错误
+          const bad = await this.findCorruptAncestor(tp.path)
+          if (bad) {
+            corruptDirs.add(bad)
+            const hint = `目标目录已损坏，已整棵跳过：${bad} —— 请对该盘运行 chkdsk /f 修复后重试（修复后该目录会正常备份）`
+            errors.push(hint)
+            this.addLog(task.id, 'error', hint)
+            continue
+          }
+          msg = `${full}：目标目录可能已损坏 —— 请对该盘运行 chkdsk /f 修复后重试`
         }
         errors.push(msg)
         // 前 10 条逐条写入任务日志（用户必须能看到具体错误），之后按需汇总
@@ -824,6 +839,35 @@ Write-SgJson @($out)
         }
       }
     }
+  }
+
+  /** 目标路径是否落在已知损坏目录之下 */
+  private underCorrupt(p: string, corruptDirs: Set<string>): boolean {
+    const lp = p.toLowerCase()
+    for (const d of corruptDirs) {
+      if (lp.startsWith(d.toLowerCase() + '\\')) return true
+    }
+    return false
+  }
+
+  /** mkdir UNKNOWN 时向上定位最远的损坏祖先（readdir 抛 UNKNOWN 的存在目录） */
+  private async findCorruptAncestor(targetPath: string): Promise<string | null> {
+    let dir = dirname(resolve(targetPath))
+    let bad: string | null = null
+    for (let i = 0; i < 20 && dir.length > 3; i++) {
+      try {
+        await fs.readdir(dir)
+      } catch (e) {
+        const raw = (e as Error).message
+        if (raw.includes('UNKNOWN')) {
+          bad = dir // 越往上越靠近损坏源头，记录后继续向上找更远的
+        } else {
+          break
+        }
+      }
+      dir = dirname(dir)
+    }
+    return bad
   }
 
   /** 审阅删除：删除目标树里源中不存在的文件（仅显式确认 deleteExtras 后调用） */

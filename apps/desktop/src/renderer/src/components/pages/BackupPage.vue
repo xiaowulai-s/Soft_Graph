@@ -147,6 +147,23 @@ function stateOf(id: string): BackupRunState | null {
   return states.value[id] ?? null
 }
 
+/** 复制任务日志到剪贴板（最近 30 条） */
+const copiedLog = ref(false)
+async function copyLog(): Promise<void> {
+  const text = log
+    .value.slice(0, 30)
+    .map((e) => logText(e))
+    .reverse()
+    .join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedLog.value = true
+    setTimeout(() => (copiedLog.value = false), 1600)
+  } catch {
+    say('复制失败：请手动选中文本复制（日志区域已允许选中）', false)
+  }
+}
+
 function phaseBadge(st: BackupRunState | null): { text: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'destructive' } {
   if (!st) return { text: '未运行', variant: 'secondary' }
   if (st.phase === 'running') return { text: `备份中 · ${st.copied} 新增/更新 / ${st.skipped} 跳过${st.conflicts ? ` / ${st.conflicts} 删除多出` : ''}`, variant: 'default' }
@@ -575,11 +592,14 @@ const previewEntries = computed(() => {
 
     <!-- 日志 -->
     <Card v-if="log.length" class="px-4 py-3">
-      <div class="pb-1.5 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">任务日志（最近 {{ log.length }} 条）</div>
+      <div class="flex items-center justify-between pb-1.5">
+        <div class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">任务日志（最近 {{ log.length }} 条）</div>
+        <Button variant="ghost" size="sm" @click="copyLog">{{ copiedLog ? '已复制 ✓' : '复制日志' }}</Button>
+      </div>
       <div
         v-for="(e, i) in log.slice(0, 30)"
         :key="i"
-        class="break-all py-0.5 font-mono text-[11px] leading-relaxed"
+        class="break-all py-0.5 font-mono text-[11px] leading-relaxed select-text"
         :class="e.action === 'error' || e.action === 'device-lost' ? 'text-warning' : 'text-muted-foreground'"
       >
         {{ logText(e) }}
