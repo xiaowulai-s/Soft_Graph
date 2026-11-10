@@ -13,9 +13,8 @@
   - `SoftGraph-1.0.0-portable.exe`（85.14 MB，免安装便携版）
 - Release 说明全文：`docs/RELEASE_NOTES_v1.0.0.md`
 
-**当前主线**：v3.0.0（进行中）— 见 [`docs/08-v3.0.0-开发计划.md`](docs/08-v3.0.0-开发计划.md)
-**历史计划**：v2.0.0 — 见 [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md)
-**当前待决策**：是否引入可选原生模块（决定 USN 增量 / Restart Manager / API Set 动态映射的实现路线）
+**当前版本**：v6.2.4（2026-11-10 本地构建，覆盖安装验证，未发 GitHub Release）
+**历史计划**：v2.0.0 — 见 [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md)；v3.0.0 — 见 [`docs/08-v3.0.0-开发计划.md`](docs/08-v3.0.0-开发计划.md)
 
 ---
 
@@ -821,7 +820,28 @@ Usn               : 22712337088
 - 官方插件增至 4 个；S3b（浮窗应用卡）待插件 API v2（点击动作能力）
 - 测试 494/494 绿 · tag=e2b60e6
 
-## 排期（截至 v4.1.0）
+## v6.2.0 ~ v6.2.4 —— 备份同步打磨 + DiskMirror 界面 + 数据安全（2026-11-09/10）
+
+- **v6.2.0**：Input 组件改 defineModel 标准实现（修选目录不回填 / v-model 打字不同步）；目标盘同步 fs 全量异步化（根除 `existsSync` 冻结主进程）+ fs 超时保护 + 预览失败常驻显示
+- **v6.2.1**：修复附件覆盖安装后版本号未变导致 electron-updater 判无更新
+- **v6.2.2**：备份过程可视化动效 + 错误完全可观测 + 目标端剪枝；损坏目录整树跳过 + 日志可复制
+- **v6.2.3**：
+  - 复刻 DiskMirror 界面（仪表盘 / 任务 / 预览 / 日志记录四页皮肤化，品牌 SG）
+  - 备份三页合并：侧栏 4→3，抽 5 个公共组件（DmTaskEditor / DmTaskCard / DmDriveTable / DmLogTable / DmScheduleBox）
+  - 「立即同步」改预览差异 → 确认 → 执行（DmSyncConfirm，只增改不删）
+  - 排除构建产物：26 条 excludeDirs 内置 + `isAsarArtifact()` 跳过 .asar 伪目录 + isExcluded 通配/结尾匹配
+  - 启用 30 分钟自动备份（intervalHours 0.5，分钟制调度，修复 Math.max 夹逼）
+  - 同步演出动效：扫描/预览/传输/完成四阶段，vivid/calm 两档（document.hidden + 掉帧自动降档），rAF 实测 60fps
+  - 侧栏平铺 13 项（DM_FLAT_ORDER）+ 软件总仪表盘 12 模块卡（dmOverview 轻数据启动 + 60s 轮询）+ 全站工具页卡片流（dm-tool-flow）；设置移至最末
+- **v6.2.4（数据安全专项）**：
+  - **数据目录互斥锁** `services/data-lock.ts`：独立 `--user-data-dir` 的第二实例会绕过 Electron 单实例锁却共享数据目录，两实例周期 flush 互覆快照（settings.json 曾被冲空）。锁以数据目录为作用域（data.lock，'wx' 独占创建 + pid 探活接管崩溃残留 + 只释放自己的锁）；被拒实例弹窗提示
+  - **`SG_DATA_DIR` 环境变量**：调试实例重定向数据根，与真实数据物理隔离
+  - **before-quit 退出清理修复**：Electron 不等待 async 监听器 Promise，quit 流程提前走完导致 settings.json 被写成 0 字节、锁残留。改为 preventDefault + 清理跑完（8s 超时保险）再主动 quit
+  - **升级安装旁路** `services/quit-flag.ts`：electron-updater quitAndInstall 先启动安装器，markQuitDirect 跳过清理延迟避免撞 app.asar 文件锁
+  - 新增 `tests/unit/data-lock.test.ts` 7 用例；真机闭环验证：持锁 → 第二实例被拒 → 退出 → 锁释放 + settings 完整留存（842B）
+- 测试 535 用例 534 pass 0 fail 1 skipped · commit cff5c28
+
+## 排期（截至 v6.2.4）
 
 | 待办 | 状态 |
 |---|---|
