@@ -16,7 +16,7 @@
 
 ### 直接运行（推荐）
 
-到 [Releases](https://github.com/xiaowulai-s/Soft_Graph/releases/latest) 下载（当前 v6.2.4），或用仓库根目录构建：
+到 [Releases](https://github.com/xiaowulai-s/Soft_Graph/releases/latest) 下载（当前 v6.2.5），或用仓库根目录构建：
 
 ```bash
 npm install                 # 已内置 npmmirror 镜像配置（.npmrc）
@@ -29,8 +29,8 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 
 | 文件 | 说明 |
 |---|---|
-| `SoftGraph Setup 6.2.4.exe` | NSIS 安装包（约 90 MB），可选安装目录、创建快捷方式 |
-| `SoftGraph-6.2.4-portable.exe` | 免安装便携版（约 90 MB），双击即用 |
+| `SoftGraph Setup 6.2.5.exe` | NSIS 安装包（约 90 MB），可选安装目录、创建快捷方式 |
+| `SoftGraph-6.2.5-portable.exe` | 免安装便携版（约 90 MB），双击即用 |
 | `latest.yml` + `.blockmap` | electron-updater 自动更新元数据 |
 
 > 未做代码签名（正式证书待接入，见 [`docs/07-代码签名.md`](docs/07-代码签名.md)），
@@ -39,10 +39,10 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 
 ### 首次使用
 
-1. 点顶栏「扫描软件」→ 等待约 20~30 秒（本机实测收录 318 个软件，含 47 个便携软件）
-2. 左侧点选任一软件 → 中间自动构建依赖图谱
-3. 鼠标移到任意文件节点 → 显示完整路径等七项详情
-4. 右侧点「开始扫描」→ 查看 15 类垃圾分布，勾选后「分类删除」或「一键删除」
+1. 启动即见**软件总仪表盘**：收软件 320 / 可回收垃圾 196.5 GB / 磁盘占用 / 备份任务数，12 个模块卡点击直达
+2. 左侧「软件图谱」→ 选任一软件 → 自动构建依赖图谱；鼠标移到节点显示完整路径等七项详情
+3. 「垃圾清理」→ 开始扫描 → 按分类勾选 →「分类删除」或「一键删除」（默认进隔离区可还原）
+4. 「备份同步」→ 新增映射组（目录对 + 目标盘）→ 预览差异 → 确认同步（只增改不删）→ 可开启 30 分钟自动同步
 
 ---
 
@@ -93,13 +93,13 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 
 ## 界面
 
-| 主界面（空态） | 图谱 + 悬停详情 + 右键菜单 |
+| 软件总仪表盘（启动首页） | 软件图谱 + 依赖详情 |
 |---|---|
-| ![主界面](docs/screenshots/主界面-空态.png) | ![图谱悬停](docs/screenshots/图谱-悬停详情-右键菜单.png) |
+| ![仪表盘](docs/screenshots/仪表盘-软件总览.png) | ![软件图谱](docs/screenshots/软件图谱-依赖详情.png) |
 
-| 垃圾扫描完成态 |
-|---|
-| ![垃圾扫描](docs/screenshots/垃圾扫描-完成态.png) |
+| 垃圾清理（扫描完成态） | 备份同步（任务与拓扑） |
+|---|---|
+| ![垃圾清理](docs/screenshots/垃圾清理-扫描完成.png) | ![备份同步](docs/screenshots/备份同步-任务与拓扑.png) |
 
 ---
 
@@ -107,10 +107,11 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 
 | 项目 | 结果 |
 |---|---|
-| 软件收录 | **318 个**（已装 271 / 便携 47），枚举 19~28s |
+| 软件收录 | **320 个**（已装 314 / 便携 6），枚举 19~28s |
 | 依赖解析 | Siemens NX 2506（11.75GB 目录）→ **6027 个依赖**，17s |
-| 图谱渲染 | BaiduNetdisk → 634 节点 / 633 边，力学收敛 151 次 647ms |
-| 垃圾扫描 | 全量 15 类 → **17.31 GB / 14110+ 项**，约 160s（13 类时期基准） |
+| 图谱渲染 | 阿里云盘 → 111 依赖，径向布局秒级收敛；BaiduNetdisk → 634 节点 / 633 边 |
+| 垃圾扫描 | 全量 18 类 → **196.5 GB / 92,255 项**（2026-11 实测，含重复文件与缓存类） |
+| 备份同步 | 预览差异（61 新增 / 89 更新 / 24 万已一致）→ 确认 → 写入，传输动效 rAF 实测 60fps |
 | 安全校验 | 扫描结果中受保护路径条目数 **0** |
 
 详见 [`docs/04-验证报告.md`](docs/04-验证报告.md)。
@@ -143,7 +144,7 @@ npm run pack:win            # 产出 release/<版本>/ 下的安装包 + 便携�
 | 实例互斥锁 | `%LOCALAPPDATA%\SoftGraph\data.lock`（同数据目录仅允许一个实例；调试并行时用 `SG_DATA_DIR` 指向独立目录） |
 | 图标缓存 | `%LOCALAPPDATA%\SoftGraph\cache\icons\` |
 | 隔离区 | `%LOCALAPPDATA%\SoftGraph\Quarantine\<批次>\manifest.json` |
-| 垃圾规则 | `%LOCALAPPDATA%\SoftGraph\rules\junk-rules.json`（可自行增改，重启生效） |
+| 垃圾规则 | 分区模型：内置规则随应用打包（不落盘）⊕ `%LOCALAPPDATA%\SoftGraph\rules\community-rules.json`（Winapp2 导入与在线更新）⊕ `user-rules.json`（用户自定义，永不覆盖） |
 | 浮窗插件 | `%LOCALAPPDATA%\SoftGraph\plugins\` |
 | 导出报告 | `%LOCALAPPDATA%\SoftGraph\reports\` |
 

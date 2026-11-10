@@ -13,7 +13,7 @@
   - `SoftGraph-1.0.0-portable.exe`（85.14 MB，免安装便携版）
 - Release 说明全文：`docs/RELEASE_NOTES_v1.0.0.md`
 
-**当前版本**：v6.2.4（2026-11-10 本地构建，覆盖安装验证，未发 GitHub Release）
+**当前版本**：v6.2.5（2026-11-10 已发 GitHub Release）
 **历史计划**：v2.0.0 — 见 [`docs/06-v2.0.0-开发计划.md`](docs/06-v2.0.0-开发计划.md)；v3.0.0 — 见 [`docs/08-v3.0.0-开发计划.md`](docs/08-v3.0.0-开发计划.md)
 
 ---
@@ -851,3 +851,11 @@ Usn               : 22712337088
 | A1 插件沙箱 | 观察项：第三方插件多了再评估沙箱化（现 vm 沙箱提取 manifest + 权限授权） |
 | C2 winget 模块化 | 待 Microsoft.WinGet.Client 模块成熟后迁移（现以文本解析+回归测试锁定） |
 | Gitee 令牌轮换 | 维护者在 Gitee 后台吊销旧令牌 → 更新 .keys/gitee-token（脚本免改，读环境变量/文件均可） |
+
+
+## v6.2.5 —— 图谱页布局回归修复（2026-11-10）
+
+- **修复 v6.2.3 引入的回归**：全站卡片流改造把 .dm-legacy 覆盖为 block + overflow-y:auto，图谱页三栏布局失去高度约束 —— 320 项软件列表自然高度撑爆 .mid-canvas（svg 高达 17019px），画布内容绘制在可视区外，图谱页不可用
+- 修复：dm-legacy.is-graph 恢复 flex 满高链（.dm-content-tools 经 :has() 同步恢复 flex + overflow:hidden + padding:0），列表恢复内部滚动（1130 可视 / 16982 全量）
+- CDP 真机验证：阿里云盘 111 依赖径向图谱正常渲染；typecheck 绿 / 535 用例 534 pass
+- README 界面截图全部更新为 6.2.x 新 UI（仪表盘 / 软件图谱 / 垃圾清理 / 备份同步），实测数据刷新（320 软件 / 196.5 GB / 92,255 项 18 类）

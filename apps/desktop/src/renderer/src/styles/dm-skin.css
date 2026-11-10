@@ -639,3 +639,10 @@
   padding: 14px 16px;
 }
 .dm-tool-flow { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+/* ── 图谱页例外：满高三栏布局（列表内滚动 + 画布填充），不参与卡片流滚动 ──
+   卡片流的 block + overflow-y:auto 会让 .body 失去高度约束，320 项列表自然高度
+   撑爆 .mid-canvas（v6.2.3 回归，README 截图验证时发现）。is-graph 恢复满高约束 */
+.dm-legacy.is-graph { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+/* 父级 .dm-content-tools 在卡片流模式是 block + overflow-y:auto，图谱页需要恢复 flex 满高链 */
+.dm-content.dm-content-tools:has(> .dm-legacy.is-graph) { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.dm-legacy.is-graph .sg-main { border: none; box-shadow: none; padding: 0; background: transparent; height: 100%; }

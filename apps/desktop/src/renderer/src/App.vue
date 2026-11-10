@@ -786,7 +786,7 @@ function ctxAction(kind: 'reveal' | 'copy' | 'focus' | 'hide' | 'reverse'): void
           @navigate="onDmNavigate"
           @theme="onThemeChange"
         />
-        <div v-else class="dm-legacy">
+        <div v-else class="dm-legacy" :class="{ 'is-graph': isGraph }">
           <div class="sg-main">
 
 
