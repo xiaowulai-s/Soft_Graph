@@ -66,12 +66,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
-    <div class="flex flex-col gap-0.5 pb-1">
-      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">软件升级</h2>
-      <span class="text-[12.5px] text-muted-foreground">winget 升级管家 · 静默升级 · 需管理员时自动提示提权重试</span>
-    </div>
-
+  <div class="dm-tool-flow">
     <!-- 统计卡 -->
     <div class="grid grid-cols-4 gap-3">
       <Card hoverable class="gap-0.5 p-4">

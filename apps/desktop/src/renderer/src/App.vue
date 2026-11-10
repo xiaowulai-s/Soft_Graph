@@ -17,25 +17,31 @@ import type {
   ScanProgress,
   SoftwareItem
 } from '@shared/types'
-import { formatBytes, formatDuration, formatTime } from '@shared/util'
+import { formatBytes, formatDuration } from '@shared/util'
 import SoftwareList from './components/SoftwareList.vue'
 import GraphCanvas from './components/GraphCanvas.vue'
 import JunkSidebar from './components/JunkSidebar.vue'
-import { Card } from './components/ui'
 import ConfirmDelete from './components/ConfirmDelete.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
 import MaintenanceCenter from './components/MaintenanceCenter.vue'
 import DiskTreemap from './components/DiskTreemap.vue'
-import ActivityBar from './components/ActivityBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
-import DashboardHome from './components/DashboardHome.vue'
+import DmSidebar from './components/dm/DmSidebar.vue'
+import DmTopbar from './components/dm/DmTopbar.vue'
+import DmToastStack from './components/dm/DmToastStack.vue'
+import DmSyncConfirm from './components/dm/DmSyncConfirm.vue'
+import DmSummaryFloat from './components/dm/DmSummaryFloat.vue'
+import DmPreviewProgress from './components/dm/DmPreviewProgress.vue'
+import DmDashboard from './components/dm/DmDashboard.vue'
+import DmGroups from './components/dm/DmGroups.vue'
+import DmSettings from './components/dm/DmSettings.vue'
+import { isDmTab, startDmState, stopDmState } from './components/dm/dmState'
 import StartupPage from './components/pages/StartupPage.vue'
 import UpgradePage from './components/pages/UpgradePage.vue'
 import RegistryPage from './components/pages/RegistryPage.vue'
 import ManifestPage from './components/pages/ManifestPage.vue'
 import SimilarImagesPage from './components/pages/SimilarImagesPage.vue'
 import SchedulePage from './components/pages/SchedulePage.vue'
-import BackupPage from './components/pages/BackupPage.vue'
 import MarketPage from './components/pages/MarketPage.vue'
 import { NAV_MODULES } from './nav'
 
@@ -83,12 +89,23 @@ const layoutMode = ref<'radial' | 'force' | 'cluster'>('radial')
 // 面板折叠 / 画布全屏
 const leftOpen = ref(true)
 // v3.4：主视图由导航注册表驱动（graph/junk/maintenance，未来追加）
-const mainView = ref<string>('dashboard')
+const mainView = ref<string>('dm-dashboard')
 const treemapOpen = ref(false)
 // v5.0 命令面板 / 工具箱跳转
 const paletteOpen = ref(false)
-function onDashNav(view: string): void {
-  mainView.value = view
+/** 旧 view id → DiskMirror 4 主 Tab（命令面板 / 快捷入口仍用旧 id） */
+const LEGACY_VIEW_MAP: Record<string, string> = {
+  dashboard: 'dm-dashboard',
+  settings: 'dm-settings',
+  backup: 'dm-groups',
+  'dm-logs': 'dm-groups'
+}
+function normalizeView(view: string): string {
+  return LEGACY_VIEW_MAP[view] ?? view
+}
+/** 新侧栏 / 顶栏 / 3 页内部导航：顺带兼容旧 dm-logs / backup 等 id */
+function onDmNavigate(view: string): void {
+  mainView.value = normalizeView(view)
 }
 // v5.1 N2：检查升级（按名称模糊匹配 winget 列表）
 async function onUpgradeSoftware(name: string): Promise<void> {
@@ -136,7 +153,7 @@ function onPaletteRun(cmd: { view: string; tool?: string; action?: string }): vo
     void scanJunk(false)
     return
   }
-  mainView.value = cmd.view
+  mainView.value = normalizeView(cmd.view)
 }
 const isGraph = computed(() => mainView.value === 'graph')
 // v3.8.1：顶栏更新入口 —— 常驻 ⟳，有更新时角标点亮；点击直达维护中心「扫描与更新」并自动检查
@@ -145,6 +162,8 @@ const appUpdatePhase = ref<string>('')
 const updateDot = computed(() => ['available', 'downloading', 'downloaded'].includes(appUpdatePhase.value))
 let updateUnsub: (() => void) | null = null
 onMounted(() => {
+  // DiskMirror 风格 4 页的共享状态（IPC 拉取 + 10s 轮询 + 进度订阅）
+  startDmState()
   // v5.0：Ctrl+K 命令面板
   window.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -164,13 +183,13 @@ onMounted(() => {
   })
 })
 onBeforeUnmount(() => {
+  stopDmState()
   updateUnsub?.()
   updateUnsub = null
 })
 function openUpdateCenter(): void {
-  mainView.value = 'settings'
+  mainView.value = 'dm-settings'
 }
-const rightOpen = ref(true)
 const canvasFull = ref(false)
 
 const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null)
@@ -751,114 +770,24 @@ function ctxAction(kind: 'reveal' | 'copy' | 'focus' | 'hide' | 'reverse'): void
   contextMenu.value = null
 }
 
-const statusText = computed(() => {
-  const parts: string[] = []
-  parts.push(`已收录 ${software.value.length} 个软件`)
-  if (scannedFiles.value > 0) parts.push(`已扫描 ${scannedFiles.value.toLocaleString()} 个文件`)
-  if (junkSummary.value) parts.push(`可释放 ${formatBytes(junkSummary.value.totalBytes)}`)
-  if (lastScanMs.value) parts.push(`用时 ${formatDuration(lastScanMs.value)}`)
-  if (lastScanAt.value) parts.push(`上次扫描 ${formatTime(lastScanAt.value)}`)
-  return parts.join(' · ')
-})
 </script>
 
 <template>
-  <div class="app" :class="{ full: canvasFull }">
-    <ActivityBar v-model="mainView" />
-    <div class="sg-main">
-    <!-- 顶栏 -->
-    <header class="tb">
-      <div class="tb-brand">
-        <span class="tb-logo">◈</span>
-        <span class="tb-name">SoftGraph</span>
-      </div>
-
-
-      <button v-show="isGraph" :disabled="swScanning" @click="scanSoftware">{{ software.length ? '重新扫描' : '扫描软件' }}</button>
-      <button v-show="isGraph" :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
-
-      <input v-show="isGraph" v-model="searchTerm" class="tb-search" type="search" placeholder="在图谱中搜索文件名或路径…" />
-
-      <!-- 全库文件检索（I-11）：覆盖整个 file_index，不限于当前图谱已加载的节点 -->
-      <div v-show="isGraph" class="tb-fsearch" @click.stop>
-        <input
-          v-model="fileQuery"
-          class="tb-fsearch-input"
-          type="search"
-          placeholder="检索全库文件…"
-          @input="onFileQueryInput"
-          @focus="fileDropOpen = fileQuery.trim().length >= 2"
-          @keydown.escape="fileDropOpen = false"
-          @keydown.enter="runFileSearch"
+  <div class="dm-scope dm-shell">
+    <DmSidebar :view="mainView" @navigate="onDmNavigate" />
+    <section class="dm-main">
+      <DmTopbar :view="mainView" @navigate="onDmNavigate" />
+      <div class="dm-content" :class="{ 'dm-content-tools': !isDmTab(mainView) }">
+        <DmPreviewProgress />
+        <DmDashboard v-if="mainView === 'dm-dashboard'" @navigate="onDmNavigate" />
+        <DmGroups v-else-if="mainView === 'dm-groups'" @navigate="onDmNavigate" />
+        <DmSettings
+          v-else-if="mainView === 'dm-settings'"
+          @navigate="onDmNavigate"
+          @theme="onThemeChange"
         />
-        <button
-          class="ghost tb-fsearch-mode"
-          :class="{ on: fileSubstring }"
-          :title="
-            fileSubstring
-              ? '当前：子串匹配（全表扫描，代价随库大小线性增长）—— 点击切回前缀'
-              : '当前：前缀匹配（走索引）—— 点击切换为子串匹配'
-          "
-          @click="toggleFileMode"
-        >
-          {{ fileSubstring ? '子串' : '前缀' }}
-        </button>
-
-        <div v-if="fileDropOpen && (fileHits.length > 0 || fileSearching || fileStrategy)" class="tb-fdrop">
-          <div class="tb-fdrop-head">
-            <span class="dim">
-              {{ fileSearching ? '检索中…' : `${fileHits.length} 条结果` }}
-              <template v-if="fileStrategy"> · {{ FILE_STRATEGY_LABEL[fileStrategy] }}</template>
-            </span>
-            <span v-if="fileStrategy === 'substring-scan'" class="risk-medium">全表扫描</span>
-          </div>
-          <ul v-if="fileHits.length" class="tb-fdrop-list">
-            <li v-for="h in fileHits" :key="h.id" @click="openFileHit(h)">
-              <span class="tb-fname">
-                {{ h.name }}
-                <span v-if="h.missing" class="risk-high">缺失</span>
-              </span>
-              <span class="dim tb-fpath mono">{{ h.fullPath }}</span>
-              <span class="dim tb-fmeta">
-                {{ formatBytes(h.sizeBytes) }}
-                <template v-if="h.refCount > 0"> · 被 {{ h.refCount }} 个软件引用</template>
-              </span>
-            </li>
-          </ul>
-          <div v-else-if="!fileSearching" class="dim tb-fdrop-empty">
-            未命中。试试切换「子串」模式（前缀模式只匹配路径或文件名开头）。
-          </div>
-        </div>
-      </div>
-
-      <div v-show="isGraph" class="tb-group">
-        <span class="dim">置信度 ≥</span>
-        <input v-model.number="minConfidence" type="range" min="0" max="0.95" step="0.05" class="tb-range" />
-        <span class="tb-range-val mono">{{ minConfidence.toFixed(2) }}</span>
-      </div>
-
-      <select v-show="isGraph" v-model="layoutMode" title="布局方式">
-        <option value="radial">径向分层</option>
-        <option value="force">力导向</option>
-        <option value="cluster">环形聚类</option>
-      </select>
-
-      <span class="tb-sp" />
-
-      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出图谱为 PNG" @click="exportGraphPng">⬇图</button>
-      <button v-show="isGraph" class="ghost" :disabled="!graph" title="导出依赖清单（HTML 报告）" @click="exportGraphReport">⬇清单</button>
-      <button v-show="isGraph" class="ghost" :title="leftOpen ? '收起软件列表' : '展开软件列表'" @click="leftOpen = !leftOpen">
-        {{ leftOpen ? '◧' : '▢' }}
-      </button>
-      <button v-show="isGraph" class="ghost" :title="rightOpen ? '收起垃圾侧栏' : '展开垃圾侧栏'" @click="rightOpen = !rightOpen">
-        {{ rightOpen ? '◨' : '▢' }}
-      </button>
-      <button v-show="isGraph" class="ghost" :title="canvasFull ? '退出全屏 (Esc)' : '画布全屏 (F11)'" @click="canvasFull = !canvasFull">
-        ⤢
-      </button>
-      <button class="ghost tb-update" :class="{ dot: updateDot }" title="检查应用更新" @click="openUpdateCenter">⟳</button>
-      <button class="ghost" title="桌面浮窗" @click="openDrawer('float')">浮窗</button>
-    </header>
+        <div v-else class="dm-legacy">
+          <div class="sg-main">
 
 
 
@@ -885,6 +814,84 @@ const statusText = computed(() => {
       </div>
 
       <div class="col-mid">
+      <div class="tb dm-graph-toolstrip">
+        <button :disabled="swScanning" @click="scanSoftware">{{ software.length ? '重新扫描' : '扫描软件' }}</button>
+        <button :disabled="!selected || graphLoading" @click="refreshGraph">刷新图谱</button>
+        <input v-model="searchTerm" class="tb-search" type="search" placeholder="在图谱中搜索文件名或路径…" />
+
+        <div class="tb-fsearch" @click.stop>
+          <input
+            v-model="fileQuery"
+            class="tb-fsearch-input"
+            type="search"
+            placeholder="检索全库文件…"
+            @input="onFileQueryInput"
+            @focus="fileDropOpen = fileQuery.trim().length >= 2"
+            @keydown.escape="fileDropOpen = false"
+            @keydown.enter="runFileSearch"
+          />
+          <button
+            class="ghost tb-fsearch-mode"
+            :class="{ on: fileSubstring }"
+            :title="
+              fileSubstring
+                ? '当前：子串匹配（全表扫描，代价随库大小线性增长）—— 点击切回前缀'
+                : '当前：前缀匹配（走索引）—— 点击切换为子串匹配'
+            "
+            @click="toggleFileMode"
+          >
+            {{ fileSubstring ? '子串' : '前缀' }}
+          </button>
+
+          <div v-if="fileDropOpen && (fileHits.length > 0 || fileSearching || fileStrategy)" class="tb-fdrop">
+            <div class="tb-fdrop-head">
+              <span class="dim">
+                {{ fileSearching ? '检索中…' : `${fileHits.length} 条结果` }}
+                <template v-if="fileStrategy"> · {{ FILE_STRATEGY_LABEL[fileStrategy] }}</template>
+              </span>
+              <span v-if="fileStrategy === 'substring-scan'" class="risk-medium">全表扫描</span>
+            </div>
+            <ul v-if="fileHits.length" class="tb-fdrop-list">
+              <li v-for="h in fileHits" :key="h.id" @click="openFileHit(h)">
+                <span class="tb-fname">
+                  {{ h.name }}
+                  <span v-if="h.missing" class="risk-high">缺失</span>
+                </span>
+                <span class="dim tb-fpath mono">{{ h.fullPath }}</span>
+                <span class="dim tb-fmeta">
+                  {{ formatBytes(h.sizeBytes) }}
+                  <template v-if="h.refCount > 0"> · 被 {{ h.refCount }} 个软件引用</template>
+                </span>
+              </li>
+            </ul>
+            <div v-else-if="!fileSearching" class="dim tb-fdrop-empty">
+              未命中。试试切换「子串」模式（前缀模式只匹配路径或文件名开头）。
+            </div>
+          </div>
+        </div>
+
+        <div class="tb-group">
+          <span class="dim">置信度 ≥</span>
+          <input v-model.number="minConfidence" type="range" min="0" max="0.95" step="0.05" class="tb-range" />
+          <span class="tb-range-val mono">{{ minConfidence.toFixed(2) }}</span>
+        </div>
+
+        <select v-model="layoutMode" title="布局方式">
+          <option value="radial">径向分层</option>
+          <option value="force">力导向</option>
+          <option value="cluster">环形聚类</option>
+        </select>
+
+        <span class="tb-sp" />
+        <button class="ghost" :disabled="!graph" title="导出图谱为 PNG" @click="exportGraphPng">⬇图</button>
+        <button class="ghost" :disabled="!graph" title="导出依赖清单（HTML 报告）" @click="exportGraphReport">⬇清单</button>
+        <button class="ghost" :title="leftOpen ? '收起软件列表' : '展开软件列表'" @click="leftOpen = !leftOpen">
+          {{ leftOpen ? '◧' : '▢' }}
+        </button>
+        <button class="ghost" :title="canvasFull ? '退出全屏 (Esc)' : '画布全屏 (F11)'" @click="canvasFull = !canvasFull">
+          ⤢
+        </button>
+      </div>
         <div v-if="selected" class="mid-head">
           <span class="mid-title">{{ selected.name }}</span>
           <span v-if="selected.version" class="badge">{{ selected.version }}</span>
@@ -943,51 +950,10 @@ const statusText = computed(() => {
         </div>
       </div>
 
-      <div v-if="rightOpen && !canvasFull" class="col-right">
-        <JunkSidebar
-          :summary="junkSummary"
-          :scanning="junkScanning"
-          :progress="junkProgress"
-          @scan="scanJunk"
-          @scan-force="scanJunk(true)"
-          @cancel="cancelJunk"
-          @delete-categories="planCategories"
-          @delete-items="planItems"
-          @delete-one-click="planOneClick"
-          @reveal="reveal"
-          @copy="copy"
-          @open-quarantine="openDrawer('quarantine')"
-          @export="exportJunkReport"
-        />
-      </div>
     </main>
 
     <!-- v3.4 垃圾清理主视图 -->
     <main v-if="mainView === 'junk'" class="junk-page">
-      <div class="junk-page-head">
-        <span class="mid-title">垃圾清理</span>
-        <span class="dim">扫描发现文件 → 分类审阅 → 隔离清理（可还原）</span>
-        <span style="flex:1"></span>
-      </div>
-      <!-- v6.1 统计卡带（对齐设计稿 B 汇总指标） -->
-      <div class="grid grid-cols-4 gap-3 px-5 pb-3">
-        <Card hoverable class="gap-0.5 p-3.5">
-          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">可释放</div>
-          <div class="mt-0.5 font-mono text-lg font-semibold text-primary">{{ formatBytes(junkSummary?.totalBytes ?? 0) }}</div>
-        </Card>
-        <Card hoverable class="gap-0.5 p-3.5">
-          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">待审阅项</div>
-          <div class="mt-0.5 font-mono text-lg font-semibold">{{ junkSummary?.totalCount ?? 0 }}</div>
-        </Card>
-        <Card hoverable class="gap-0.5 p-3.5">
-          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">已扫描文件</div>
-          <div class="mt-0.5 font-mono text-lg font-semibold">{{ scannedFiles.toLocaleString() }}</div>
-        </Card>
-        <Card hoverable class="cursor-pointer gap-0.5 p-3.5" title="打开隔离区" @click="openDrawer('quarantine')">
-          <div class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">隔离区 →</div>
-          <div class="mt-0.5 font-mono text-lg font-semibold">删除可还原</div>
-        </Card>
-      </div>
       <div class="junk-page-body">
         <JunkSidebar
           dashboard
@@ -1015,39 +981,8 @@ const statusText = computed(() => {
     <main v-if="mainView === 'manifest'" class="page-host"><ManifestPage /></main>
     <main v-if="mainView === 'images'" class="page-host"><SimilarImagesPage /></main>
     <main v-if="mainView === 'schedule'" class="page-host"><SchedulePage /></main>
-    <main v-if="mainView === 'backup'" class="page-host"><BackupPage /></main>
     <main v-if="mainView === 'market'" class="page-host"><MarketPage /></main>
     <main v-if="mainView === 'treemap'" class="page-host"><DiskTreemap :page="true" :open="true" /></main>
-
-    <main v-if="mainView === 'dashboard'" class="dash-page">
-      <DashboardHome
-        :junk-total="junkSummary?.totalBytes ?? 0"
-        :junk-items="junkSummary?.totalCount ?? 0"
-        :software-count="software.length"
-        @navigate="onDashNav"
-        @rescan-software="scanSoftware()"
-        @rescan-junk="scanJunk(false)"
-      />
-    </main>
-
-    <main v-if="mainView === 'settings'" class="settings-page">
-      <SettingsDrawer
-        :page="true"
-        :open="true"
-        :tab="drawerTab"
-        @close="mainView = 'dashboard'"
-        @set-tab="drawerTab = $event"
-        @toast="showToast"
-        @theme="onThemeChange"
-      />
-    </main>
-
-    <!-- 状态栏 -->
-    <footer class="sb">
-      <span>{{ statusText }}</span>
-      <span class="tb-sp" />
-      <span class="dim">{{ renderStats.mode.toUpperCase() }} 渲染 · {{ renderStats.visible }} 节点可见</span>
-    </footer>
 
     <!-- 图谱右键菜单（5.4.3） -->
     <div
@@ -1150,7 +1085,13 @@ const statusText = computed(() => {
     </Transition>
 
     <CommandPalette :open="paletteOpen" @close="paletteOpen = false" @run="onPaletteRun" />
-    </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <DmToastStack />
+    <DmSyncConfirm />
+    <DmSummaryFloat />
   </div>
 </template>
 

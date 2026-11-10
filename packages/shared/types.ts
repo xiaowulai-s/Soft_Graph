@@ -693,6 +693,8 @@ export interface AppSettings {
   extraScanDirs: string[]
   /** v6.2 备份定时自动调度：到期且目标盘在线时执行（无人值守安全策略：只增改不删） */
   backupSchedule?: { enabled: boolean; intervalHours: number }
+  /** v6.2.3 同步演出动效档位：vivid=生动（默认），calm=轻动效 */
+  motionMode?: 'vivid' | 'calm'
   float: FloatSettings
 }
 

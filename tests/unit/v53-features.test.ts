@@ -9,7 +9,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { isValidWingetId, upgradeArgs, interpretUpgradeExit, decodeConsoleOutput } from '../../apps/desktop/src/main/services/winget'
-import { decideFile, resolveTargetPath, isExcluded } from '../../apps/desktop/src/main/services/backup'
+import { decideFile, resolveTargetPath, isExcluded, isAsarArtifact } from '../../apps/desktop/src/main/services/backup'
 import { loadPluginSandboxed } from '../../apps/desktop/src/main/float/plugin-sandbox'
 import { sanitizeAction, sanitizeDatum } from '../../apps/desktop/src/main/float/registry'
 import { BUILTIN_PLUGINS } from '../../apps/desktop/src/main/float/builtin'
@@ -97,6 +97,27 @@ describe('v6.2 N1 备份纯逻辑', () => {
     assert.equal(isExcluded('app\\src\\a.ts', ['node_modules']), false)
     assert.equal(isExcluded('app\\Node_Modules\\a.js', ['node_modules']), true, '大小写不敏感')
     assert.equal(isExcluded('app\\dist\\x', ['dist', 'build']), true)
+  })
+
+  it('isExcluded：路径以被排除目录名结尾也能命中（目录剪枝边界）', () => {
+    assert.equal(isExcluded('text\\diskmirror\\release-1.3.1\\win-unpacked', ['win-unpacked']), true)
+    assert.equal(isExcluded('text/diskmirror/release-1.3.1/win-unpacked', ['win-unpacked']), true)
+    assert.equal(isExcluded('text\\diskmirror\\win-unpacked-backup', ['win-unpacked']), false)
+  })
+
+  it('isExcluded：支持 * 通配（release-* 一类版本目录）', () => {
+    assert.equal(isExcluded('text\\diskmirror\\release-1.3.2\\x.js', ['release-*']), true)
+    assert.equal(isExcluded('RELEASE-FINAL\\x.js', ['release-*']), true, '大小写不敏感')
+    assert.equal(isExcluded('text\\stable\\x.js', ['release-*']), false)
+    assert.equal(isExcluded('app\\node_modules\\a.js', ['node_modules']), true, '原有精确匹配不受影响')
+  })
+
+  it('isAsarArtifact：只跳过 .asar 归档，不误伤相似文件名', () => {
+    assert.equal(isAsarArtifact('app.asar'), true)
+    assert.equal(isAsarArtifact('APP.ASAR'), true)
+    assert.equal(isAsarArtifact('app.asar.bak'), false)
+    assert.equal(isAsarArtifact('app.asar.unpacked'), false)
+    assert.equal(isAsarArtifact('main.js'), false)
   })
 })
 

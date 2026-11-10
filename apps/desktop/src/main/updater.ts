@@ -10,6 +10,7 @@
  */
 import { app, BrowserWindow } from 'electron'
 import { autoUpdater, type UpdateInfo } from 'electron-updater'
+import { markQuitDirect } from './services/quit-flag'
 
 export type AppUpdateState =
   | { phase: 'idle' }
@@ -133,6 +134,8 @@ export async function downloadAppUpdate(): Promise<void> {
 }
 
 export function quitAndInstallAppUpdate(): void {
+  // 升级安装旁路：安装器即将启动，跳过 before-quit 的清理延迟（否则撞 app.asar 文件锁）
+  markQuitDirect()
   // 兜底：先销毁所有窗口（含桌面浮窗），防止任何窗口阻塞退出流程导致安装器不启动
   for (const w of BrowserWindow.getAllWindows()) {
     try {

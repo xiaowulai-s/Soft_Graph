@@ -29,9 +29,9 @@ export const NAV_MODULES: NavModule[] = [
   { id: 'treemap', title: '空间树图', icon: 'grid', desc: '目录占用可视化', group: 'space' },
   { id: 'images', title: '相似图片', icon: 'images', desc: 'aHash 分组查重', group: 'space' },
   { id: 'schedule', title: '定时调度', icon: 'clock', desc: '静默清理计划与状态', group: 'system' },
-  { id: 'backup', title: '备份同步', icon: 'backup', desc: '开发文件夹 → 移动硬盘增量备份', group: 'system' },
+  { id: 'backup', title: '备份同步', icon: 'backup', desc: '映射组 · 任务 / 活动 / 日志', group: 'system' },
   { id: 'market', title: '插件市场', icon: 'store', desc: '浮窗插件安装更新', group: 'system' },
-  { id: 'settings', title: '设置', icon: 'gear', desc: '主题 · 浮窗 · 备份 · 规则', group: 'system' }
+  { id: 'settings', title: '设置', icon: 'gear', desc: '主题 · 浮窗 · 隔离区 · 规则库', group: 'system' }
 ]
 
 /** 校验 mainView 合法性（防注册表遗漏导致白屏） */
@@ -62,3 +62,13 @@ export function navIconSvg(id: string, size = 18): string {
   const body = NAV_ICONS[id] ?? ''
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`
 }
+
+/** v6.2.3：侧栏平铺顺序（功能域只作排序依据，界面不显示分组标题；设置固定最末） */
+export const DM_FLAT_ORDER: string[] = [
+  'dm-dashboard',
+  'graph', 'junk', 'upgrade', 'manifest', 'registry', 'startup',
+  'treemap', 'images',
+  'schedule', 'market',
+  'dm-groups',
+  'dm-settings'
+]

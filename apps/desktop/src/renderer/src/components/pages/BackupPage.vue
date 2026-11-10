@@ -341,12 +341,7 @@ const previewEntries = computed(() => {
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
-    <div class="flex flex-col gap-0.5 pb-1">
-      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">备份同步</h2>
-      <span class="text-[12.5px] text-muted-foreground">审阅式镜像备份：预览差异 → 确认策略 → 单向覆盖 · 拔盘暂停插回续传</span>
-    </div>
-
+  <div class="dm-tool-flow">
     <!-- 目标设备状态条（5s 自动轮询） -->
     <Card class="flex flex-wrap items-center gap-3 px-4 py-3">
       <span class="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">目标设备</span>

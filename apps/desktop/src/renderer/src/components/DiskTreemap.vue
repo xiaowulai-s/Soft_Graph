@@ -126,7 +126,6 @@ const colorFor = (r: TreemapRect): string => {
     <div v-if="open || page" :class="page ? 'dt-page' : 'dt-mask'" @click.self="!page && emit('close')">
       <div class="dt-panel" :class="{ 'dt-inpage': page }">
         <header class="dt-head">
-          <h3>空间树图</h3>
           <input
             v-model="pathInput"
             class="dt-path mono"

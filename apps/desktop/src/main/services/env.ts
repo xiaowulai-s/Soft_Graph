@@ -6,7 +6,7 @@
 import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { AppSettings } from '@shared/types'
 import { defaultFloatSettings } from '../float/window'
 
@@ -42,7 +42,10 @@ export interface AppPaths {
 
 export function resolvePaths(): AppPaths {
   const local = process.env.LOCALAPPDATA || app.getPath('appData')
-  const root = join(local, 'SoftGraph')
+  // SG_DATA_DIR：调试/多实例隔离开关 —— 指定后所有数据落到该目录，
+  // 与真实用户数据物理隔离（配合独立 --user-data-dir 使用，双保险）
+  const override = process.env.SG_DATA_DIR?.trim()
+  const root = override ? resolve(override) : join(local, 'SoftGraph')
   return {
     root,
     dataDir: join(root, 'data'),

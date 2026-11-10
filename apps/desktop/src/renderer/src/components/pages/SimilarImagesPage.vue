@@ -67,12 +67,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
-    <div class="flex flex-col gap-0.5 pb-1">
-      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">相似图片</h2>
-      <span class="text-[12.5px] text-muted-foreground">aHash 感知哈希分组 · 扫描范围 = 图片 / 下载 / 文档目录 · 删除走系统回收站可还原</span>
-    </div>
-
+  <div class="dm-tool-flow">
     <!-- 统计卡 -->
     <div class="grid grid-cols-4 gap-3">
       <Card hoverable class="gap-0.5 p-4">

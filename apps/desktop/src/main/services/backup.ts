@@ -82,13 +82,31 @@ export function decideFile(
 /** 排除判定：相对路径任一段命中排除名单即跳过 */
 export function isExcluded(relPath: string, excludeDirs: readonly string[]): boolean {
   const lower = relPath.toLowerCase()
+  const segments = lower.split(/[\\/]/)
   for (const ex of excludeDirs) {
     const e = ex.toLowerCase().replace(/^[\\/]+|[\\/]+$/g, '')
     if (!e) continue
+    // 通配（如 release-*）：按路径段做前缀/后缀匹配，避免展开成一长串具体版本目录名
+    if (e.includes('*')) {
+      const pattern = '^' + e.split('*').map((p) => p.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')).join('.*') + '$'
+      if (segments.some((seg) => new RegExp(pattern).test(seg))) return true
+      continue
+    }
     if (lower === e || lower.startsWith(e + '/') || lower.startsWith(e + '\\')) return true
     if (lower.includes('\\' + e + '\\') || lower.includes('/' + e + '/')) return true
+    // 路径正好以被排除目录名结尾（如 .../release-1.3.1/win-unpacked）：目录本身也应被剪枝
+    if (lower.endsWith('\\' + e) || lower.endsWith('/' + e)) return true
   }
   return false
+}
+
+/**
+ * Electron asar 归档：Electron 会拦截路径里带 .asar 的 fs 调用，把归档当虚拟目录查找内部条目，
+ * 用普通 fs.copyFile/fs.stat 复制另一个 Electron 应用的 app.asar 会抛
+ * `ENOENT, not found in <asar>`。这类文件直接跳过，不依赖用户配置的排除规则。
+ */
+export function isAsarArtifact(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith('.asar')
 }
 
 /** 目标路径拼装与越界校验（v2 双模式） */
@@ -449,6 +467,7 @@ Write-SgJson @($out)
         continue
       }
       if (!e.isFile()) continue
+      if (isAsarArtifact(e.name)) continue // Electron asar 归档：普通 fs 复制会被 asar 补丁拦截报 ENOENT
       const tp = resolveTargetPath(targetRoot, task.name, sourceRoot, full, task.mode === 'mirror' ? 'mirror' : 'explicit')
       if (!tp.ok || !tp.path) {
         errors.push(`${full}：${tp.reason}`)
@@ -775,6 +794,7 @@ Write-SgJson @($out)
         continue
       }
       if (!e.isFile()) continue
+      if (isAsarArtifact(e.name)) continue // Electron asar 归档：普通 fs 复制会被 asar 补丁拦截报 ENOENT
 
       const tp = resolveTargetPath(targetRoot, task.name, sourceRoot, full, task.mode === 'mirror' ? 'mirror' : 'explicit')
       if (!tp.ok || !tp.path) {

@@ -69,12 +69,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="mx-auto flex w-full max-w-[1080px] flex-col gap-4 px-8 pb-10 pt-7">
-    <div class="flex flex-col gap-0.5 pb-1">
-      <h2 class="text-[19px] font-semibold tracking-tight text-foreground">定时调度</h2>
-      <span class="text-[12.5px] text-muted-foreground">静默清理计划 —— 到期且空闲时自动隔离清理，可还原</span>
-    </div>
-
+  <div class="dm-tool-flow">
     <!-- 状态卡 ×3 -->
     <div class="grid grid-cols-3 gap-3">
       <Card hoverable class="gap-0.5 p-4">

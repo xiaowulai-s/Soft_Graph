@@ -17,6 +17,8 @@ import { Store } from './db/store'
 import { ScanService } from './services/scan'
 import { initAppUpdater, checkForAppUpdate, downloadAppUpdate, quitAndInstallAppUpdate } from './updater'
 import { ensurePaths, ensureRules, isElevated, resolvePaths, SettingsStore, type AppPaths } from './services/env'
+import { acquireDataLock, releaseDataLock } from './services/data-lock'
+import { shouldQuitDirectly } from './services/quit-flag'
 import { FloatWindows, floatRendererTarget, normalizeInstances, DEFAULT_INSTANCE_ID } from './float/window'
 import { PluginRegistry } from './float/registry'
 import { IconQueue } from './services/icon-queue'
@@ -895,6 +897,20 @@ function applyFloat(s: FloatSettings): void {
 
 async function bootstrap(): Promise<void> {
   paths = resolvePaths()
+  // 数据目录互斥锁：另一实例正持有同一数据目录时拒绝启动。
+  // 单实例锁只覆盖 userData 相同的场景；独立 --user-data-dir 的调试实例会绕开它，
+  // 若数据目录相同，两实例的周期性 flush 会互相覆盖 settings.json / 数据库快照。
+  const lock = await acquireDataLock(paths.root)
+  if (!lock.ok) {
+    dialog.showErrorBox(
+      'SoftGraph',
+      `检测到另一 SoftGraph 实例正在使用数据目录（PID ${lock.holderPid}）。\n` +
+        '为避免设置与数据库被相互覆盖，本次启动已取消。\n' +
+        '如需并行调试，请为其设置 SG_DATA_DIR 环境变量指向独立目录。'
+    )
+    app.quit()
+    return
+  }
   await ensurePaths(paths)
   await ensureRules(paths, builtinRules)
 
@@ -1126,22 +1142,36 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', async () => {
+  // before-quit 关键实现：Electron 不会等待 async 监听器的 Promise，
+  // 直接放行会让 flush/close 半途被打断（settings.json 曾被写成 0 字节、
+  // 数据目录锁残留）。因此先 preventDefault 拦住退出 → 清理全部跑完
+  // （带 8s 超时保险，防止某个 await 卡死导致退不出去）→ 再主动 quit。
+  let cleanupStarted = false
+  app.on('before-quit', (e) => {
+    if (cleanupStarted || shouldQuitDirectly()) return // 升级安装旁路 / 清理完成后的主动 quit：放行
+    e.preventDefault()
+    cleanupStarted = true
     quitting = true
     log.info('app', '退出', { uptimeMs: Math.round(process.uptime() * 1000) })
     if (floatTimer) clearInterval(floatTimer)
     iconQueue?.dispose()
     registry?.dispose()
     scan?.disposeWorker()
-    await scan?.flushAudit().catch(() => {})
-    await settings?.flush()
-    await store?.close()
-    // 结束常驻会话池（A1：避免遗留子进程）
-    const { shutdownPsPool } = await import('@scanner/psbridge')
-    shutdownPsPool()
-    // 日志落盘（C5）：放在最后，确保前面的关闭动作都有痕迹
-    const { logger } = await import('./services/logger')
-    await logger().flushNow()
+    const cleanup = (async () => {
+      await scan?.flushAudit().catch(() => {})
+      await settings?.flush()
+      await store?.close()
+      // 释放数据目录互斥锁（放在持久化动作之后：锁必须保护到最后一笔写盘）
+      if (paths) await releaseDataLock(paths.root).catch(() => {})
+      // 结束常驻会话池（A1：避免遗留子进程）
+      const { shutdownPsPool } = await import('@scanner/psbridge')
+      shutdownPsPool()
+      // 日志落盘（C5）：放在最后，确保前面的关闭动作都有痕迹
+      const { logger } = await import('./services/logger')
+      await logger().flushNow()
+    })()
+    const timeout = new Promise<void>((r) => setTimeout(r, 8_000))
+    void Promise.race([cleanup, timeout]).finally(() => app.quit())
   })
 
   app.on('activate', () => createMainWindow())
